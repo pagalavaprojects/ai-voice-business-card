@@ -17,15 +17,31 @@ describe("Next.js API Route Endpoints Integration", () => {
     process.env = originalEnv;
   });
 
-  it("GET /api/health should return health status and service statuses", async () => {
+  it("GET /api/health reports degraded (not a fabricated healthy) when Supabase is a placeholder/demo URL", async () => {
+    // This is the real fix for the original audit's finding that health
+    // previously reported "healthy" purely from Boolean(env var present),
+    // even for a fake URL. Confirming a real "healthy" requires an
+    // actually-reachable Supabase project — Requires Live Infrastructure.
     const response = await healthHandler();
     const json = await response.json();
 
     expect(response.status).toBe(200);
-    expect(json.status).toBe("healthy");
+    expect(json.status).toBe("degraded");
     expect(json.version).toBe("1.0.0");
-    expect(json.services.database).toBe("connected");
+    expect(json.services.database.status).toBe("unconfigured");
   });
+
+  it("GET /api/health reports unhealthy (503) when Supabase looks real but is actually unreachable", async () => {
+    process.env.NEXT_PUBLIC_SUPABASE_URL = "https://nonexistent-project-xyz123.supabase.co";
+    process.env.SUPABASE_SERVICE_ROLE_KEY = "not-a-placeholder-but-fake-key";
+
+    const response = await healthHandler();
+    const json = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(json.status).toBe("unhealthy");
+    expect(json.services.database.status).toBe("error");
+  }, 15000);
 
   it("GET /api/admin/leads without companyId should return 400 Bad Request", async () => {
     const req = new NextRequest("http://localhost:3000/api/admin/leads");
