@@ -17,6 +17,7 @@ export interface AIAgent extends BaseEntity {
   avatar_url?: string | null;
   voice_model_id: string;
   personality_prompt: string;
+  first_message?: string | null;
   capabilities: string[];
   tools: string[];
   prompt_template_id?: string | null;

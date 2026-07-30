@@ -15,6 +15,7 @@ export interface CreateAgentInput {
   avatar_url?: string | null;
   voice_model_id: string;
   personality_prompt: string;
+  first_message?: string | null;
   capabilities?: string[];
   tools?: string[];
   prompt_template_id?: string | null;
@@ -29,6 +30,7 @@ export interface AgentReadiness {
 export interface IAgentRepository {
   createAgent(data: CreateAgentInput): Promise<AIAgent>;
   getAgentById(id: string): Promise<AIAgent | null>;
+  getAgentByEmployee(employeeId: string): Promise<AIAgent | null>;
   listAgents(filter: AgentFilter): Promise<{ agents: AIAgent[]; total: number }>;
   updateAgent(id: string, data: Partial<CreateAgentInput>): Promise<AIAgent>;
   updateAgentStatus(id: string, status: AIAgent["status"]): Promise<AIAgent>;

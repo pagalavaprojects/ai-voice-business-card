@@ -5,13 +5,16 @@ import Vapi from "@vapi-ai/web";
 import { VoiceState } from "../components/VoiceMicButton";
 import { MessageItem } from "../components/TranscriptViewer";
 
+const DEFAULT_FIRST_MESSAGE = "Hi! I'm Srinivasan Kandasamy from Pagalava Data Analytics. Thank you for scanning my AI business card. How can I help you today?";
+
 export interface UseVapiSessionOptions {
   companyId: string;
   employeeId: string;
   vapiPublicKey?: string;
+  firstMessage?: string;
 }
 
-export function useVapiSession({ companyId, employeeId, vapiPublicKey }: UseVapiSessionOptions) {
+export function useVapiSession({ companyId, employeeId, vapiPublicKey, firstMessage }: UseVapiSessionOptions) {
   const [voiceState, setVoiceState] = useState<VoiceState>("idle");
   const [isMuted, setIsMuted] = useState(false);
   const [messages, setMessages] = useState<MessageItem[]>([]);
@@ -114,7 +117,7 @@ export function useVapiSession({ companyId, employeeId, vapiPublicKey }: UseVapi
         setMessages([
           {
             role: "assistant",
-            content: "Hello! Thank you for scanning my business card. How can I help you today?",
+            content: firstMessage || DEFAULT_FIRST_MESSAGE,
           },
         ]);
         setTimeout(() => {
@@ -130,7 +133,7 @@ export function useVapiSession({ companyId, employeeId, vapiPublicKey }: UseVapi
       setVoiceState("connecting");
 
       await vapiRef.current.start({
-        firstMessage: "Hello! Thank you for scanning my business card. How can I help you today?",
+        firstMessage: firstMessage || DEFAULT_FIRST_MESSAGE,
         model: {
           provider: "openai",
           model: "gpt-4o-mini",
@@ -142,7 +145,7 @@ export function useVapiSession({ companyId, employeeId, vapiPublicKey }: UseVapi
       setVoiceState("idle");
       stopTimer();
     }
-  }, [startTimer, stopTimer]);
+  }, [startTimer, stopTimer, firstMessage]);
 
   const endCall = useCallback(() => {
     if (vapiRef.current && !isDemoModeRef.current) {

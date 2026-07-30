@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { useVapiSession } from "@/features/voice/hooks/useVapiSession";
 import { BusinessCardHeader } from "@/features/voice/components/BusinessCardHeader";
@@ -11,16 +11,35 @@ import { Card } from "@/shared/ui/card";
 import { Badge } from "@/shared/ui/badge";
 import { useToast } from "@/shared/ui/toast";
 
-// Demo employee data – replaced with real DB fetch when Supabase is configured
-const DEMO_EMPLOYEE = {
-  name: "Sarah Connor",
-  designation: "VP of AI Solutions",
-  companyName: "Acme Autonomous Corp",
-  email: "sarah@acme.ai",
-  phone: "+1 (555) 019-2831",
-  website: "https://acme.ai",
-  office: "San Francisco, CA",
-  workingHours: "9 AM – 5 PM PST",
+interface PublicCardData {
+  company: { name: string; website: string; logoUrl: string | null };
+  employee: {
+    name: string;
+    designation: string;
+    email: string;
+    phone: string;
+    officeAddress: string | null;
+    workingHours: string | null;
+    avatarUrl: string | null;
+  };
+  firstMessage: string;
+}
+
+// Shown only while the real card is loading, or if the backend isn't
+// reachable (e.g. Supabase not yet configured) — never silently mixed
+// with real data, so what's on screen always matches what will be said.
+const FALLBACK_CARD: PublicCardData = {
+  company: { name: "Acme Autonomous Corp", website: "https://acme.ai", logoUrl: null },
+  employee: {
+    name: "Sarah Connor",
+    designation: "VP of AI Solutions",
+    email: "sarah@acme.ai",
+    phone: "+1 (555) 019-2831",
+    officeAddress: "San Francisco, CA",
+    workingHours: "9 AM – 5 PM PST",
+    avatarUrl: null,
+  },
+  firstMessage: "Hello! Thank you for scanning my business card. How can I help you today?",
 };
 
 function formatTimer(secs: number): string {
@@ -35,6 +54,34 @@ export default function VoiceBusinessCardPage() {
   const employeeId = (params?.employeeId as string) || "demo-employee";
   const { showToast } = useToast();
 
+  const [card, setCard] = useState<PublicCardData>(FALLBACK_CARD);
+  const [cardLoading, setCardLoading] = useState(true);
+  const [isLiveCard, setIsLiveCard] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    fetch(`/api/public/${companyId}/${employeeId}`)
+      .then((res) => (res.ok ? (res.json() as Promise<PublicCardData>) : Promise.reject(new Error(`status ${res.status}`))))
+      .then((data) => {
+        if (cancelled) return;
+        setCard(data);
+        setIsLiveCard(true);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setCard(FALLBACK_CARD);
+        setIsLiveCard(false);
+      })
+      .finally(() => {
+        if (!cancelled) setCardLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [companyId, employeeId]);
+
   const {
     voiceState,
     isMuted,
@@ -44,7 +91,7 @@ export default function VoiceBusinessCardPage() {
     startCall,
     endCall,
     toggleMute,
-  } = useVapiSession({ companyId, employeeId });
+  } = useVapiSession({ companyId, employeeId, firstMessage: card.firstMessage });
 
   const handleBookCall = () => {
     const calUrl = process.env.NEXT_PUBLIC_CAL_BOOKING_URL || "https://cal.com/demo/30min";
@@ -62,16 +109,23 @@ export default function VoiceBusinessCardPage() {
       <div className="relative z-10 w-full max-w-md space-y-6">
         {/* Main Card Container */}
         <Card className="glass-panel border-white/[0.08] shadow-2xl p-6 sm:p-8 rounded-3xl space-y-6">
+          {!cardLoading && !isLiveCard && (
+            <div role="status" className="text-center text-[10px] uppercase tracking-wide text-amber-400/80 font-semibold">
+              Demo Card — backend not configured for this card yet
+            </div>
+          )}
+
           {/* Employee Header */}
           <BusinessCardHeader
-            name={DEMO_EMPLOYEE.name}
-            designation={DEMO_EMPLOYEE.designation}
-            companyName={DEMO_EMPLOYEE.companyName}
-            email={DEMO_EMPLOYEE.email}
-            phone={DEMO_EMPLOYEE.phone}
-            website={DEMO_EMPLOYEE.website}
-            office={DEMO_EMPLOYEE.office}
-            workingHours={DEMO_EMPLOYEE.workingHours}
+            name={card.employee.name}
+            designation={card.employee.designation}
+            companyName={card.company.name}
+            email={card.employee.email}
+            phone={card.employee.phone}
+            website={card.company.website}
+            office={card.employee.officeAddress || undefined}
+            workingHours={card.employee.workingHours || undefined}
+            avatarUrl={card.employee.avatarUrl || undefined}
           />
 
           {/* Error Alert */}
@@ -117,7 +171,7 @@ export default function VoiceBusinessCardPage() {
 
             <p className="text-xs text-slate-400 text-center font-medium mt-2">
               {voiceState === "idle"
-                ? `Press the microphone to start a live voice session with ${DEMO_EMPLOYEE.name.split(" ")[0]}'s AI Twin`
+                ? `Press the microphone to start a live voice session with ${card.employee.name.split(" ")[0]}'s AI Twin`
                 : "Speak directly into your microphone. Response streamed in real-time."}
             </p>
           </div>
@@ -133,12 +187,12 @@ export default function VoiceBusinessCardPage() {
             onEndCall={endCall}
             onBookCall={handleBookCall}
             contactInfo={{
-              name: DEMO_EMPLOYEE.name,
-              email: DEMO_EMPLOYEE.email,
-              phone: DEMO_EMPLOYEE.phone,
-              company: DEMO_EMPLOYEE.companyName,
-              designation: DEMO_EMPLOYEE.designation,
-              website: DEMO_EMPLOYEE.website,
+              name: card.employee.name,
+              email: card.employee.email,
+              phone: card.employee.phone,
+              company: card.company.name,
+              designation: card.employee.designation,
+              website: card.company.website,
             }}
           />
         </Card>

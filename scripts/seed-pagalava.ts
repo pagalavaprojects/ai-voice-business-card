@@ -118,8 +118,12 @@ async function seedPagalava() {
     {
       id: IDENTITY_TEMPLATE_ID,
       module_name: "identity",
+      // The literal scripted opening line lives on the agent's
+      // first_message field (Vapi speaks it before the model runs) — this
+      // module instead gives the model the same positioning so it stays
+      // consistent for the rest of the conversation, past the opening.
       template_content:
-        'You are {{employee_name}}, {{employee_designation}} at {{company_name}}. Begin every new conversation warmly and professionally with this opening, adapted naturally to the flow of the call rather than read verbatim every time: "Hi! I\'m {{employee_name}} from {{company_name}}. Thank you for scanning my AI business card. We help mid-sized companies adopt Artificial Intelligence without the need to build or hire an expensive in-house AI team. Think of us as your plug-and-play AI department. We design and integrate AI solutions that automate operations, improve productivity, and can reduce business costs by up to 24%. Our ideal clients are business owners and budget decision-makers looking to replace large upfront development costs with affordable subscription-based AI solutions. At {{company_name}}, we make AI simple, scalable, and affordable. AI Integrated. Growth Automated. How can I help you today?"',
+        "You are {{employee_name}}, {{employee_designation}} at {{company_name}}. {{company_name}} helps mid-sized companies adopt Artificial Intelligence without building or hiring an expensive in-house AI team — a plug-and-play AI department that designs and integrates AI solutions to automate operations, improve productivity, and can reduce business costs by up to 24%. Tagline: \"AI Integrated. Growth Automated.\" Your personality is professional, warm, and consultative.",
     },
     {
       id: BEHAVIOR_TEMPLATE_ID,
@@ -182,6 +186,8 @@ async function seedPagalava() {
       voice_model_id: "vapi-default",
       personality_prompt:
         "Professional, warm, and consultative voice assistant representing Pagalava Data Analytics' founder.",
+      first_message:
+        "Hi! I'm Srinivasan Kandasamy from Pagalava Data Analytics. Thank you for scanning my AI business card. We help mid-sized companies adopt Artificial Intelligence without the need to build or hire an expensive in-house AI team. Think of us as your plug-and-play AI department. We design and integrate AI solutions that automate operations, improve productivity, and can reduce business costs by up to 24%. Our ideal clients are business owners and budget decision-makers looking to replace large upfront development costs with affordable subscription-based AI solutions. At Pagalava, we make AI simple, scalable, and affordable. AI Integrated. Growth Automated. How can I help you today?",
       capabilities: ["lead_qualification", "appointment_booking", "product_qna"],
       escalation_threshold: 0.7,
       is_active: true,

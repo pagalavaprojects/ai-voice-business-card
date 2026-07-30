@@ -14,6 +14,7 @@ export class SupabaseAgentRepository implements IAgentRepository {
         avatar_url: data.avatar_url ?? null,
         voice_model_id: data.voice_model_id,
         personality_prompt: data.personality_prompt,
+        first_message: data.first_message ?? null,
         capabilities: data.capabilities ?? [],
         tools: data.tools ?? [],
         prompt_template_id: data.prompt_template_id ?? null,
@@ -31,6 +32,20 @@ export class SupabaseAgentRepository implements IAgentRepository {
   async getAgentById(id: string): Promise<AIAgent | null> {
     const { data, error } = await supabaseAdmin.from("ai_agents").select().eq("id", id).is("deleted_at", null).maybeSingle();
     if (error) throw new Error(`SupabaseAgentRepository.getAgentById failed: ${error.message}`);
+    return (data as AIAgent) || null;
+  }
+
+  async getAgentByEmployee(employeeId: string): Promise<AIAgent | null> {
+    const { data, error } = await supabaseAdmin
+      .from("ai_agents")
+      .select()
+      .eq("employee_id", employeeId)
+      .is("deleted_at", null)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) throw new Error(`SupabaseAgentRepository.getAgentByEmployee failed: ${error.message}`);
     return (data as AIAgent) || null;
   }
 

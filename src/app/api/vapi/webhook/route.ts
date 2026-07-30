@@ -5,6 +5,7 @@ import { SupabasePromptRepository } from "@/core/infrastructure/database/supabas
 import { SupabaseCRMRepository } from "@/core/infrastructure/database/supabase/SupabaseCRMRepository";
 import { SupabaseBookingRepository } from "@/core/infrastructure/database/supabase/SupabaseBookingRepository";
 import { SupabaseConversationRepository } from "@/core/infrastructure/database/supabase/SupabaseConversationRepository";
+import { SupabaseAgentRepository } from "@/core/infrastructure/database/supabase/SupabaseAgentRepository";
 import { SupabaseStorageAdapter } from "@/core/infrastructure/storage/SupabaseStorageAdapter";
 import { PromptAssemblyService } from "@/core/application/services/PromptAssemblyService";
 import { ToolRegistry } from "@/core/application/tools/ToolRegistry";
@@ -21,6 +22,7 @@ const promptRepo = new SupabasePromptRepository();
 const crmRepo = new SupabaseCRMRepository();
 const bookingRepo = new SupabaseBookingRepository();
 const conversationRepo = new SupabaseConversationRepository();
+const agentRepo = new SupabaseAgentRepository();
 const storage = new SupabaseStorageAdapter();
 const notificationService = new NotificationService(new ResendEmailAdapter(), new SupabaseEmailLogRepository());
 
@@ -84,9 +86,15 @@ async function handleVapiMessage(req: NextRequest, message: VapiMessage): Promis
       await conversationRepo.getOrCreateConversationByVapiCallId(companyId, employeeId, message.call.id);
     }
 
+    // Vapi speaks this verbatim before the model runs, so a company's
+    // scripted opening (e.g. a specific pitch) has to come from the
+    // agent record, not the system prompt — see first_message on ai_agents.
+    const agent = await agentRepo.getAgentByEmployee(employeeId).catch(() => null);
+    const firstMessage = agent?.first_message?.trim() || "Hello! Thank you for scanning my business card. How can I help you today?";
+
     return NextResponse.json({
       assistant: {
-        firstMessage: "Hello! Thank you for scanning my business card. How can I help you today?",
+        firstMessage,
         model: {
           provider: "openai",
           model: "gpt-4o-mini",

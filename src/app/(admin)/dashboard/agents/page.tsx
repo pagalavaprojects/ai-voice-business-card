@@ -158,6 +158,7 @@ function CreateAgentDialog({
   const [department, setDepartment] = useState<AgentDepartment>("SALES");
   const [voiceModelId, setVoiceModelId] = useState("vapi-default");
   const [personalityPrompt, setPersonalityPrompt] = useState("");
+  const [firstMessage, setFirstMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   const reset = () => {
@@ -165,6 +166,7 @@ function CreateAgentDialog({
     setDepartment("SALES");
     setVoiceModelId("vapi-default");
     setPersonalityPrompt("");
+    setFirstMessage("");
   };
 
   const submit = async () => {
@@ -182,6 +184,7 @@ function CreateAgentDialog({
           name,
           voice_model_id: voiceModelId,
           personality_prompt: personalityPrompt,
+          first_message: firstMessage.trim() || undefined,
         }),
       });
       onCreated(agent);
@@ -220,6 +223,15 @@ function CreateAgentDialog({
             placeholder="You are an expert sales representative…"
           />
         </Field>
+        <Field label="First Message (spoken before the AI model runs)">
+          <textarea
+            value={firstMessage}
+            onChange={(e) => setFirstMessage(e.target.value)}
+            rows={3}
+            className="dashboard-input"
+            placeholder="Hi! I'm... Thank you for scanning my AI business card…"
+          />
+        </Field>
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="outline" size="sm" onClick={onClose}>
             Cancel
@@ -249,6 +261,7 @@ function EditAgentDialog({
   const { showToast } = useToast();
   const [tools, setTools] = useState<string[]>([]);
   const [assignedKnowledge, setAssignedKnowledge] = useState<string[]>([]);
+  const [firstMessage, setFirstMessage] = useState("");
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [readiness, setReadiness] = useState<AgentReadiness | null>(null);
@@ -256,6 +269,7 @@ function EditAgentDialog({
   useEffect(() => {
     if (!agent) return;
     setTools(agent.tools || []);
+    setFirstMessage(agent.first_message || "");
     setReadiness(null);
     apiFetch<{ knowledgeDocumentIds: string[] }>(`/api/admin/agents/${agent.id}?companyId=${companyId}`)
       .then((data) => setAssignedKnowledge(data.knowledgeDocumentIds))
@@ -276,7 +290,12 @@ function EditAgentDialog({
     try {
       const updated = await apiFetch<AIAgent>(`/api/admin/agents/${agent.id}`, {
         method: "PUT",
-        body: JSON.stringify({ company_id: companyId, tools, knowledge_document_ids: assignedKnowledge }),
+        body: JSON.stringify({
+          company_id: companyId,
+          tools,
+          knowledge_document_ids: assignedKnowledge,
+          first_message: firstMessage.trim() || null,
+        }),
       });
       onUpdated(updated);
       showToast("Agent configuration saved", "success");
@@ -326,6 +345,16 @@ function EditAgentDialog({
             </Button>
           ))}
         </div>
+
+        <Field label="First Message (spoken before the AI model runs)">
+          <textarea
+            value={firstMessage}
+            onChange={(e) => setFirstMessage(e.target.value)}
+            rows={3}
+            className="dashboard-input"
+            placeholder="Hi! I'm... Thank you for scanning my AI business card…"
+          />
+        </Field>
 
         <div>
           <div className="text-slate-500 uppercase tracking-wide text-[10px] mb-2">Tool Assignment</div>

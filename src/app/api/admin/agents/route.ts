@@ -16,6 +16,7 @@ const CreateAgentSchema = z.object({
   avatar_url: z.string().url().optional().nullable(),
   voice_model_id: z.string().min(1),
   personality_prompt: z.string().min(10),
+  first_message: z.string().min(1).max(500).optional().nullable(),
   capabilities: z.array(z.string()).optional(),
   tools: z.array(z.enum(KNOWN_TOOL_NAMES)).optional(),
   prompt_template_id: z.string().uuid().optional().nullable(),
