@@ -137,7 +137,7 @@ export default function LoginPage() {
               <div className="w-full border-t border-white/[0.08]" />
             </div>
             <div className="relative flex justify-center text-[10px]">
-              <span className="px-3 bg-[#0c111d] text-slate-500">or</span>
+              <span className="px-3 bg-[#0c111d] text-slate-400">or</span>
             </div>
           </div>
 
@@ -151,7 +151,7 @@ export default function LoginPage() {
           </Button>
         </Card>
 
-        <p className="text-center text-[11px] text-slate-500">
+        <p className="text-center text-[11px] text-slate-400">
           &copy; {new Date().getFullYear()} AI Voice Business Card Platform
         </p>
       </div>

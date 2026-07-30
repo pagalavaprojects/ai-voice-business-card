@@ -11,7 +11,8 @@
     "test": "jest --forceExit",
     "test:watch": "jest --watch",
     "verify:migrations": "node scripts/verify-migrations.mjs",
-    "worker": "tsx scripts/worker.ts"
+    "worker": "tsx scripts/worker.ts",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.1",
@@ -39,7 +40,9 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.12.1",
     "@electric-sql/pglite": "^0.5.4",
+    "@playwright/test": "^1.62.0",
     "@testing-library/jest-dom": "^7.0.0",
     "@testing-library/react": "^16.3.2",
     "@types/diff": "^7.0.2",
