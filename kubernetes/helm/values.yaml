@@ -1,0 +1,24 @@
+replicaCount: 3
+
+image:
+  repository: voicecard/ai-platform
+  pullPolicy: IfNotPresent
+  tag: "v2.1"
+
+service:
+  type: ClusterIP
+  port: 80
+
+resources:
+  limits:
+    cpu: 1000m
+    memory: 1024Mi
+  requests:
+    cpu: 250m
+    memory: 256Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 75

@@ -1,0 +1,60 @@
+openapi: 3.1.0
+info:
+  title: AI Voice Business Card Enterprise SaaS API
+  description: OpenAPI 3.1 Specification for Vapi Voice Webhooks, Admin Leads, Health Checks, and Agent Orchestration.
+  version: 1.0.0
+servers:
+  - url: http://localhost:3000
+    description: Development Server
+  - url: https://api.voicecard.ai
+    description: Production Server
+
+paths:
+  /api/health:
+    get:
+      summary: Health Check Endpoint
+      responses:
+        '200':
+          description: Healthy status response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  uptime:
+                    type: number
+                  services:
+                    type: object
+
+  /api/vapi/webhook:
+    post:
+      summary: Vapi Voice Webhook Handler
+      parameters:
+        - name: companyId
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: employeeId
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Vapi Assistant Request or Tool Call Result
+
+  /api/admin/leads:
+    get:
+      summary: List Qualified Leads
+      parameters:
+        - name: companyId
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of qualified leads
