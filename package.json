@@ -8,18 +8,27 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "test": "jest",
+    "test": "jest --forceExit",
     "test:watch": "jest --watch",
-    "verify:migrations": "node scripts/verify-migrations.mjs"
+    "verify:migrations": "node scripts/verify-migrations.mjs",
+    "worker": "tsx scripts/worker.ts"
   },
   "dependencies": {
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/exporter-prometheus": "^0.221.0",
+    "@opentelemetry/resources": "^2.10.0",
+    "@opentelemetry/sdk-node": "^0.221.0",
+    "@opentelemetry/sdk-trace-base": "^2.10.0",
+    "@opentelemetry/semantic-conventions": "^1.43.0",
     "@supabase/ssr": "^0.4.0",
     "@supabase/supabase-js": "^2.45.1",
     "@vapi-ai/web": "^2.6.1",
+    "bullmq": "^6.0.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "diff": "^9.0.0",
     "framer-motion": "^11.3.21",
+    "ioredis": "^5.11.1",
     "lucide-react": "^0.424.0",
     "mammoth": "^1.12.0",
     "next": "^14.2.5",
@@ -45,8 +54,10 @@
     "jest-environment-jsdom": "^30.4.1",
     "postcss": "^8.4.40",
     "prettier": "^3.3.3",
+    "redis-memory-server": "^0.17.0",
     "tailwindcss": "^3.4.7",
     "ts-jest": "^29.4.12",
+    "tsx": "^4.23.1",
     "typescript": "^5.5.4"
   }
 }

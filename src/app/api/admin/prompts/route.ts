@@ -4,8 +4,12 @@ import { formatApiResponse } from "@/shared/lib/security";
 import { handleApiError } from "@/shared/lib/apiHandler";
 import { requireCompanyAccess } from "@/shared/lib/tenant";
 import { SupabasePromptRepository } from "@/core/infrastructure/database/supabase/SupabasePromptRepository";
+import { SupabaseKnowledgeRepository } from "@/core/infrastructure/database/supabase/SupabaseKnowledgeRepository";
+import { PromptAssemblyService } from "@/core/application/services/PromptAssemblyService";
+import { RedisCache } from "@/core/infrastructure/cache/RedisCache";
 
 const promptRepo = new SupabasePromptRepository();
+const promptAssemblyService = new PromptAssemblyService(new SupabaseKnowledgeRepository(), promptRepo, new RedisCache());
 
 const MODULE_NAMES = ["identity", "behavior", "sales", "knowledge", "security", "booking", "qualification", "fallback"] as const;
 
@@ -37,6 +41,8 @@ export async function PUT(req: NextRequest) {
     const access = await requireCompanyAccess(req, parsed.company_id, "write:prompts");
 
     const template = await promptRepo.upsertPromptTemplate(parsed.company_id, parsed.module_name, parsed.content, access.userId);
+    await promptAssemblyService.invalidateCompanyCache(parsed.company_id);
+
     return formatApiResponse(template, 200, "Prompt template saved successfully");
   } catch (error) {
     return handleApiError(error);

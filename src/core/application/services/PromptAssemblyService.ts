@@ -1,28 +1,12 @@
 import { IKnowledgeRepository } from "../../domain/repositories/IKnowledgeRepository";
 import { IPromptRepository } from "../../domain/repositories/IPromptRepository";
-import { Company, Employee } from "../../domain/models/types";
+import { RedisCache } from "../../infrastructure/cache/RedisCache";
+import { RedisUnavailableError } from "../../infrastructure/cache/redisClient";
+import { CacheKeys } from "../../infrastructure/cache/CacheKeys";
+import { Logger } from "@/shared/lib/logger";
+import { substituteTemplateVariables } from "./promptVariables";
 
-export const PROMPT_TEMPLATE_VARIABLES = [
-  "employee_name",
-  "employee_designation",
-  "company_name",
-  "company_website",
-  "working_hours",
-  "office_address",
-] as const;
-
-export function substituteTemplateVariables(template: string, company: Company, employee: Employee): string {
-  const values: Record<string, string> = {
-    employee_name: employee.name,
-    employee_designation: employee.designation,
-    company_name: company.name,
-    company_website: company.website,
-    working_hours: employee.working_hours || "9 AM - 5 PM EST",
-    office_address: employee.office_address || "Remote",
-  };
-
-  return PROMPT_TEMPLATE_VARIABLES.reduce((text, key) => text.replaceAll(`{{${key}}}`, values[key]), template);
-}
+export { PROMPT_TEMPLATE_VARIABLES, substituteTemplateVariables } from "./promptVariables";
 
 const DEFAULT_TEMPLATES: Record<string, string> = {
   identity: "You are {{employee_name}}, {{employee_designation}} at {{company_name}}.",
@@ -43,7 +27,8 @@ const DEFAULT_TEMPLATES: Record<string, string> = {
 export class PromptAssemblyService {
   constructor(
     private knowledgeRepo: IKnowledgeRepository,
-    private promptRepo: IPromptRepository
+    private promptRepo: IPromptRepository,
+    private cache?: RedisCache
   ) {}
 
   async assembleSystemPrompt(
@@ -51,6 +36,19 @@ export class PromptAssemblyService {
     employeeId: string,
     draftOverride?: { moduleName: string; content: string }
   ): Promise<string> {
+    // Draft previews must never be cached — they're per-edit-session,
+    // unsaved content. Only the real, saved-state assembly is cacheable.
+    const cacheKey = CacheKeys.companyPrompt(companyId, employeeId);
+    if (this.cache && !draftOverride) {
+      try {
+        const cached = await this.cache.get<string>(cacheKey);
+        if (cached) return cached;
+      } catch (err) {
+        if (!(err instanceof RedisUnavailableError)) throw err;
+        // Redis not configured: fall through and compute without caching.
+      }
+    }
+
     const company = await this.knowledgeRepo.getCompanyById(companyId);
     const employee = await this.knowledgeRepo.getEmployeeById(employeeId);
 
@@ -116,6 +114,30 @@ ${faqsText || "No FAQs listed."}
 3. NEVER invent prices or features not explicitly listed in the knowledge base above.
     `.trim();
 
+    if (this.cache && !draftOverride) {
+      try {
+        await this.cache.set(cacheKey, systemPrompt, 300);
+      } catch (err) {
+        if (!(err instanceof RedisUnavailableError)) {
+          Logger.warn("Failed to cache assembled system prompt", { error: err instanceof Error ? err.message : String(err) });
+        }
+      }
+    }
+
     return systemPrompt;
+  }
+
+  /** Called after any prompt template or knowledge-base change for a
+   * company — every employee's cached assembled prompt for that company
+   * needs to be recomputed, since modules are shared across employees. */
+  async invalidateCompanyCache(companyId: string): Promise<void> {
+    if (!this.cache) return;
+    try {
+      await this.cache.clear(`prompt:${companyId}:`);
+    } catch (err) {
+      if (!(err instanceof RedisUnavailableError)) {
+        Logger.warn("Failed to invalidate prompt cache", { error: err instanceof Error ? err.message : String(err) });
+      }
+    }
   }
 }

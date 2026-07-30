@@ -6,6 +6,8 @@ import { SupabaseKnowledgeDocumentRepository } from "@/core/infrastructure/datab
 import { SupabaseStorageAdapter } from "@/core/infrastructure/storage/SupabaseStorageAdapter";
 import { inferSourceType, parseDocumentText } from "@/core/infrastructure/knowledge/DocumentParser";
 import { KnowledgeStatus } from "@/core/domain/models/types";
+import { KnowledgeIndexingQueue } from "@/core/infrastructure/queue/KnowledgeIndexingQueue";
+import { isRedisConfigured } from "@/core/infrastructure/cache/redisClient";
 
 const knowledgeRepo = new SupabaseKnowledgeDocumentRepository();
 const storage = new SupabaseStorageAdapter();
@@ -54,15 +56,33 @@ export async function POST(req: NextRequest) {
 
     const document = await knowledgeRepo.createDocument(companyId, file.name, sourceType, storagePath, file.size, access.userId);
 
+    // Chunking + embedding is slow enough to risk a serverless request
+    // timeout on a large PDF — when Redis is available, hand it to a
+    // background worker (src/core/infrastructure/queue/KnowledgeIndexingQueue.ts)
+    // and return immediately with status PENDING. Without Redis, fall back
+    // to the original synchronous path rather than leaving the document
+    // stuck at PENDING forever with no worker able to pick it up.
+    if (isRedisConfigured()) {
+      const indexingQueue = new KnowledgeIndexingQueue();
+      await indexingQueue.enqueueIndexing(document.id);
+
+      return formatApiResponse(
+        { document, indexResult: { chunkCount: 0, embedded: false, queued: true } },
+        201,
+        "Document uploaded — indexing in the background"
+      );
+    }
+
     const rawText = await parseDocumentText(buffer, sourceType);
     const indexResult = await knowledgeRepo.indexDocument(document, rawText);
-
     const finalDocument = await knowledgeRepo.getDocumentById(document.id);
 
     return formatApiResponse(
       { document: finalDocument, indexResult },
       201,
-      indexResult.embedded ? "Document uploaded and indexed successfully" : `Document uploaded but not fully indexed: ${indexResult.error}`
+      indexResult.embedded
+        ? "Document uploaded and indexed successfully"
+        : `Document uploaded but not fully indexed: ${indexResult.error} (Redis not configured, indexed synchronously)`
     );
   } catch (error) {
     return handleApiError(error);

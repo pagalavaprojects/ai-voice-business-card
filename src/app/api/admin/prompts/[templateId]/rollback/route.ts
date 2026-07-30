@@ -4,8 +4,12 @@ import { formatApiResponse } from "@/shared/lib/security";
 import { handleApiError } from "@/shared/lib/apiHandler";
 import { requireCompanyAccess } from "@/shared/lib/tenant";
 import { SupabasePromptRepository } from "@/core/infrastructure/database/supabase/SupabasePromptRepository";
+import { SupabaseKnowledgeRepository } from "@/core/infrastructure/database/supabase/SupabaseKnowledgeRepository";
+import { PromptAssemblyService } from "@/core/application/services/PromptAssemblyService";
+import { RedisCache } from "@/core/infrastructure/cache/RedisCache";
 
 const promptRepo = new SupabasePromptRepository();
+const promptAssemblyService = new PromptAssemblyService(new SupabaseKnowledgeRepository(), promptRepo, new RedisCache());
 
 const RollbackSchema = z.object({ company_id: z.string().uuid(), version: z.number().int().positive() });
 
@@ -20,6 +24,8 @@ export async function POST(req: NextRequest, { params }: { params: { templateId:
     if (!template || template.company_id !== parsed.company_id) return formatApiResponse(null, 404, "Prompt template not found");
 
     const rolledBack = await promptRepo.rollbackToVersion(params.templateId, parsed.version, access.userId);
+    await promptAssemblyService.invalidateCompanyCache(parsed.company_id);
+
     return formatApiResponse(rolledBack, 200, `Rolled back to version ${parsed.version}`);
   } catch (error) {
     return handleApiError(error);

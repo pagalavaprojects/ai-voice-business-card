@@ -1,27 +1,11 @@
-import { RedisCache } from "@/core/infrastructure/cache/RedisCache";
-import { QueueService } from "@/core/infrastructure/queue/QueueService";
 import { TelemetryService } from "@/core/infrastructure/telemetry/OpenTelemetry";
 
+// RedisCache and QueueService are now real (Redis/BullMQ-backed, see
+// Phase 15-16) and are covered by dedicated tests that run against an
+// actual Redis server: RedisCache.test.ts, QueueService.test.ts. The
+// TelemetryService test below is still exercising the placeholder
+// implementation pending its own real-OpenTelemetry replacement.
 describe("Enterprise Infrastructure Subsystems", () => {
-  it("should set and retrieve item from RedisCache with TTL", async () => {
-    const cache = new RedisCache();
-    await cache.set("test_key", { company: "Acme Corp" }, 10);
-    const item = await cache.get<{ company: string }>("test_key");
-
-    expect(item).not.toBeNull();
-    expect(item?.company).toBe("Acme Corp");
-  });
-
-  it("should process asynchronous jobs sequentially via QueueService", async () => {
-    const queue = new QueueService();
-    await queue.enqueue("EMAIL_DISPATCH", { to: "user@example.com" });
-    expect(queue.getPendingJobsCount()).toBe(1);
-
-    const job = await queue.processNextJob();
-    expect(job?.name).toBe("EMAIL_DISPATCH");
-    expect(queue.getPendingJobsCount()).toBe(0);
-  });
-
   it("should record and track execution latency via TelemetryService", () => {
     const telemetry = new TelemetryService();
     const span = telemetry.startSpan("PROMPT_GENERATION", { companyId: "comp-1" });

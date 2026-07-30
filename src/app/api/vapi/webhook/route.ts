@@ -11,6 +11,7 @@ import { ToolRegistry } from "@/core/application/tools/ToolRegistry";
 import { NotificationService } from "@/core/application/services/NotificationService";
 import { ResendEmailAdapter } from "@/core/infrastructure/email/ResendEmailAdapter";
 import { SupabaseEmailLogRepository } from "@/core/infrastructure/database/supabase/SupabaseEmailLogRepository";
+import { RedisCache } from "@/core/infrastructure/cache/RedisCache";
 import { Logger } from "@/shared/lib/logger";
 import { supabaseAdmin } from "@/shared/lib/supabase";
 
@@ -22,7 +23,10 @@ const conversationRepo = new SupabaseConversationRepository();
 const storage = new SupabaseStorageAdapter();
 const notificationService = new NotificationService(new ResendEmailAdapter(), new SupabaseEmailLogRepository());
 
-const promptAssemblyService = new PromptAssemblyService(knowledgeRepo, promptRepo);
+// System prompt assembly hits Supabase for company/employee/products/
+// services/faqs/templates on every single call start; caching it here
+// means a returning visitor's second call doesn't re-run all of that.
+const promptAssemblyService = new PromptAssemblyService(knowledgeRepo, promptRepo, new RedisCache());
 const toolRegistry = new ToolRegistry(crmRepo, bookingRepo, knowledgeRepo, notificationService);
 
 /** Best-effort: downloads a call recording from the URL Vapi provides and

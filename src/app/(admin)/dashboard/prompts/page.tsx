@@ -10,7 +10,7 @@ import { useToast } from "@/shared/ui/toast";
 import { useCompany } from "@/features/dashboard/context/CompanyContext";
 import { apiFetch, ApiClientError } from "@/shared/lib/apiClient";
 import { Employee, PromptTemplate, PromptTemplateVersion } from "@/core/domain/models/types";
-import { PROMPT_TEMPLATE_VARIABLES } from "@/core/application/services/PromptAssemblyService";
+import { PROMPT_TEMPLATE_VARIABLES } from "@/core/application/services/promptVariables";
 import { PromptDiff } from "@/features/dashboard/components/PromptDiff";
 
 const PROMPT_MODULES: Array<{ name: PromptTemplate["module_name"]; label: string; description: string }> = [

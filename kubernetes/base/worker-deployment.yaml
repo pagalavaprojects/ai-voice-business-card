@@ -1,0 +1,34 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chatbot-ai-worker
+  labels:
+    app: chatbot-ai-worker
+spec:
+  # This was the missing half of the queue system: QueueService enqueues
+  # jobs from the web deployment's API routes, but nothing was ever
+  # deployed to process them. Runs `npm run worker` (scripts/worker.ts)
+  # instead of the Next.js server.
+  replicas: 2
+  selector:
+    matchLabels:
+      app: chatbot-ai-worker
+  template:
+    metadata:
+      labels:
+        app: chatbot-ai-worker
+    spec:
+      containers:
+        - name: chatbot-worker
+          image: chatbot-ai-platform:v2.1
+          command: ["npm", "run", "worker"]
+          envFrom:
+            - secretRef:
+                name: chatbot-secrets
+          resources:
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
