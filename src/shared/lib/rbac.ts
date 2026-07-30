@@ -31,6 +31,7 @@ export type Permission =
   | "write:prompts"
   | "read:appointments"
   | "write:appointments"
+  | "read:employees"
   | "read:settings"
   | "manage:settings"
   | "manage:api_keys"
@@ -44,6 +45,7 @@ const rolePermissions: Record<UserRole, Permission[]> = {
     "read:knowledge", "write:knowledge", "delete:knowledge",
     "read:prompts", "write:prompts",
     "read:appointments", "write:appointments",
+    "read:employees",
     "read:settings", "manage:settings", "manage:api_keys", "manage:members", "manage:branding",
   ],
   ADMIN: [
@@ -52,6 +54,7 @@ const rolePermissions: Record<UserRole, Permission[]> = {
     "read:knowledge", "write:knowledge", "delete:knowledge",
     "read:prompts", "write:prompts",
     "read:appointments", "write:appointments",
+    "read:employees",
     "read:settings", "manage:settings", "manage:api_keys", "manage:members", "manage:branding",
   ],
   MANAGER: [
@@ -60,6 +63,7 @@ const rolePermissions: Record<UserRole, Permission[]> = {
     "read:knowledge", "write:knowledge",
     "read:prompts", "write:prompts",
     "read:appointments", "write:appointments",
+    "read:employees",
     "read:settings",
   ],
   EMPLOYEE: [
@@ -68,6 +72,7 @@ const rolePermissions: Record<UserRole, Permission[]> = {
     "read:knowledge",
     "read:prompts",
     "read:appointments", "write:appointments",
+    "read:employees",
     "read:settings",
   ],
   VIEWER: [
@@ -76,6 +81,7 @@ const rolePermissions: Record<UserRole, Permission[]> = {
     "read:knowledge",
     "read:prompts",
     "read:appointments",
+    "read:employees",
     "read:settings",
   ],
 };
