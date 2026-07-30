@@ -150,6 +150,23 @@ export default function LeadsPage() {
     window.URL.revokeObjectURL(url);
   };
 
+  const [exportingAll, setExportingAll] = useState(false);
+  const exportAllServerSide = async () => {
+    if (!activeCompanyId) return;
+    setExportingAll(true);
+    try {
+      const params = new URLSearchParams({ companyId: activeCompanyId });
+      if (status !== "ALL") params.set("status", status);
+      const data = await apiFetch<{ url: string; rowCount: number }>(`/api/admin/leads/export?${params.toString()}`);
+      window.open(data.url, "_blank");
+      showToast(`Exported ${data.rowCount} leads (all matching filters, not just this page)`, "success");
+    } catch (err) {
+      showToast(err instanceof ApiClientError ? err.message : "Export failed", "error");
+    } finally {
+      setExportingAll(false);
+    }
+  };
+
   const totalPages = useMemo(() => Math.max(1, Math.ceil(total / PAGE_SIZE)), [total]);
 
   if (companyLoading) {
@@ -166,10 +183,16 @@ export default function LeadsPage() {
           <h1 className="text-2xl font-bold text-slate-100 tracking-tight">Lead Qualification & CRM</h1>
           <p className="text-xs text-slate-400">View and manage leads automatically qualified by your AI Digital Twins.</p>
         </div>
-        <Button variant="glass" onClick={exportCSV} className="flex items-center gap-2 text-xs">
-          <Download className="h-4 w-4" />
-          Export CSV
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="glass" onClick={exportCSV} className="flex items-center gap-2 text-xs">
+            <Download className="h-4 w-4" />
+            Export Page
+          </Button>
+          <Button variant="glass" onClick={exportAllServerSide} disabled={exportingAll} className="flex items-center gap-2 text-xs">
+            {exportingAll ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+            Export All
+          </Button>
+        </div>
       </div>
 
       <Card className="glass-panel border-white/[0.08] p-6 space-y-4">
