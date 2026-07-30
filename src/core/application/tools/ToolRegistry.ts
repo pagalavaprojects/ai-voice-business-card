@@ -2,6 +2,16 @@ import { ICRMRepository } from "../../domain/repositories/ICRMRepository";
 import { IBookingRepository } from "../../domain/repositories/IBookingRepository";
 import { IKnowledgeRepository } from "../../domain/repositories/IKnowledgeRepository";
 
+export const KNOWN_TOOL_NAMES = [
+  "save_lead",
+  "book_appointment",
+  "search_products",
+  "search_services",
+  "search_faqs",
+  "get_company_information",
+  "get_employee_information",
+] as const;
+
 export interface ToolContext {
   companyId: string;
   employeeId: string;

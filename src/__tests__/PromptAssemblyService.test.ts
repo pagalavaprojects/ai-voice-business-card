@@ -20,8 +20,11 @@ describe("PromptAssemblyService", () => {
 
     mockPromptRepo = {
       getPromptTemplates: jest.fn(),
+      getPromptTemplateById: jest.fn(),
       getPromptTemplateByModule: jest.fn(),
       upsertPromptTemplate: jest.fn(),
+      listVersions: jest.fn(),
+      rollbackToVersion: jest.fn(),
     };
 
     promptService = new PromptAssemblyService(mockKnowledgeRepo, mockPromptRepo);
