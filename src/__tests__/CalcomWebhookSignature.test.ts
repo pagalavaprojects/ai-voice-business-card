@@ -43,13 +43,13 @@ describe("validateCalcomWebhookSignature", () => {
   });
 
   it("fails closed in production when no secret is configured", () => {
-    process.env.NODE_ENV = "production";
+    process.env = { ...process.env, NODE_ENV: "production" };
     delete process.env.CALCOM_WEBHOOK_SECRET;
     expect(validateCalcomWebhookSignature("{}", null)).toBe(false);
   });
 
   it("is permissive outside production when no secret is configured (local dev)", () => {
-    process.env.NODE_ENV = "development";
+    process.env = { ...process.env, NODE_ENV: "development" };
     delete process.env.CALCOM_WEBHOOK_SECRET;
     expect(validateCalcomWebhookSignature("{}", null)).toBe(true);
   });
