@@ -28,7 +28,11 @@ describe("VoiceEngine Tool Execution & Registry", () => {
       createAppointment: jest.fn(),
       getAppointmentById: jest.fn(),
       getAppointmentsByEmployee: jest.fn(),
+      getAppointmentsByLead: jest.fn(),
+      listAppointments: jest.fn(),
       updateAppointmentStatus: jest.fn(),
+      rescheduleAppointment: jest.fn(),
+      cancelAppointment: jest.fn(),
     };
 
     mockKnowledgeRepo = {

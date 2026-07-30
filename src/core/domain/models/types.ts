@@ -166,6 +166,11 @@ export interface Appointment extends BaseEntity {
   end_time: string;
   status: AppointmentStatus;
   meeting_url?: string | null;
+  timezone: string;
+  cancelled_at?: string | null;
+  cancellation_reason?: string | null;
+  rescheduled_from_id?: string | null;
+  notes?: string | null;
 }
 
 export interface PromptTemplate extends BaseEntity {
