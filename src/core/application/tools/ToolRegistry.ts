@@ -1,6 +1,9 @@
 import { ICRMRepository } from "../../domain/repositories/ICRMRepository";
 import { IBookingRepository } from "../../domain/repositories/IBookingRepository";
 import { IKnowledgeRepository } from "../../domain/repositories/IKnowledgeRepository";
+import { NotificationService } from "../services/NotificationService";
+import { LeadQualificationService } from "../services/LeadQualificationService";
+import { Logger } from "@/shared/lib/logger";
 
 export const KNOWN_TOOL_NAMES = [
   "save_lead",
@@ -27,12 +30,15 @@ export interface ToolDefinition {
 
 export class ToolRegistry {
   private tools: Map<string, ToolDefinition> = new Map();
+  private qualificationService: LeadQualificationService;
 
   constructor(
     private crmRepo: ICRMRepository,
     private bookingRepo: IBookingRepository,
-    private knowledgeRepo: IKnowledgeRepository
+    private knowledgeRepo: IKnowledgeRepository,
+    private notificationService?: NotificationService
   ) {
+    this.qualificationService = new LeadQualificationService(crmRepo);
     this.registerDefaultTools();
   }
 
@@ -70,7 +76,35 @@ export class ToolRegistry {
           timeline: args.timeline ? String(args.timeline) : undefined,
         });
 
-        return { success: true, lead_id: lead.id, message: "Lead contact details saved successfully." };
+        const scored = await this.qualificationService.calculateAndSaveLeadScore(lead.id, {
+          budget: args.budget ? Number(args.budget) : undefined,
+          timeline: args.timeline ? String(args.timeline) : undefined,
+          hasNeed: Boolean(args.problem_statement),
+        });
+
+        if (scored.score_category === "HIGH" && this.notificationService) {
+          const company = await this.knowledgeRepo.getCompanyById(context.companyId);
+          const employee = await this.knowledgeRepo.getEmployeeById(context.employeeId);
+          if (employee) {
+            this.notificationService
+              .send({
+                companyId: context.companyId,
+                to: employee.email,
+                subject: `High-value lead: ${scored.name}`,
+                templateName: "high_value_lead_alert",
+                html: `<p>A high-value lead just came in via ${company?.name || "your AI voice card"}:</p><p><strong>${scored.name}</strong> (${scored.email}, ${scored.phone})<br/>Score: ${scored.score} — ${scored.score_reasoning}</p>`,
+              })
+              .catch((err) => Logger.error("High-value lead alert failed", { error: err instanceof Error ? err.message : String(err) }));
+          }
+        }
+
+        return {
+          success: true,
+          lead_id: lead.id,
+          score: scored.score,
+          score_category: scored.score_category,
+          message: "Lead contact details saved and qualified successfully.",
+        };
       },
     });
 
@@ -95,6 +129,24 @@ export class ToolRegistry {
           start_time: String(args.start_time),
           end_time: String(args.end_time),
         });
+
+        if (this.notificationService) {
+          const lead = await this.crmRepo.getLeadById(String(args.lead_id));
+          if (lead) {
+            const when = new Date(appointment.start_time).toLocaleString();
+            this.notificationService
+              .send({
+                companyId: context.companyId,
+                to: lead.email,
+                subject: "Your meeting is confirmed",
+                templateName: "appointment_confirmation",
+                html: `<p>Hi ${lead.name},</p><p>Your meeting is confirmed for <strong>${when}</strong>.</p>${
+                  appointment.meeting_url ? `<p><a href="${appointment.meeting_url}">Join the meeting</a></p>` : ""
+                }`,
+              })
+              .catch((err) => Logger.error("book_appointment confirmation email failed", { error: err instanceof Error ? err.message : String(err) }));
+          }
+        }
 
         return {
           success: true,

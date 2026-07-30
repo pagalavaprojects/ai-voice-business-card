@@ -8,6 +8,9 @@ import { SupabaseConversationRepository } from "@/core/infrastructure/database/s
 import { SupabaseStorageAdapter } from "@/core/infrastructure/storage/SupabaseStorageAdapter";
 import { PromptAssemblyService } from "@/core/application/services/PromptAssemblyService";
 import { ToolRegistry } from "@/core/application/tools/ToolRegistry";
+import { NotificationService } from "@/core/application/services/NotificationService";
+import { ResendEmailAdapter } from "@/core/infrastructure/email/ResendEmailAdapter";
+import { SupabaseEmailLogRepository } from "@/core/infrastructure/database/supabase/SupabaseEmailLogRepository";
 import { Logger } from "@/shared/lib/logger";
 import { supabaseAdmin } from "@/shared/lib/supabase";
 
@@ -17,9 +20,10 @@ const crmRepo = new SupabaseCRMRepository();
 const bookingRepo = new SupabaseBookingRepository();
 const conversationRepo = new SupabaseConversationRepository();
 const storage = new SupabaseStorageAdapter();
+const notificationService = new NotificationService(new ResendEmailAdapter(), new SupabaseEmailLogRepository());
 
 const promptAssemblyService = new PromptAssemblyService(knowledgeRepo, promptRepo);
-const toolRegistry = new ToolRegistry(crmRepo, bookingRepo, knowledgeRepo);
+const toolRegistry = new ToolRegistry(crmRepo, bookingRepo, knowledgeRepo, notificationService);
 
 /** Best-effort: downloads a call recording from the URL Vapi provides and
  * re-uploads it into our own "voice-assets" bucket, so a recording
