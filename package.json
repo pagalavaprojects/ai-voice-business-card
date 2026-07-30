@@ -12,6 +12,7 @@
     "test:watch": "jest --watch",
     "verify:migrations": "node scripts/verify-migrations.mjs",
     "worker": "tsx scripts/worker.ts",
+    "seed:pagalava": "tsx scripts/seed-pagalava.ts",
     "test:e2e": "playwright test"
   },
   "dependencies": {
