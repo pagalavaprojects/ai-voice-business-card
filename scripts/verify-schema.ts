@@ -14,6 +14,20 @@ const EXPECTED_TABLES = [
   "appointments",
   "prompt_templates",
   "audit_logs",
+  "ai_agents",
+  "rag_chunks",
+  "workflows",
+  "users",
+  "company_members",
+  "agent_knowledge_documents",
+  "knowledge_documents",
+  "knowledge_chunks",
+  "prompt_template_versions",
+  "lead_activities",
+  "branding",
+  "settings",
+  "api_keys",
+  "email_logs",
 ];
 
 async function verifySchema() {
