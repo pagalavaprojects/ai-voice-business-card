@@ -20,6 +20,10 @@ export interface CalcomBookingResponse {
   status: string;
 }
 
+export interface CalcomSlot {
+  time: string;
+}
+
 export class CalcomAdapter {
   private apiKey: string;
 
@@ -27,8 +31,40 @@ export class CalcomAdapter {
     this.apiKey = apiKey || process.env.CALCOM_API_KEY || "";
   }
 
+  isConfigured(): boolean {
+    return !isPlaceholderCredential(this.apiKey);
+  }
+
+  async getAvailableSlots(eventTypeId: number, dateFrom: string, dateTo: string, timeZone: string): Promise<CalcomSlot[]> {
+    if (!this.isConfigured()) {
+      // Demo fallback: three slots an hour apart starting tomorrow.
+      const base = new Date(dateFrom);
+      base.setDate(base.getDate() + 1);
+      base.setHours(10, 0, 0, 0);
+      return [0, 1, 2].map((i) => {
+        const slot = new Date(base);
+        slot.setHours(slot.getHours() + i);
+        return { time: slot.toISOString() };
+      });
+    }
+
+    const params = new URLSearchParams({
+      apiKey: this.apiKey,
+      eventTypeId: String(eventTypeId),
+      startTime: dateFrom,
+      endTime: dateTo,
+      timeZone,
+    });
+    const response = await fetch(`https://api.cal.com/v1/slots?${params.toString()}`);
+    if (!response.ok) throw new Error(`CalcomAdapter.getAvailableSlots failed: ${response.status} ${await response.text()}`);
+
+    const json = await response.json();
+    const slotsByDate = json.slots as Record<string, CalcomSlot[]>;
+    return Object.values(slotsByDate).flat();
+  }
+
   async createBooking(request: CalcomBookingRequest): Promise<CalcomBookingResponse> {
-    if (isPlaceholderCredential(this.apiKey)) {
+    if (!this.isConfigured()) {
       // Graceful fallback if live Cal.com API key is not yet configured
       return {
         id: Math.floor(Math.random() * 100000),
@@ -66,5 +102,40 @@ export class CalcomAdapter {
       meetingUrl: json.booking.meetingUrl || `https://cal.com/m/${json.booking.uid}`,
       status: json.booking.status,
     };
+  }
+
+  async rescheduleBooking(bookingUid: string, newStart: string, newEnd: string): Promise<CalcomBookingResponse> {
+    if (!this.isConfigured()) {
+      return { id: 0, uid: bookingUid, title: "Rescheduled meeting (demo)", meetingUrl: "https://cal.com/demo-meeting", status: "ACCEPTED" };
+    }
+
+    const response = await fetch(`https://api.cal.com/v1/bookings/${bookingUid}/reschedule`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${this.apiKey}` },
+      body: JSON.stringify({ start: newStart, end: newEnd }),
+    });
+
+    if (!response.ok) throw new Error(`CalcomAdapter.rescheduleBooking failed: ${response.status} ${await response.text()}`);
+
+    const json = await response.json();
+    return {
+      id: json.booking.id,
+      uid: json.booking.uid,
+      title: json.booking.title,
+      meetingUrl: json.booking.meetingUrl,
+      status: json.booking.status,
+    };
+  }
+
+  async cancelBooking(bookingUid: string, reason?: string): Promise<void> {
+    if (!this.isConfigured()) return;
+
+    const response = await fetch(`https://api.cal.com/v1/bookings/${bookingUid}/cancel`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${this.apiKey}` },
+      body: JSON.stringify({ reason }),
+    });
+
+    if (!response.ok) throw new Error(`CalcomAdapter.cancelBooking failed: ${response.status} ${await response.text()}`);
   }
 }
