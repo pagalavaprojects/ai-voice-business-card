@@ -1,36 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { formatApiResponse, validateVapiWebhookSignature } from "@/shared/lib/security";
-import { SupabaseKnowledgeRepository } from "@/core/infrastructure/database/supabase/SupabaseKnowledgeRepository";
-import { SupabasePromptRepository } from "@/core/infrastructure/database/supabase/SupabasePromptRepository";
-import { SupabaseCRMRepository } from "@/core/infrastructure/database/supabase/SupabaseCRMRepository";
-import { SupabaseBookingRepository } from "@/core/infrastructure/database/supabase/SupabaseBookingRepository";
 import { SupabaseConversationRepository } from "@/core/infrastructure/database/supabase/SupabaseConversationRepository";
-import { SupabaseAgentRepository } from "@/core/infrastructure/database/supabase/SupabaseAgentRepository";
 import { SupabaseStorageAdapter } from "@/core/infrastructure/storage/SupabaseStorageAdapter";
-import { PromptAssemblyService } from "@/core/application/services/PromptAssemblyService";
-import { ToolRegistry } from "@/core/application/tools/ToolRegistry";
-import { NotificationService } from "@/core/application/services/NotificationService";
-import { ResendEmailAdapter } from "@/core/infrastructure/email/ResendEmailAdapter";
-import { SupabaseEmailLogRepository } from "@/core/infrastructure/database/supabase/SupabaseEmailLogRepository";
-import { RedisCache } from "@/core/infrastructure/cache/RedisCache";
 import { withSpan, httpRequestDuration, voiceCallsTotal } from "@/core/infrastructure/telemetry/otel";
+import { promptAssemblyService, toolRegistry, agentRepo } from "@/core/infrastructure/bootstrap/assistantRuntime";
 import { Logger } from "@/shared/lib/logger";
 import { supabaseAdmin } from "@/shared/lib/supabase";
 
-const knowledgeRepo = new SupabaseKnowledgeRepository();
-const promptRepo = new SupabasePromptRepository();
-const crmRepo = new SupabaseCRMRepository();
-const bookingRepo = new SupabaseBookingRepository();
 const conversationRepo = new SupabaseConversationRepository();
-const agentRepo = new SupabaseAgentRepository();
 const storage = new SupabaseStorageAdapter();
-const notificationService = new NotificationService(new ResendEmailAdapter(), new SupabaseEmailLogRepository());
-
-// System prompt assembly hits Supabase for company/employee/products/
-// services/faqs/templates on every single call start; caching it here
-// means a returning visitor's second call doesn't re-run all of that.
-const promptAssemblyService = new PromptAssemblyService(knowledgeRepo, promptRepo, new RedisCache());
-const toolRegistry = new ToolRegistry(crmRepo, bookingRepo, knowledgeRepo, notificationService);
 
 interface VapiMessage {
   type?: string;

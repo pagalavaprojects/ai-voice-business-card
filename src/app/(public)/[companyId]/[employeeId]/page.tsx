@@ -23,6 +23,9 @@ interface PublicCardData {
     avatarUrl: string | null;
   };
   firstMessage: string;
+  systemPrompt?: string | null;
+  tools?: unknown[];
+  serverUrl?: string;
 }
 
 // Shown only while the real card is loading, or if the backend isn't
@@ -91,7 +94,14 @@ export default function VoiceBusinessCardPage() {
     startCall,
     endCall,
     toggleMute,
-  } = useVapiSession({ companyId, employeeId, firstMessage: card.firstMessage });
+  } = useVapiSession({
+    companyId,
+    employeeId,
+    firstMessage: card.firstMessage,
+    systemPrompt: card.systemPrompt,
+    tools: card.tools,
+    serverUrl: card.serverUrl,
+  });
 
   const handleBookCall = () => {
     const calUrl = process.env.NEXT_PUBLIC_CAL_BOOKING_URL || "https://cal.com/demo/30min";

@@ -1,19 +1,28 @@
 import { NextRequest, NextResponse } from "next/server";
 import { SupabaseKnowledgeRepository } from "@/core/infrastructure/database/supabase/SupabaseKnowledgeRepository";
-import { SupabaseAgentRepository } from "@/core/infrastructure/database/supabase/SupabaseAgentRepository";
+import { promptAssemblyService, toolRegistry, agentRepo } from "@/core/infrastructure/bootstrap/assistantRuntime";
 import { Logger } from "@/shared/lib/logger";
 
 const knowledgeRepo = new SupabaseKnowledgeRepository();
-const agentRepo = new SupabaseAgentRepository();
 
 const DEFAULT_FIRST_MESSAGE = "Hello! Thank you for scanning my business card. How can I help you today?";
 
 /** Intentionally unauthenticated — this is the data behind the public
  * voice business card (whoever scans the card's QR/NFC hits this route
- * with no session), unlike everything under /api/admin/*. Only
- * visitor-safe fields are returned: no internal IDs beyond what's
- * already in the URL, no personality_prompt, no tool config. */
-export async function GET(_req: NextRequest, { params }: { params: { companyId: string; employeeId: string } }) {
+ * with no session), unlike everything under /api/admin/*.
+ *
+ * This does return the assembled system prompt and tool definitions,
+ * which is a real tradeoff: the browser needs them to start a live Vapi
+ * call with `@vapi-ai/web`'s client SDK, which sends its assistant
+ * config directly to Vapi from the browser — so the prompt is visible
+ * in devtools network traffic either way once a call starts. Routing it
+ * through our own endpoint first doesn't newly expose anything a call
+ * wasn't already going to transmit from the browser; it just makes the
+ * previously-unused server-side prompt assembly actually reach the
+ * client call instead of every live call running a bare, prompt-less
+ * model. serverUrl is also returned so tool-calls and the end-of-call
+ * report route back to our webhook during the call. */
+export async function GET(req: NextRequest, { params }: { params: { companyId: string; employeeId: string } }) {
   const { companyId, employeeId } = params;
 
   try {
@@ -27,6 +36,22 @@ export async function GET(_req: NextRequest, { params }: { params: { companyId: 
     }
 
     const agent = await agentRepo.getAgentByEmployee(employeeId).catch(() => null);
+
+    const [systemPrompt] = await Promise.all([
+      promptAssemblyService.assembleSystemPrompt(companyId, employeeId).catch((err) => {
+        Logger.warn("System prompt assembly failed, live call will run without one", {
+          companyId,
+          employeeId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        return null;
+      }),
+    ]);
+
+    const serverUrl = new URL(
+      `/api/vapi/webhook?companyId=${encodeURIComponent(companyId)}&employeeId=${encodeURIComponent(employeeId)}`,
+      req.nextUrl.origin
+    ).toString();
 
     return NextResponse.json({
       company: {
@@ -44,6 +69,9 @@ export async function GET(_req: NextRequest, { params }: { params: { companyId: 
         avatarUrl: agent?.avatar_url ?? null,
       },
       firstMessage: agent?.first_message?.trim() || DEFAULT_FIRST_MESSAGE,
+      systemPrompt,
+      tools: toolRegistry.getAllToolDefinitions(),
+      serverUrl,
     });
   } catch (err) {
     // Supabase unreachable/unconfigured (e.g. placeholder credentials) is

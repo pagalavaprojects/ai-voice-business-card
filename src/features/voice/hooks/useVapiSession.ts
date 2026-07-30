@@ -7,14 +7,34 @@ import { MessageItem } from "../components/TranscriptViewer";
 
 const DEFAULT_FIRST_MESSAGE = "Hi! I'm Srinivasan Kandasamy from Pagalava Data Analytics. Thank you for scanning my AI business card. How can I help you today?";
 
+// The SDK's own type for .start()'s first argument — used as a single
+// boundary cast below. `tools` arrives here as untyped JSON (round-tripped
+// through our own /api/public/... response, produced by ToolRegistry's
+// already-OpenAI-function-call-shaped output), so it can't structurally
+// match Vapi's specific tool DTO union without re-importing our backend's
+// domain types into a client-side voice hook, which isn't worth doing
+// for a shape Vapi's own API validates at runtime regardless.
+type VapiStartParam = Parameters<InstanceType<typeof Vapi>["start"]>[0];
+
 export interface UseVapiSessionOptions {
   companyId: string;
   employeeId: string;
   vapiPublicKey?: string;
   firstMessage?: string;
+  systemPrompt?: string | null;
+  tools?: unknown[];
+  serverUrl?: string;
 }
 
-export function useVapiSession({ companyId, employeeId, vapiPublicKey, firstMessage }: UseVapiSessionOptions) {
+export function useVapiSession({
+  companyId,
+  employeeId,
+  vapiPublicKey,
+  firstMessage,
+  systemPrompt,
+  tools,
+  serverUrl,
+}: UseVapiSessionOptions) {
   const [voiceState, setVoiceState] = useState<VoiceState>("idle");
   const [isMuted, setIsMuted] = useState(false);
   const [messages, setMessages] = useState<MessageItem[]>([]);
@@ -132,20 +152,33 @@ export function useVapiSession({ companyId, employeeId, vapiPublicKey, firstMess
     try {
       setVoiceState("connecting");
 
-      await vapiRef.current.start({
+      const assistantConfig = {
         firstMessage: firstMessage || DEFAULT_FIRST_MESSAGE,
         model: {
           provider: "openai",
           model: "gpt-4o-mini",
+          // Without these, every live call ran a bare model with no
+          // knowledge of the company/employee it's representing and no
+          // ability to save leads or book meetings — the whole assembled
+          // prompt + tool registry built server-side never reached a
+          // real call, since inline assistant config from the browser
+          // is all Vapi's client SDK ever sends unless told otherwise.
+          ...(systemPrompt ? { messages: [{ role: "system" as const, content: systemPrompt }] } : {}),
+          ...(tools && tools.length > 0 ? { tools } : {}),
         },
-      });
+        // Routes tool-calls and the end-of-call report back to our
+        // webhook for this specific company/employee during the call.
+        ...(serverUrl ? { server: { url: serverUrl } } : {}),
+      } as VapiStartParam;
+
+      await vapiRef.current.start(assistantConfig);
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : "Failed to start live voice call";
       setError(errorMessage);
       setVoiceState("idle");
       stopTimer();
     }
-  }, [startTimer, stopTimer, firstMessage]);
+  }, [startTimer, stopTimer, firstMessage, systemPrompt, tools, serverUrl]);
 
   const endCall = useCallback(() => {
     if (vapiRef.current && !isDemoModeRef.current) {
