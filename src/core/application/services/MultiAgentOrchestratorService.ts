@@ -19,6 +19,8 @@ export class MultiAgentOrchestratorService {
       capabilities: ["search_products", "save_lead", "book_appointment"],
       escalation_threshold: 0.7,
       is_active: true,
+      status: "ACTIVE",
+      tools: [],
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     });
@@ -34,6 +36,8 @@ export class MultiAgentOrchestratorService {
       capabilities: ["search_faqs", "get_company_information"],
       escalation_threshold: 0.65,
       is_active: true,
+      status: "ACTIVE",
+      tools: [],
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     });
@@ -49,6 +53,8 @@ export class MultiAgentOrchestratorService {
       capabilities: ["save_lead"],
       escalation_threshold: 0.75,
       is_active: true,
+      status: "ACTIVE",
+      tools: [],
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     });

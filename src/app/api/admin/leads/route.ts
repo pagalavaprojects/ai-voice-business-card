@@ -1,6 +1,9 @@
 import { NextRequest } from "next/server";
 import { formatApiResponse } from "@/shared/lib/security";
+import { handleApiError } from "@/shared/lib/apiHandler";
+import { requireCompanyAccess } from "@/shared/lib/tenant";
 import { SupabaseCRMRepository } from "@/core/infrastructure/database/supabase/SupabaseCRMRepository";
+import { CreateLeadSchema } from "@/core/domain/models/types";
 
 const crmRepo = new SupabaseCRMRepository();
 
@@ -13,20 +16,45 @@ export async function GET(req: NextRequest) {
       return formatApiResponse(null, 400, "companyId query parameter is required");
     }
 
+    await requireCompanyAccess(req, companyId, "read:leads");
+
     const status = searchParams.get("status") || undefined;
-    const limit = searchParams.get("limit") ? Number(searchParams.get("limit")) : 20;
-    const offset = searchParams.get("offset") ? Number(searchParams.get("offset")) : 0;
+    const search = searchParams.get("search") || undefined;
+    const sortBy = (searchParams.get("sortBy") as "created_at" | "score" | "name") || "created_at";
+    const sortDir = (searchParams.get("sortDir") as "asc" | "desc") || "desc";
+    const limit = Math.min(Number(searchParams.get("limit")) || 20, 100);
+    const offset = Number(searchParams.get("offset")) || 0;
 
     const result = await crmRepo.listLeads({
       company_id: companyId,
       status,
+      search,
+      sortBy,
+      sortDir,
       limit,
       offset,
     });
 
-    return formatApiResponse(result.leads, 200, "Leads retrieved successfully");
+    return formatApiResponse(
+      { leads: result.leads, total: result.total, limit, offset },
+      200,
+      "Leads retrieved successfully"
+    );
   } catch (error: unknown) {
-    const errorMessage = error instanceof Error ? error.message : "Failed to list leads";
-    return formatApiResponse(null, 500, "Failed to list leads", [errorMessage]);
+    return handleApiError(error);
+  }
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    const body = await req.json();
+    const parsed = CreateLeadSchema.parse(body);
+
+    await requireCompanyAccess(req, parsed.company_id, "write:leads");
+
+    const lead = await crmRepo.createLead(parsed);
+    return formatApiResponse(lead, 201, "Lead created successfully");
+  } catch (error: unknown) {
+    return handleApiError(error);
   }
 }

@@ -4,8 +4,8 @@ import { hasPermission } from "@/shared/lib/rbac";
 import { checkRateLimit } from "@/shared/lib/rateLimit";
 
 describe("Production Hardening Integrations", () => {
-  it("should allow SUPER_ADMIN all permissions and restrict VIEWER from writing leads", () => {
-    expect(hasPermission("SUPER_ADMIN", "manage:settings")).toBe(true);
+  it("should allow OWNER all permissions and restrict VIEWER from writing leads", () => {
+    expect(hasPermission("OWNER", "manage:settings")).toBe(true);
     expect(hasPermission("VIEWER", "write:leads")).toBe(false);
   });
 

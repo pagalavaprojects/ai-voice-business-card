@@ -13,8 +13,12 @@ describe("LeadQualificationService", () => {
       getLeadByEmail: jest.fn(),
       updateLeadScore: jest.fn(),
       updateLeadStatus: jest.fn(),
+      updateLeadOwner: jest.fn(),
+      updateLeadTags: jest.fn(),
       listLeads: jest.fn(),
       softDeleteLead: jest.fn(),
+      addActivity: jest.fn(),
+      getActivityTimeline: jest.fn(),
     };
 
     qualificationService = new LeadQualificationService(mockCrmRepo);
@@ -32,6 +36,7 @@ describe("LeadQualificationService", () => {
       score_category: LeadScoreCategory.HIGH,
       score_reasoning: "Budget >= $5,000 (+40), Urgent Timeline (+30)",
       status: LeadStatus.QUALIFIED,
+      tags: [],
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
@@ -65,6 +70,7 @@ describe("LeadQualificationService", () => {
       score_category: LeadScoreCategory.LOW,
       score_reasoning: "",
       status: LeadStatus.NEW,
+      tags: [],
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };

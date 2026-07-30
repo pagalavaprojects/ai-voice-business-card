@@ -1,45 +1,83 @@
-export type UserRole =
-  | "SUPER_ADMIN"
-  | "COMPANY_ADMIN"
-  | "MANAGER"
-  | "SALES"
-  | "SUPPORT"
-  | "VIEWER";
+// Canonical role model — mirrors the `company_member_role` enum in
+// supabase/migrations/20260730_multitenant_platform.sql. Platform-wide
+// super-admin is intentionally NOT a role here: it is cross-tenant by
+// definition (see `users.is_platform_admin`), so it doesn't belong in a
+// per-company role list. Role order below is significant: index = rank.
+export type UserRole = "OWNER" | "ADMIN" | "MANAGER" | "EMPLOYEE" | "VIEWER";
+
+export const ROLE_RANK: Record<UserRole, number> = {
+  VIEWER: 0,
+  EMPLOYEE: 1,
+  MANAGER: 2,
+  ADMIN: 3,
+  OWNER: 4,
+};
+
+export function roleAtLeast(role: UserRole, minRole: UserRole): boolean {
+  return ROLE_RANK[role] >= ROLE_RANK[minRole];
+}
 
 export type Permission =
   | "read:leads"
   | "write:leads"
   | "delete:leads"
+  | "read:agents"
+  | "write:agents"
+  | "delete:agents"
   | "read:knowledge"
   | "write:knowledge"
+  | "delete:knowledge"
+  | "read:prompts"
   | "write:prompts"
+  | "read:appointments"
+  | "write:appointments"
+  | "read:settings"
   | "manage:settings"
-  | "manage:users";
+  | "manage:api_keys"
+  | "manage:members"
+  | "manage:branding";
 
 const rolePermissions: Record<UserRole, Permission[]> = {
-  SUPER_ADMIN: [
-    "read:leads",
-    "write:leads",
-    "delete:leads",
-    "read:knowledge",
-    "write:knowledge",
-    "write:prompts",
-    "manage:settings",
-    "manage:users",
+  OWNER: [
+    "read:leads", "write:leads", "delete:leads",
+    "read:agents", "write:agents", "delete:agents",
+    "read:knowledge", "write:knowledge", "delete:knowledge",
+    "read:prompts", "write:prompts",
+    "read:appointments", "write:appointments",
+    "read:settings", "manage:settings", "manage:api_keys", "manage:members", "manage:branding",
   ],
-  COMPANY_ADMIN: [
-    "read:leads",
-    "write:leads",
-    "delete:leads",
-    "read:knowledge",
-    "write:knowledge",
-    "write:prompts",
-    "manage:settings",
+  ADMIN: [
+    "read:leads", "write:leads", "delete:leads",
+    "read:agents", "write:agents", "delete:agents",
+    "read:knowledge", "write:knowledge", "delete:knowledge",
+    "read:prompts", "write:prompts",
+    "read:appointments", "write:appointments",
+    "read:settings", "manage:settings", "manage:api_keys", "manage:members", "manage:branding",
   ],
-  MANAGER: ["read:leads", "write:leads", "read:knowledge", "write:knowledge"],
-  SALES: ["read:leads", "write:leads", "read:knowledge"],
-  SUPPORT: ["read:leads", "read:knowledge"],
-  VIEWER: ["read:leads", "read:knowledge"],
+  MANAGER: [
+    "read:leads", "write:leads",
+    "read:agents", "write:agents",
+    "read:knowledge", "write:knowledge",
+    "read:prompts", "write:prompts",
+    "read:appointments", "write:appointments",
+    "read:settings",
+  ],
+  EMPLOYEE: [
+    "read:leads", "write:leads",
+    "read:agents",
+    "read:knowledge",
+    "read:prompts",
+    "read:appointments", "write:appointments",
+    "read:settings",
+  ],
+  VIEWER: [
+    "read:leads",
+    "read:agents",
+    "read:knowledge",
+    "read:prompts",
+    "read:appointments",
+    "read:settings",
+  ],
 };
 
 export function hasPermission(role: UserRole, permission: Permission): boolean {

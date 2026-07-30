@@ -36,15 +36,31 @@ export enum AppointmentStatus {
   COMPLETED = "COMPLETED",
 }
 
-export enum UserRole {
-  SUPER_ADMIN = "SUPER_ADMIN",
-  COMPANY_ADMIN = "COMPANY_ADMIN",
-  EMPLOYEE = "EMPLOYEE",
-}
-
 // ----------------------------------------------------
 // Entity Interfaces
 // ----------------------------------------------------
+
+export interface UserProfile {
+  id: string;
+  email: string;
+  full_name?: string | null;
+  avatar_url?: string | null;
+  is_platform_admin: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export type CompanyMemberStatus = "INVITED" | "ACTIVE" | "SUSPENDED";
+
+export interface CompanyMember extends BaseEntity {
+  company_id: string;
+  user_id: string;
+  role: "OWNER" | "ADMIN" | "MANAGER" | "EMPLOYEE" | "VIEWER";
+  status: CompanyMemberStatus;
+  invited_by?: string | null;
+  invited_at: string;
+  joined_at?: string | null;
+}
 
 export interface Company extends BaseEntity {
   name: string;
@@ -118,6 +134,8 @@ export interface Lead extends BaseEntity {
   score_category: LeadScoreCategory;
   score_reasoning?: string | null;
   status: LeadStatus;
+  owner_id?: string | null;
+  tags: string[];
 }
 
 export interface Conversation extends BaseEntity {
@@ -156,6 +174,98 @@ export interface PromptTemplate extends BaseEntity {
   template_content: string;
   version: number;
   is_active: boolean;
+}
+
+export type LeadActivityType = "NOTE" | "STATUS_CHANGE" | "CALL" | "EMAIL" | "APPOINTMENT" | "OWNER_CHANGE";
+
+export interface LeadActivity {
+  id: string;
+  lead_id: string;
+  company_id: string;
+  type: LeadActivityType;
+  content?: string | null;
+  actor_user_id?: string | null;
+  metadata?: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export type KnowledgeSourceType = "PDF" | "DOCX" | "TXT" | "MARKDOWN";
+export type KnowledgeStatus = "PENDING" | "CHUNKING" | "EMBEDDING" | "READY" | "FAILED";
+
+export interface KnowledgeDocument extends BaseEntity {
+  company_id: string;
+  title: string;
+  source_type: KnowledgeSourceType;
+  storage_path: string;
+  file_size_bytes?: number | null;
+  status: KnowledgeStatus;
+  chunk_count: number;
+  error_message?: string | null;
+  uploaded_by?: string | null;
+}
+
+export interface KnowledgeChunk {
+  id: string;
+  knowledge_document_id: string;
+  company_id: string;
+  chunk_index: number;
+  content: string;
+  token_count?: number | null;
+  created_at: string;
+  similarity?: number;
+}
+
+export interface PromptTemplateVersion {
+  id: string;
+  prompt_template_id: string;
+  version: number;
+  content: string;
+  created_by?: string | null;
+  created_at: string;
+}
+
+export interface Branding extends BaseEntity {
+  company_id: string;
+  logo_storage_path?: string | null;
+  primary_color: string;
+  secondary_color: string;
+  font_family: string;
+}
+
+export interface Settings extends BaseEntity {
+  company_id: string;
+  business_info: Record<string, unknown>;
+  calendar_settings: Record<string, unknown>;
+  email_settings: Record<string, unknown>;
+  voice_settings: Record<string, unknown>;
+}
+
+export interface ApiKeyRecord {
+  id: string;
+  company_id: string;
+  name: string;
+  key_prefix: string;
+  scopes: string[];
+  created_by?: string | null;
+  last_used_at?: string | null;
+  revoked_at?: string | null;
+  created_at: string;
+}
+
+export type EmailStatus = "QUEUED" | "SENT" | "FAILED" | "BOUNCED";
+
+export interface EmailLog {
+  id: string;
+  company_id?: string | null;
+  to_email: string;
+  subject: string;
+  template_name?: string | null;
+  status: EmailStatus;
+  provider_message_id?: string | null;
+  error_message?: string | null;
+  attempt_count: number;
+  sent_at?: string | null;
+  created_at: string;
 }
 
 export interface AuditLog extends BaseEntity {

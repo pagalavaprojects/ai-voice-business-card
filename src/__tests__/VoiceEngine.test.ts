@@ -16,8 +16,12 @@ describe("VoiceEngine Tool Execution & Registry", () => {
       getLeadByEmail: jest.fn(),
       updateLeadScore: jest.fn(),
       updateLeadStatus: jest.fn(),
+      updateLeadOwner: jest.fn(),
+      updateLeadTags: jest.fn(),
       listLeads: jest.fn(),
       softDeleteLead: jest.fn(),
+      addActivity: jest.fn(),
+      getActivityTimeline: jest.fn(),
     };
 
     mockBookingRepo = {
