@@ -4,17 +4,45 @@ import { SupabaseKnowledgeRepository } from "@/core/infrastructure/database/supa
 import { SupabasePromptRepository } from "@/core/infrastructure/database/supabase/SupabasePromptRepository";
 import { SupabaseCRMRepository } from "@/core/infrastructure/database/supabase/SupabaseCRMRepository";
 import { SupabaseBookingRepository } from "@/core/infrastructure/database/supabase/SupabaseBookingRepository";
+import { SupabaseConversationRepository } from "@/core/infrastructure/database/supabase/SupabaseConversationRepository";
+import { SupabaseStorageAdapter } from "@/core/infrastructure/storage/SupabaseStorageAdapter";
 import { PromptAssemblyService } from "@/core/application/services/PromptAssemblyService";
 import { ToolRegistry } from "@/core/application/tools/ToolRegistry";
 import { Logger } from "@/shared/lib/logger";
+import { supabaseAdmin } from "@/shared/lib/supabase";
 
 const knowledgeRepo = new SupabaseKnowledgeRepository();
 const promptRepo = new SupabasePromptRepository();
 const crmRepo = new SupabaseCRMRepository();
 const bookingRepo = new SupabaseBookingRepository();
+const conversationRepo = new SupabaseConversationRepository();
+const storage = new SupabaseStorageAdapter();
 
 const promptAssemblyService = new PromptAssemblyService(knowledgeRepo, promptRepo);
 const toolRegistry = new ToolRegistry(crmRepo, bookingRepo, knowledgeRepo);
+
+/** Best-effort: downloads a call recording from the URL Vapi provides and
+ * re-uploads it into our own "voice-assets" bucket, so a recording
+ * survives independently of Vapi's own retention window. Failure here
+ * must never fail the whole webhook — the conversation row is still
+ * valuable without the recording. */
+async function archiveRecording(companyId: string, conversationId: string, recordingUrl: string): Promise<string | null> {
+  try {
+    const response = await fetch(recordingUrl);
+    if (!response.ok) return null;
+    const buffer = Buffer.from(await response.arrayBuffer());
+    const contentType = response.headers.get("content-type") || "audio/wav";
+    const extension = contentType.includes("mp3") ? "mp3" : contentType.includes("ogg") ? "ogg" : "wav";
+    const path = `${companyId}/${conversationId}.${extension}`;
+
+    await storage.ensureBucket("voice-assets", false);
+    await storage.upload("voice-assets", path, buffer, contentType);
+    return path;
+  } catch (err) {
+    Logger.warn("Failed to archive Vapi call recording", { error: err instanceof Error ? err.message : String(err) });
+    return null;
+  }
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -40,6 +68,10 @@ export async function POST(req: NextRequest) {
 
       const systemPrompt = await promptAssemblyService.assembleSystemPrompt(companyId, employeeId);
       const tools = toolRegistry.getAllToolDefinitions();
+
+      if (message.call?.id) {
+        await conversationRepo.getOrCreateConversationByVapiCallId(companyId, employeeId, message.call.id);
+      }
 
       return NextResponse.json({
         assistant: {
@@ -75,7 +107,18 @@ export async function POST(req: NextRequest) {
 
       const companyId = req.nextUrl.searchParams.get("companyId") || "";
       const employeeId = req.nextUrl.searchParams.get("employeeId") || "";
-      const conversationId = message.call?.id;
+      const vapiCallId = message.call?.id;
+
+      // `conversations.id` is a UUID FK that leads.conversation_id
+      // references — passing the raw Vapi call ID string here (as this
+      // route previously did) would fail that foreign key constraint the
+      // first time a real call tried to save a lead.
+      let conversationId: string | undefined;
+      if (vapiCallId && companyId && employeeId) {
+        const conversation = await conversationRepo.getOrCreateConversationByVapiCallId(companyId, employeeId, vapiCallId);
+        await conversationRepo.appendToolCalled(conversation.id, name);
+        conversationId = conversation.id;
+      }
 
       const result = await tool.execute(args, { companyId, employeeId, conversationId });
 
@@ -91,8 +134,59 @@ export async function POST(req: NextRequest) {
 
     // 3. Handle End of Call Report
     if (message.type === "end-of-call-report") {
-      Logger.info("Vapi call ended", { callId: message.call?.id, summary: message.analysis?.summary });
-      return formatApiResponse({ status: "processed" }, 200, "Call report acknowledged");
+      const companyId = req.nextUrl.searchParams.get("companyId") || message.call?.customer?.extension;
+      const employeeId = req.nextUrl.searchParams.get("employeeId");
+      const vapiCallId = message.call?.id;
+
+      if (!companyId || !employeeId || !vapiCallId) {
+        Logger.info("Vapi end-of-call-report missing correlation IDs, cannot persist", { vapiCallId });
+        return formatApiResponse({ status: "processed" }, 200, "Call report acknowledged (no company/employee/call id to correlate)");
+      }
+
+      const conversation = await conversationRepo.getOrCreateConversationByVapiCallId(companyId, employeeId, vapiCallId);
+
+      const durationSeconds = Number(message.durationSeconds ?? message.duration ?? 0);
+      const summary = message.summary ?? message.analysis?.summary;
+      const transcript = message.transcript ?? message.artifact?.transcript;
+      const sentiment = message.analysis?.successEvaluation ?? message.analysis?.sentiment;
+      const recordingUrl = message.recordingUrl ?? message.artifact?.recordingUrl;
+
+      let audioMetadata: Record<string, unknown> = { endedReason: message.endedReason };
+      if (recordingUrl) {
+        const archivedPath = await archiveRecording(companyId, conversation.id, recordingUrl);
+        audioMetadata = { ...audioMetadata, originalRecordingUrl: recordingUrl, archivedPath };
+      }
+
+      const { data: lead } = await supabaseAdmin
+        .from("leads")
+        .select("id, score")
+        .eq("conversation_id", conversation.id)
+        .maybeSingle();
+
+      let appointmentId: string | undefined;
+      if (lead) {
+        const { data: appointment } = await supabaseAdmin
+          .from("appointments")
+          .select("id")
+          .eq("lead_id", lead.id)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        appointmentId = appointment?.id;
+      }
+
+      await conversationRepo.endConversation(conversation.id, {
+        durationSeconds,
+        summary,
+        sentiment,
+        transcript,
+        leadScore: lead?.score,
+        appointmentId,
+        audioMetadata,
+      });
+
+      Logger.info("Vapi call ended and persisted", { callId: vapiCallId, conversationId: conversation.id, summary });
+      return formatApiResponse({ status: "processed" }, 200, "Call report processed and persisted");
     }
 
     return formatApiResponse({ status: "ignored" }, 200, "Event type acknowledged but not processed");

@@ -9,6 +9,8 @@ describe("ConversationEngine", () => {
     mockConversationRepo = {
       createConversation: jest.fn(),
       getConversationById: jest.fn(),
+      getOrCreateConversationByVapiCallId: jest.fn(),
+      appendToolCalled: jest.fn(),
       addMessage: jest.fn(),
       getMessages: jest.fn(),
       endConversation: jest.fn(),

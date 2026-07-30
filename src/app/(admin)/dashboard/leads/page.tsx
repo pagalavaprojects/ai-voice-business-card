@@ -462,12 +462,29 @@ export default function LeadsPage() {
             </div>
             {leadConversation && (
               <div>
-                <div className="text-slate-500 uppercase tracking-wide text-[10px] mb-1">Conversation Summary</div>
+                <div className="text-slate-500 uppercase tracking-wide text-[10px] mb-1">Voice Conversation</div>
                 <p className="text-slate-300">{leadConversation.summary || "No summary generated for this call."}</p>
                 <div className="text-slate-600 text-[11px] mt-1">
                   {leadConversation.duration_seconds ? `${leadConversation.duration_seconds}s` : ""}
                   {leadConversation.sentiment ? ` • sentiment: ${leadConversation.sentiment}` : ""}
                 </div>
+                {leadConversation.tools_called && leadConversation.tools_called.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mt-2">
+                    {leadConversation.tools_called.map((tool, i) => (
+                      <Badge key={`${tool}-${i}`} variant="outline">
+                        {tool}
+                      </Badge>
+                    ))}
+                  </div>
+                )}
+                {leadConversation.transcript && (
+                  <details className="mt-2 text-xs">
+                    <summary className="cursor-pointer text-sky-400">View full transcript</summary>
+                    <pre className="whitespace-pre-wrap text-slate-400 mt-1 bg-slate-900/60 border border-white/[0.06] rounded-lg p-3 max-h-48 overflow-y-auto">
+                      {leadConversation.transcript}
+                    </pre>
+                  </details>
+                )}
               </div>
             )}
             {leadAppointments.length > 0 && (

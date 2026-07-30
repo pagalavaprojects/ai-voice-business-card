@@ -1,4 +1,4 @@
-import { IConversationRepository } from "@/core/domain/repositories/IConversationRepository";
+import { EndConversationData, IConversationRepository } from "@/core/domain/repositories/IConversationRepository";
 import { Conversation, ConversationMessage } from "@/core/domain/models/types";
 import { supabaseAdmin } from "@/shared/lib/supabase";
 
@@ -24,6 +24,35 @@ export class SupabaseConversationRepository implements IConversationRepository {
     const { data, error } = await supabaseAdmin.from("conversations").select().eq("id", id).single();
     if (error && error.code !== "PGRST116") throw new Error(`getConversationById failed: ${error.message}`);
     return (data as Conversation) || null;
+  }
+
+  async getOrCreateConversationByVapiCallId(companyId: string, employeeId: string, vapiCallId: string): Promise<Conversation> {
+    const { data: existing, error: lookupError } = await supabaseAdmin
+      .from("conversations")
+      .select()
+      .eq("vapi_call_id", vapiCallId)
+      .maybeSingle();
+
+    if (lookupError) throw new Error(`getOrCreateConversationByVapiCallId failed: ${lookupError.message}`);
+    if (existing) return existing as Conversation;
+
+    return this.createConversation(companyId, employeeId, vapiCallId);
+  }
+
+  async appendToolCalled(id: string, toolName: string): Promise<Conversation> {
+    const conversation = await this.getConversationById(id);
+    if (!conversation) throw new Error(`appendToolCalled failed: conversation ${id} not found`);
+
+    const existing = conversation.tools_called || [];
+    const { data, error } = await supabaseAdmin
+      .from("conversations")
+      .update({ tools_called: [...existing, toolName] })
+      .eq("id", id)
+      .select()
+      .single();
+
+    if (error) throw new Error(`appendToolCalled failed: ${error.message}`);
+    return data as Conversation;
   }
 
   async addMessage(
@@ -58,20 +87,27 @@ export class SupabaseConversationRepository implements IConversationRepository {
     return (data as ConversationMessage[]) || [];
   }
 
-  async endConversation(id: string, durationSeconds: number, summary?: string): Promise<Conversation> {
-    const { data, error } = await supabaseAdmin
+  async endConversation(id: string, data: EndConversationData): Promise<Conversation> {
+    const { data: row, error } = await supabaseAdmin
       .from("conversations")
       .update({
         status: "SUMMARIZED",
         ended_at: new Date().toISOString(),
-        duration_seconds: durationSeconds,
-        summary,
+        duration_seconds: data.durationSeconds,
+        summary: data.summary,
+        sentiment: data.sentiment,
+        transcript: data.transcript,
+        intent: data.intent,
+        ...(data.toolsCalled && { tools_called: data.toolsCalled }),
+        lead_score: data.leadScore,
+        appointment_id: data.appointmentId,
+        audio_metadata: data.audioMetadata || {},
       })
       .eq("id", id)
       .select()
       .single();
 
     if (error) throw new Error(`endConversation failed: ${error.message}`);
-    return data as Conversation;
+    return row as Conversation;
   }
 }

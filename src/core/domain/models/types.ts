@@ -148,6 +148,12 @@ export interface Conversation extends BaseEntity {
   duration_seconds?: number | null;
   summary?: string | null;
   sentiment?: string | null;
+  intent?: string | null;
+  tools_called: string[];
+  lead_score?: number | null;
+  transcript?: string | null;
+  audio_metadata: Record<string, unknown>;
+  appointment_id?: string | null;
 }
 
 export interface ConversationMessage extends BaseEntity {
