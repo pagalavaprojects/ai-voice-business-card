@@ -8,7 +8,7 @@ import { Badge } from "@/shared/ui/badge";
 import { Dialog } from "@/shared/ui/dialog";
 import { useCompany } from "@/features/dashboard/context/CompanyContext";
 import { apiFetch, ApiClientError } from "@/shared/lib/apiClient";
-import { Appointment, Conversation, Lead, LeadActivity, LeadStatus } from "@/core/domain/models/types";
+import { Appointment, Conversation, CompanyMember, Lead, LeadActivity, LeadStatus, UserProfile } from "@/core/domain/models/types";
 import { useToast } from "@/shared/ui/toast";
 
 const STATUS_OPTIONS: Array<Lead["status"] | "ALL"> = [
@@ -42,6 +42,18 @@ export default function LeadsPage() {
   const [leadAppointments, setLeadAppointments] = useState<Appointment[]>([]);
   const [leadConversation, setLeadConversation] = useState<Conversation | null>(null);
   const [timelineLoading, setTimelineLoading] = useState(false);
+
+  const [members, setMembers] = useState<Array<CompanyMember & { user: UserProfile | null }>>([]);
+  const [tagInput, setTagInput] = useState("");
+  const [noteInput, setNoteInput] = useState("");
+  const [savingNote, setSavingNote] = useState(false);
+
+  useEffect(() => {
+    if (!activeCompanyId) return;
+    apiFetch<Array<CompanyMember & { user: UserProfile | null }>>(`/api/admin/members?companyId=${activeCompanyId}`)
+      .then(setMembers)
+      .catch(() => setMembers([]));
+  }, [activeCompanyId]);
 
   // Debounce the search box into the actual query param instead of filtering
   // client-side against nothing, which was the previous page's bug.
@@ -125,6 +137,68 @@ export default function LeadsPage() {
       showToast(`Lead marked as ${newStatus}`, "success");
     } catch (err) {
       showToast(err instanceof ApiClientError ? err.message : "Failed to update lead", "error");
+    }
+  };
+
+  const changeOwner = async (ownerId: string) => {
+    if (!activeCompanyId || !selectedLead) return;
+    try {
+      const updated = await apiFetch<Lead>(`/api/admin/leads/${selectedLead.id}`, {
+        method: "PUT",
+        body: JSON.stringify({ company_id: activeCompanyId, owner_id: ownerId || null }),
+      });
+      setSelectedLead(updated);
+      setLeads((prev) => prev.map((l) => (l.id === updated.id ? updated : l)));
+      showToast("Owner updated", "success");
+    } catch (err) {
+      showToast(err instanceof ApiClientError ? err.message : "Failed to update owner", "error");
+    }
+  };
+
+  const addTag = async () => {
+    if (!activeCompanyId || !selectedLead || !tagInput.trim()) return;
+    const nextTags = Array.from(new Set([...selectedLead.tags, tagInput.trim()]));
+    try {
+      const updated = await apiFetch<Lead>(`/api/admin/leads/${selectedLead.id}`, {
+        method: "PUT",
+        body: JSON.stringify({ company_id: activeCompanyId, tags: nextTags }),
+      });
+      setSelectedLead(updated);
+      setLeads((prev) => prev.map((l) => (l.id === updated.id ? updated : l)));
+      setTagInput("");
+    } catch (err) {
+      showToast(err instanceof ApiClientError ? err.message : "Failed to add tag", "error");
+    }
+  };
+
+  const removeTag = async (tag: string) => {
+    if (!activeCompanyId || !selectedLead) return;
+    try {
+      const updated = await apiFetch<Lead>(`/api/admin/leads/${selectedLead.id}`, {
+        method: "PUT",
+        body: JSON.stringify({ company_id: activeCompanyId, tags: selectedLead.tags.filter((t) => t !== tag) }),
+      });
+      setSelectedLead(updated);
+      setLeads((prev) => prev.map((l) => (l.id === updated.id ? updated : l)));
+    } catch (err) {
+      showToast(err instanceof ApiClientError ? err.message : "Failed to remove tag", "error");
+    }
+  };
+
+  const addNote = async () => {
+    if (!activeCompanyId || !selectedLead || !noteInput.trim()) return;
+    setSavingNote(true);
+    try {
+      const note = await apiFetch<LeadActivity>(`/api/admin/leads/${selectedLead.id}/notes`, {
+        method: "POST",
+        body: JSON.stringify({ company_id: activeCompanyId, content: noteInput.trim() }),
+      });
+      setTimeline((prev) => [note, ...(prev || [])]);
+      setNoteInput("");
+    } catch (err) {
+      showToast(err instanceof ApiClientError ? err.message : "Failed to add note", "error");
+    } finally {
+      setSavingNote(false);
     }
   };
 
@@ -346,6 +420,46 @@ export default function LeadsPage() {
                 <p className="text-slate-300">{selectedLead.problem_statement}</p>
               </div>
             )}
+
+            <div className="grid grid-cols-2 gap-4 text-xs">
+              <div>
+                <div className="text-slate-500 uppercase tracking-wide text-[10px] mb-1">Owner</div>
+                <select
+                  value={selectedLead.owner_id || ""}
+                  onChange={(e) => changeOwner(e.target.value)}
+                  className="dashboard-input"
+                >
+                  <option value="">Unassigned</option>
+                  {members.map((m) => (
+                    <option key={m.user_id} value={m.user_id}>
+                      {m.user?.full_name || m.user?.email || m.user_id}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <div className="text-slate-500 uppercase tracking-wide text-[10px] mb-1">Tags</div>
+                <div className="flex flex-wrap gap-1 mb-1">
+                  {selectedLead.tags.map((tag) => (
+                    <Badge key={tag} variant="outline" className="cursor-pointer" onClick={() => removeTag(tag)}>
+                      {tag} ×
+                    </Badge>
+                  ))}
+                </div>
+                <div className="flex gap-1">
+                  <input
+                    value={tagInput}
+                    onChange={(e) => setTagInput(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && addTag()}
+                    placeholder="Add tag…"
+                    className="dashboard-input"
+                  />
+                  <Button variant="outline" size="sm" onClick={addTag}>
+                    Add
+                  </Button>
+                </div>
+              </div>
+            </div>
             {leadConversation && (
               <div>
                 <div className="text-slate-500 uppercase tracking-wide text-[10px] mb-1">Conversation Summary</div>
@@ -371,6 +485,22 @@ export default function LeadsPage() {
                 </ul>
               </div>
             )}
+            <div>
+              <div className="text-slate-500 uppercase tracking-wide text-[10px] mb-2">Add Note</div>
+              <div className="flex gap-2">
+                <input
+                  value={noteInput}
+                  onChange={(e) => setNoteInput(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && addNote()}
+                  placeholder="Leave a note for the team…"
+                  className="dashboard-input"
+                />
+                <Button variant="outline" size="sm" onClick={addNote} disabled={savingNote}>
+                  {savingNote ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Add"}
+                </Button>
+              </div>
+            </div>
+
             <div>
               <div className="text-slate-500 uppercase tracking-wide text-[10px] mb-2">Activity Timeline</div>
               {timelineLoading ? (
