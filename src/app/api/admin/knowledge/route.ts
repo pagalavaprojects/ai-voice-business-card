@@ -5,6 +5,7 @@ import { requireCompanyAccess } from "@/shared/lib/tenant";
 import { SupabaseKnowledgeDocumentRepository } from "@/core/infrastructure/database/supabase/SupabaseKnowledgeDocumentRepository";
 import { SupabaseStorageAdapter } from "@/core/infrastructure/storage/SupabaseStorageAdapter";
 import { inferSourceType, parseDocumentText } from "@/core/infrastructure/knowledge/DocumentParser";
+import { KnowledgeStatus } from "@/core/domain/models/types";
 
 const knowledgeRepo = new SupabaseKnowledgeDocumentRepository();
 const storage = new SupabaseStorageAdapter();
@@ -20,8 +21,9 @@ export async function GET(req: NextRequest) {
 
     const limit = Math.min(Number(req.nextUrl.searchParams.get("limit")) || 50, 100);
     const offset = Number(req.nextUrl.searchParams.get("offset")) || 0;
+    const status = (req.nextUrl.searchParams.get("status") as KnowledgeStatus | null) ?? undefined;
 
-    const result = await knowledgeRepo.listDocuments({ company_id: companyId, limit, offset });
+    const result = await knowledgeRepo.listDocuments({ company_id: companyId, status, limit, offset });
     return formatApiResponse(result, 200, "Knowledge documents retrieved successfully");
   } catch (error) {
     return handleApiError(error);

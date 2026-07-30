@@ -1,7 +1,8 @@
-import { KnowledgeChunk, KnowledgeDocument, KnowledgeSourceType } from "../models/types";
+import { KnowledgeChunk, KnowledgeDocument, KnowledgeSourceType, KnowledgeStatus } from "../models/types";
 
 export interface KnowledgeDocumentFilter {
   company_id: string;
+  status?: KnowledgeStatus;
   limit?: number;
   offset?: number;
 }

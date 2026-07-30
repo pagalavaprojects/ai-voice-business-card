@@ -47,13 +47,15 @@ export class SupabaseKnowledgeDocumentRepository implements IKnowledgeDocumentRe
     const limit = filter.limit || 50;
     const offset = filter.offset || 0;
 
-    const { data, count, error } = await supabaseAdmin
+    let query = supabaseAdmin
       .from("knowledge_documents")
       .select("*", { count: "exact" })
       .eq("company_id", filter.company_id)
-      .is("deleted_at", null)
-      .order("created_at", { ascending: false })
-      .range(offset, offset + limit - 1);
+      .is("deleted_at", null);
+
+    if (filter.status) query = query.eq("status", filter.status);
+
+    const { data, count, error } = await query.order("created_at", { ascending: false }).range(offset, offset + limit - 1);
 
     if (error) throw new Error(`SupabaseKnowledgeDocumentRepository.listDocuments failed: ${error.message}`);
     return { documents: (data as KnowledgeDocument[]) || [], total: count || 0 };
