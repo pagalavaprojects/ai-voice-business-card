@@ -6,9 +6,11 @@
 // Supabase project.
 //
 // Known gap: this PGlite build does not bundle the `vector` extension, so
-// pgvector-specific statements (embedding columns, ivfflat indexes) are
-// stripped for this run only — they are not modified in the real migration
-// files and still require a live Postgres with pgvector to confirm.
+// pgvector-specific statements (embedding columns, ivfflat indexes, and any
+// function whose signature takes a vector(1536) argument, e.g. the
+// knowledge-search RPC) are stripped for this run only — they are not
+// modified in the real migration files and still require a live Postgres
+// with pgvector to confirm.
 import { PGlite } from "@electric-sql/pglite";
 import { uuid_ossp } from "@electric-sql/pglite/contrib/uuid_ossp";
 import { pg_trgm } from "@electric-sql/pglite/contrib/pg_trgm";
@@ -19,8 +21,13 @@ import { join } from "node:path";
 function stripVectorForHarnessOnly(sql) {
   return sql
     .replace(/CREATE EXTENSION IF NOT EXISTS vector;\n?/g, "")
-    .replace(/\s*embedding vector\(1536\),?\n/g, "\n")
-    .replace(/CREATE INDEX idx_knowledge_chunks_embedding[\s\S]*?;\n/g, "");
+    .replace(/^\s*embedding vector\(1536\),?\n/gm, "\n")
+    .replace(/CREATE INDEX idx_knowledge_chunks_embedding[\s\S]*?;\n/g, "")
+    // Any function whose signature references vector(1536) is inherently
+    // untestable without the extension — drop the whole CREATE FUNCTION
+    // statement for this run rather than mangling it into something that
+    // silently verifies the wrong thing.
+    .replace(/CREATE OR REPLACE FUNCTION [^;]*?vector\(1536\)[\s\S]*?\$\$;\n?/g, "");
 }
 
 const authStub = `
