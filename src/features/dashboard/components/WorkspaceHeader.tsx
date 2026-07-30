@@ -3,6 +3,7 @@
 import React from "react";
 import { ChevronDown } from "lucide-react";
 import { useCompany } from "@/features/dashboard/context/CompanyContext";
+import { GlobalSearch } from "@/features/dashboard/components/GlobalSearch";
 
 export function WorkspaceHeader() {
   const { loading, error, user, memberships, activeCompanyId, activeMembership, setActiveCompanyId } = useCompany();
@@ -38,6 +39,10 @@ export function WorkspaceHeader() {
             <ChevronDown className="pointer-events-none absolute right-0 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-500" />
           </div>
         )}
+      </div>
+
+      <div className="flex-1 flex justify-center px-4 hidden md:flex">
+        <GlobalSearch />
       </div>
 
       <div className="flex items-center gap-3 shrink-0">
