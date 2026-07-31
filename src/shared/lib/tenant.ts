@@ -2,11 +2,24 @@ import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextRequest } from "next/server";
 import { Permission, UserRole, hasPermission } from "@/shared/lib/rbac";
 import { SupabaseMembershipRepository } from "@/core/infrastructure/database/supabase/SupabaseMembershipRepository";
+import { checkRateLimitDistributed } from "@/shared/lib/rateLimit";
 
 export class AuthError extends Error {
   constructor(public status: 401 | 403, message: string) {
     super(message);
     this.name = "AuthError";
+  }
+}
+
+/** Distinct from AuthError so handleApiError can return 429 rather than
+ * conflating "too many requests" with "not allowed" — a client that retries
+ * on 403 will hammer the endpoint, whereas 429 is the documented back-off
+ * signal and carries Retry-After. */
+export class RateLimitError extends Error {
+  readonly status = 429 as const;
+  constructor(public retryAfterSeconds: number) {
+    super("Too Many Requests");
+    this.name = "RateLimitError";
   }
 }
 
@@ -96,11 +109,36 @@ export async function resolveCompanyAccess(
  * repositories use the service-role key, which bypasses RLS entirely, so
  * RLS policies alone cannot be relied on here.
  */
+/** Requests/minute per authenticated user against the admin API. */
+const ADMIN_RATE_LIMIT = 120;
+const ADMIN_RATE_WINDOW_MS = 60_000;
+
 export async function requireCompanyAccess(
   req: NextRequest,
   companyId: string,
   permission: Permission
 ): Promise<CompanyAccess> {
   const user = await getAuthenticatedUser(req);
+
+  // Enforced here rather than in middleware because Next 14 middleware runs on
+  // the Edge runtime, where ioredis cannot open a TCP socket — a Redis-backed
+  // limit is simply not expressible there. This function is the one chokepoint
+  // every admin route already awaits (verified across all 28), and it runs in
+  // the Node runtime, so it is where a genuinely distributed limit can live.
+  //
+  // Keyed by user id, not IP: IP buckets punish everyone behind one corporate
+  // NAT together and are trivially evaded via proxy rotation.
+  //
+  // Unauthenticated requests are skipped deliberately — there is no stable
+  // identity to key on, and resolveCompanyAccess rejects them with 401 on the
+  // next line regardless. The edge middleware's IP-based check still fronts
+  // them, so they are not unprotected.
+  if (user) {
+    const { allowed } = await checkRateLimitDistributed(`admin:${user.id}`, ADMIN_RATE_LIMIT, ADMIN_RATE_WINDOW_MS);
+    if (!allowed) {
+      throw new RateLimitError(Math.ceil(ADMIN_RATE_WINDOW_MS / 1000));
+    }
+  }
+
   return resolveCompanyAccess(user, companyId, permission, membershipRepo);
 }

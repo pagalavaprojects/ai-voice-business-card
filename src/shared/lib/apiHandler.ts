@@ -1,5 +1,5 @@
 import { ZodError } from "zod";
-import { AuthError } from "@/shared/lib/tenant";
+import { AuthError, RateLimitError } from "@/shared/lib/tenant";
 import { formatApiResponse } from "@/shared/lib/security";
 
 /** Single place every API route converts a thrown error into a consistent
@@ -10,6 +10,13 @@ import { formatApiResponse } from "@/shared/lib/security";
 export function handleApiError(error: unknown) {
   if (error instanceof AuthError) {
     return formatApiResponse(null, error.status, error.message);
+  }
+  // 429 carries Retry-After so clients back off on the documented signal
+  // instead of retrying immediately as they would against a 403.
+  if (error instanceof RateLimitError) {
+    const response = formatApiResponse(null, 429, error.message, ["Rate limit exceeded"]);
+    response.headers.set("Retry-After", String(error.retryAfterSeconds));
+    return response;
   }
   if (error instanceof ZodError) {
     return formatApiResponse(

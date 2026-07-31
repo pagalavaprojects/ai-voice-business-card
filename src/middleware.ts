@@ -1,6 +1,9 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
-import { checkRateLimit } from "@/shared/lib/rateLimit";
+// Imported from rateLimitMemory (not rateLimit) on purpose: this file runs on
+// the Edge runtime, and rateLimit.ts pulls in ioredis, which fails the
+// production build here with UnhandledSchemeError on node:diagnostics_channel.
+import { checkRateLimit } from "@/shared/lib/rateLimitMemory";
 
 export async function middleware(request: NextRequest) {
   let response = NextResponse.next({
@@ -9,9 +12,17 @@ export async function middleware(request: NextRequest) {
     },
   });
 
+  // Layer 1 of 2: a cheap per-instance IP filter that rejects floods before
+  // they reach the database or Supabase auth. It is intentionally NOT the
+  // authoritative limit — middleware runs on the Edge runtime, where ioredis
+  // cannot open a TCP socket, so a distributed limit is not expressible here.
+  // The authoritative, Redis-backed, per-user limit lives in
+  // requireCompanyAccess (Node runtime), which all 28 admin routes await.
+  // The ceiling here is deliberately looser so it catches abuse without
+  // pre-empting the accurate limit downstream.
   if (request.nextUrl.pathname.startsWith("/api/admin")) {
     const identifier = request.headers.get("x-forwarded-for") || "unknown";
-    const { allowed } = checkRateLimit(`admin:${identifier}`, 60, 60_000);
+    const { allowed } = checkRateLimit(`admin:${identifier}`, 300, 60_000);
     if (!allowed) {
       return NextResponse.json(
         { status: 429, success: false, message: "Too Many Requests", data: null, errors: ["Rate limit exceeded"] },
