@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
+import { SEEDED_CARD_PATH } from "./seeded-card";
 
 /**
  * Real automated WCAG scanning via axe-core running inside an actual
@@ -16,7 +17,7 @@ test.describe("Accessibility (real axe-core scan, WCAG 2.1 AA)", () => {
   });
 
   test("voice widget page has no WCAG 2.1 AA violations", async ({ page }) => {
-    await page.goto("/acme/emp1");
+    await page.goto(SEEDED_CARD_PATH);
     const results = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]).analyze();
     expect(results.violations, JSON.stringify(results.violations, null, 2)).toEqual([]);
   });

@@ -9,12 +9,16 @@ import { defineConfig, devices } from "@playwright/test";
  * environment (verified — see PLAYWRIGHT_VERIFICATION notes in the final
  * report).
  *
- * webServer starts a real `next build && next start` (production) server
- * automatically before the suite runs — no scenario here depends on live
- * Supabase/Vapi/Cal.com/Resend, since none are configured in this
- * environment; tests are scoped to what's genuinely verifiable without
- * live infrastructure (page rendering, navigation, the auth redirect,
- * responsive layout, console-error absence).
+ * webServer starts a real production server (`next start`) before the suite
+ * runs. It does NOT build — run `npm run build` first, or the server exits
+ * with "Could not find a production build".
+ *
+ * Prerequisites: these specs now require a live Supabase project seeded via
+ * `npm run seed:pagalava`. That is deliberate — the public card no longer
+ * invents a fallback identity when the lookup fails, so asserting against a
+ * real seeded card is the only way to test what visitors actually see.
+ * Vapi/Cal.com/Resend are still not required: nothing here starts a live
+ * voice call or books anything.
  */
 export default defineConfig({
   testDir: "./e2e",

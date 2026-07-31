@@ -1,5 +1,7 @@
 import { test, expect } from "@playwright/test";
 
+import { SEEDED_CARD_PATH } from "./seeded-card";
+
 test.describe("Public pages (real browser, no live infrastructure required)", () => {
   test("landing page loads with no console errors and the CTA is visible and reachable", async ({ page }) => {
     const consoleErrors: string[] = [];
@@ -27,7 +29,7 @@ test.describe("Public pages (real browser, no live infrastructure required)", ()
     const consoleErrors: string[] = [];
     page.on("pageerror", (err) => consoleErrors.push(err.message));
 
-    const response = await page.goto("/acme/emp1");
+    const response = await page.goto(SEEDED_CARD_PATH);
     expect(response?.status()).toBe(200);
 
     // VoiceMicButton sets a dynamic aria-label per call state — "idle" on
@@ -36,6 +38,17 @@ test.describe("Public pages (real browser, no live infrastructure required)", ()
     await expect(page.getByRole("button", { name: /Start voice conversation/i })).toBeVisible();
 
     expect(consoleErrors).toEqual([]);
+  });
+
+  test("an unknown card shows a not-found state instead of a fallback identity", async ({ page }) => {
+    // Regression guard: the page used to render a hard-coded Acme / Sarah
+    // Connor identity whenever the real card failed to load, so a bad link
+    // silently showed a stranger's name and spoke their pitch.
+    await page.goto("/00000000-0000-0000-0000-000000000000/00000000-0000-0000-0000-000000000000");
+
+    await expect(page.getByText(/not found|unavailable/i)).toBeVisible();
+    await expect(page.getByRole("button", { name: /Start voice conversation/i })).toHaveCount(0);
+    expect(await page.locator("body").innerText()).not.toMatch(/Sarah Connor|Acme Autonomous/i);
   });
 
   test("unauthenticated visitors are redirected away from the admin dashboard", async ({ page }) => {
