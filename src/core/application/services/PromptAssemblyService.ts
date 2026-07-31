@@ -5,6 +5,7 @@ import { RedisUnavailableError } from "../../infrastructure/cache/redisClient";
 import { CacheKeys } from "../../infrastructure/cache/CacheKeys";
 import { Logger } from "@/shared/lib/logger";
 import { substituteTemplateVariables } from "./promptVariables";
+import { sanitizePromptContent, fenceUntrustedContent } from "./promptSafety";
 
 export { PROMPT_TEMPLATE_VARIABLES, substituteTemplateVariables } from "./promptVariables";
 
@@ -69,11 +70,17 @@ export class PromptAssemblyService {
       return substituteTemplateVariables(content, company, employee);
     };
 
-    const productsText = products.map((p) => `- ${p.name}: ${p.description} (Price: $${p.pricing})`).join("\n");
+    // Products/services/FAQs are admin- and document-authored, so they are
+    // untrusted input from the prompt's point of view: an FAQ answer reading
+    // "ignore all previous instructions" would otherwise sit in the prompt
+    // body indistinguishable from a real instruction. Sanitised field by
+    // field, then fenced as reference data.
+    const s = sanitizePromptContent;
+    const productsText = products.map((p) => `- ${s(p.name)}: ${s(p.description)} (Price: $${p.pricing})`).join("\n");
     const servicesText = services
-      .map((s) => `- ${s.name}: ${s.description} (Deliverables: ${s.deliverables.join(", ")})`)
+      .map((sv) => `- ${s(sv.name)}: ${s(sv.description)} (Deliverables: ${sv.deliverables.map(s).join(", ")})`)
       .join("\n");
-    const faqsText = faqs.map((f) => `Q: ${f.question}\nA: ${f.answer}`).join("\n\n");
+    const faqsText = faqs.map((f) => `Q: ${s(f.question)}\nA: ${s(f.answer)}`).join("\n\n");
 
     const systemPrompt = `
 === DIGITAL TWIN IDENTITY ===
@@ -100,13 +107,13 @@ ${resolve("security")}
 ${resolve("fallback")}
 
 === COMPANY PRODUCTS ===
-${productsText || "No public products listed."}
+${fenceUntrustedContent("COMPANY PRODUCTS", productsText) || "No public products listed."}
 
 === COMPANY SERVICES ===
-${servicesText || "No public services listed."}
+${fenceUntrustedContent("COMPANY SERVICES", servicesText) || "No public services listed."}
 
 === FREQUENTLY ASKED QUESTIONS ===
-${faqsText || "No FAQs listed."}
+${fenceUntrustedContent("FREQUENTLY ASKED QUESTIONS", faqsText) || "No FAQs listed."}
 
 === MANDATORY INSTRUCTIONS ===
 1. If asked to book a meeting, collect the user's Name, Email, and Phone number before calling the 'book_appointment' function.

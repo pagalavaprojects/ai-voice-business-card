@@ -1,23 +1,79 @@
-version: '3.8'
-
 services:
   web:
     build:
       context: .
       dockerfile: Dockerfile
+      # NEXT_PUBLIC_* MUST be build args, not runtime environment. Next.js
+      # inlines them into the client bundle during `next build`, so passing
+      # them only under `environment:` (as this file previously did) produced
+      # an image whose browser code had no Supabase URL and no Vapi key —
+      # the card loaded nothing and never played audio, with no error to
+      # explain why.
+      args:
+        NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL}
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+        NEXT_PUBLIC_VAPI_PUBLIC_KEY: ${NEXT_PUBLIC_VAPI_PUBLIC_KEY}
     restart: always
     ports:
       - "3000:3000"
     environment:
-      - NODE_ENV=production
-      - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL}
-      - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
-      - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
-      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
-      - VAPI_API_KEY=${VAPI_API_KEY}
-      - VAPI_WEBHOOK_SECRET=${VAPI_WEBHOOK_SECRET}
+      NODE_ENV: production
+      # Server-side only — read at runtime, so `environment` is correct here.
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
+      VAPI_API_KEY: ${VAPI_API_KEY}
+      VAPI_WEBHOOK_SECRET: ${VAPI_WEBHOOK_SECRET}
+      # Without this, Vapi cannot reach the webhook and voice tools
+      # (save_lead / book_appointment) are disabled. Must be the public
+      # HTTPS origin of this deployment.
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL}
+      CALCOM_API_KEY: ${CALCOM_API_KEY}
+      CALCOM_EVENT_TYPE_ID: ${CALCOM_EVENT_TYPE_ID}
+      CALCOM_WEBHOOK_SECRET: ${CALCOM_WEBHOOK_SECRET}
+      RESEND_API_KEY: ${RESEND_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      REDIS_URL: ${REDIS_URL}
+    depends_on:
+      redis:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
       interval: 30s
       timeout: 5s
       retries: 3
+      start_period: 40s
+
+  # The web container never drains queues. Without this service, jobs are
+  # enqueued (emails, CRM sync, knowledge indexing) and nothing ever
+  # processes them — they simply accumulate in Redis.
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: always
+    command: ["npm", "run", "worker"]
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
+      RESEND_API_KEY: ${RESEND_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      REDIS_URL: ${REDIS_URL}
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  redis:
+    image: redis:7-alpine
+    restart: always
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  redis-data:

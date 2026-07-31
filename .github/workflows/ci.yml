@@ -15,10 +15,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js 20
+      # Node 22: scripts use --env-file-if-exists, which needs >= 20.12, and
+      # this matches the Dockerfile base image so CI tests what ships.
+      - name: Setup Node.js 22
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: "npm"
 
       - name: Install dependencies
@@ -29,6 +31,12 @@ jobs:
 
       - name: ESLint — Zero warnings gate
         run: npm run lint
+
+      # Applies every migration to a real Postgres engine (PGlite, in-process).
+      # Catches broken SQL, bad ordering and permissive RLS policies without
+      # needing network access or a live project.
+      - name: Migrations — Schema gate
+        run: npm run verify:migrations
 
       - name: Jest — Unit test gate
         run: npx jest --ci --coverage
@@ -50,4 +58,67 @@ jobs:
         with:
           name: coverage-report
           path: coverage/
+          retention-days: 7
+
+  # Separate job: the browser suite needs a Chromium download and a seeded
+  # Supabase project, so it must not block the fast unit gates above.
+  # It is skipped rather than failed when no database secret is configured —
+  # a fork PR can't have secrets, and a red X there would be noise, not signal.
+  e2e:
+    name: Browser & Accessibility (Playwright + axe)
+    runs-on: ubuntu-latest
+    needs: quality-gates
+    if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check Supabase credentials are available
+        id: creds
+        run: echo "present=${{ secrets.NEXT_PUBLIC_SUPABASE_URL != '' }}" >> "$GITHUB_OUTPUT"
+
+      - name: Install Chromium
+        if: steps.creds.outputs.present == 'true'
+        run: npx playwright install --with-deps chromium
+
+      - name: Seed the test card
+        if: steps.creds.outputs.present == 'true'
+        run: npm run seed
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+
+      # Playwright's webServer runs `next start`, which does not build.
+      - name: Build
+        if: steps.creds.outputs.present == 'true'
+        run: npm run build
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          NEXT_PUBLIC_VAPI_PUBLIC_KEY: ${{ secrets.NEXT_PUBLIC_VAPI_PUBLIC_KEY }}
+
+      - name: Playwright — Browser & WCAG 2.1 AA gate
+        if: steps.creds.outputs.present == 'true'
+        run: npm run test:e2e
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+
+      - name: Upload Playwright report
+        uses: actions/upload-artifact@v4
+        if: always() && steps.creds.outputs.present == 'true'
+        with:
+          name: playwright-report
+          path: playwright-report/
           retention-days: 7
