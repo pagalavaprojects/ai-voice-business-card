@@ -1,0 +1,32 @@
+# Prometheus scrape configuration.
+#
+# alerts.yml already existed, but without this file nothing ever collected the
+# series those rules fire on — the alerts could never have evaluated against
+# real data. /api/metrics serves genuine Prometheus text-exposition output from
+# the OpenTelemetry MeterProvider (see src/core/infrastructure/telemetry/otel.ts).
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    service: ai-voice-business-card
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  - job_name: vapi_webhook
+    metrics_path: /api/metrics
+    # The label the app stamps on its own metrics is `job="vapi_webhook"`, and
+    # alerts.yml selects on it — this job name must stay in step with both.
+    static_configs:
+      - targets:
+          - "web:3000"
+    # The app returns 200 with metrics even while degraded; a scrape failure
+    # here means the process is genuinely down, which `up == 0` will surface.
+    scrape_timeout: 10s
+
+  - job_name: prometheus
+    static_configs:
+      - targets:
+          - "localhost:9090"

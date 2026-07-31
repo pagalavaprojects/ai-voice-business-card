@@ -1,0 +1,13 @@
+# Auto-provisions Prometheus as Grafana's default datasource, so the stack
+# comes up queryable with no manual UI setup.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      timeInterval: 15s
