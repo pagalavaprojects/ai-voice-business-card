@@ -4,8 +4,14 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import Vapi from "@vapi-ai/web";
 import { VoiceState } from "../components/VoiceMicButton";
 import { MessageItem } from "../components/TranscriptViewer";
+import { DEFAULT_VOICE_ID, OpenAIVoiceId } from "@/shared/lib/voice";
 
-const DEFAULT_FIRST_MESSAGE = "Hi! I'm Srinivasan Kandasamy from Pagalava Data Analytics. Thank you for scanning my AI business card. How can I help you today?";
+// Deliberately generic and tenant-neutral. This is a shared hook serving
+// every company's card, so naming one specific founder/company here would
+// make any OTHER tenant whose first_message failed to load introduce itself
+// with the wrong identity. The real greeting always comes from the agent's
+// first_message column via /api/public/[companyId]/[employeeId].
+const DEFAULT_FIRST_MESSAGE = "Hello, thank you for scanning my business card. How can I help you today?";
 
 // The SDK's own type for .start()'s first argument — used as a single
 // boundary cast below. `tools` arrives here as untyped JSON (round-tripped
@@ -24,6 +30,7 @@ export interface UseVapiSessionOptions {
   systemPrompt?: string | null;
   tools?: unknown[];
   serverUrl?: string;
+  voiceId?: OpenAIVoiceId | string;
 }
 
 export function useVapiSession({
@@ -33,6 +40,7 @@ export function useVapiSession({
   firstMessage,
   systemPrompt,
   tools,
+  voiceId,
   serverUrl,
 }: UseVapiSessionOptions) {
   const [voiceState, setVoiceState] = useState<VoiceState>("idle");
@@ -166,6 +174,10 @@ export function useVapiSession({
           ...(systemPrompt ? { messages: [{ role: "system" as const, content: systemPrompt }] } : {}),
           ...(tools && tools.length > 0 ? { tools } : {}),
         },
+        voice: {
+          provider: "openai" as const,
+          voiceId: voiceId || DEFAULT_VOICE_ID,
+        },
         // Routes tool-calls and the end-of-call report back to our
         // webhook for this specific company/employee during the call.
         ...(serverUrl ? { server: { url: serverUrl } } : {}),
@@ -178,7 +190,7 @@ export function useVapiSession({
       setVoiceState("idle");
       stopTimer();
     }
-  }, [startTimer, stopTimer, firstMessage, systemPrompt, tools, serverUrl]);
+  }, [startTimer, stopTimer, firstMessage, systemPrompt, tools, serverUrl, voiceId]);
 
   const endCall = useCallback(() => {
     if (vapiRef.current && !isDemoModeRef.current) {

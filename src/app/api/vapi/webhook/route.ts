@@ -6,6 +6,7 @@ import { withSpan, httpRequestDuration, voiceCallsTotal } from "@/core/infrastru
 import { promptAssemblyService, toolRegistry, agentRepo } from "@/core/infrastructure/bootstrap/assistantRuntime";
 import { Logger } from "@/shared/lib/logger";
 import { supabaseAdmin } from "@/shared/lib/supabase";
+import { resolveOpenAIVoiceId } from "@/shared/lib/voice";
 
 const conversationRepo = new SupabaseConversationRepository();
 const storage = new SupabaseStorageAdapter();
@@ -78,6 +79,10 @@ async function handleVapiMessage(req: NextRequest, message: VapiMessage): Promis
           model: "gpt-4o-mini",
           messages: [{ role: "system", content: systemPrompt }],
           tools,
+        },
+        voice: {
+          provider: "openai",
+          voiceId: resolveOpenAIVoiceId(agent?.voice_model_id),
         },
       },
     });

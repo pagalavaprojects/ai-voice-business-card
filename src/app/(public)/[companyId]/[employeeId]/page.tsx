@@ -22,28 +22,15 @@ interface PublicCardData {
     workingHours: string | null;
     avatarUrl: string | null;
   };
+  services?: Array<{ name: string; description: string; deliverables?: string[]; timeline?: string }>;
+  bookingUrl?: string | null;
   firstMessage: string;
   systemPrompt?: string | null;
   tools?: unknown[];
+  toolsEnabled?: boolean;
   serverUrl?: string;
+  voiceId?: string;
 }
-
-// Shown only while the real card is loading, or if the backend isn't
-// reachable (e.g. Supabase not yet configured) — never silently mixed
-// with real data, so what's on screen always matches what will be said.
-const FALLBACK_CARD: PublicCardData = {
-  company: { name: "Acme Autonomous Corp", website: "https://acme.ai", logoUrl: null },
-  employee: {
-    name: "Sarah Connor",
-    designation: "VP of AI Solutions",
-    email: "sarah@acme.ai",
-    phone: "+1 (555) 019-2831",
-    officeAddress: "San Francisco, CA",
-    workingHours: "9 AM – 5 PM PST",
-    avatarUrl: null,
-  },
-  firstMessage: "Hello! Thank you for scanning my business card. How can I help you today?",
-};
 
 function formatTimer(secs: number): string {
   const m = Math.floor(secs / 60);
@@ -53,28 +40,35 @@ function formatTimer(secs: number): string {
 
 export default function VoiceBusinessCardPage() {
   const params = useParams();
-  const companyId = (params?.companyId as string) || "demo-company";
-  const employeeId = (params?.employeeId as string) || "demo-employee";
+  const companyId = (params?.companyId as string) || "";
+  const employeeId = (params?.employeeId as string) || "";
   const { showToast } = useToast();
 
-  const [card, setCard] = useState<PublicCardData>(FALLBACK_CARD);
+  // No demo/fallback identity: a business card that silently renders someone
+  // else's name and speaks their pitch is worse than one that admits it
+  // couldn't load. Every field below comes from the database or the card
+  // doesn't render at all.
+  const [card, setCard] = useState<PublicCardData | null>(null);
   const [cardLoading, setCardLoading] = useState(true);
-  const [isLiveCard, setIsLiveCard] = useState(false);
+  const [loadError, setLoadError] = useState<"notfound" | "unavailable" | null>(null);
 
   useEffect(() => {
     let cancelled = false;
 
     fetch(`/api/public/${companyId}/${employeeId}`)
-      .then((res) => (res.ok ? (res.json() as Promise<PublicCardData>) : Promise.reject(new Error(`status ${res.status}`))))
+      .then(async (res) => {
+        if (res.ok) return (await res.json()) as PublicCardData;
+        throw new Error(res.status === 404 ? "notfound" : "unavailable");
+      })
       .then((data) => {
         if (cancelled) return;
         setCard(data);
-        setIsLiveCard(true);
+        setLoadError(null);
       })
-      .catch(() => {
+      .catch((err: Error) => {
         if (cancelled) return;
-        setCard(FALLBACK_CARD);
-        setIsLiveCard(false);
+        setCard(null);
+        setLoadError(err.message === "notfound" ? "notfound" : "unavailable");
       })
       .finally(() => {
         if (!cancelled) setCardLoading(false);
@@ -97,17 +91,46 @@ export default function VoiceBusinessCardPage() {
   } = useVapiSession({
     companyId,
     employeeId,
-    firstMessage: card.firstMessage,
-    systemPrompt: card.systemPrompt,
-    tools: card.tools,
-    serverUrl: card.serverUrl,
+    firstMessage: card?.firstMessage,
+    systemPrompt: card?.systemPrompt,
+    tools: card?.tools,
+    serverUrl: card?.serverUrl,
+    voiceId: card?.voiceId,
   });
 
   const handleBookCall = () => {
-    const calUrl = process.env.NEXT_PUBLIC_CAL_BOOKING_URL || "https://cal.com/demo/30min";
-    window.open(calUrl, "_blank", "noopener,noreferrer");
+    if (!card?.bookingUrl) return;
+    window.open(card.bookingUrl, "_blank", "noopener,noreferrer");
     showToast("Opening calendar booking page…", "info");
   };
+
+  if (cardLoading) {
+    return (
+      <main className="min-h-screen bg-[#090d16] text-slate-100 flex items-center justify-center p-4">
+        <div role="status" aria-live="polite" className="flex flex-col items-center gap-3">
+          <div className="h-8 w-8 rounded-full border-2 border-sky-400/30 border-t-sky-400 animate-spin" />
+          <p className="text-xs text-slate-400">Loading business card…</p>
+        </div>
+      </main>
+    );
+  }
+
+  if (!card) {
+    return (
+      <main className="min-h-screen bg-[#090d16] text-slate-100 flex items-center justify-center p-4">
+        <Card className="glass-panel border-white/[0.08] p-8 rounded-3xl max-w-sm text-center space-y-3">
+          <h1 className="text-lg font-bold text-slate-100">
+            {loadError === "notfound" ? "Business card not found" : "Card temporarily unavailable"}
+          </h1>
+          <p className="text-xs text-slate-400">
+            {loadError === "notfound"
+              ? "This link doesn't match an active business card. Please check the QR code or link and try again."
+              : "We couldn't load this business card right now. Please try again in a moment."}
+          </p>
+        </Card>
+      </main>
+    );
+  }
 
   return (
     <main className="min-h-screen bg-[#090d16] text-slate-100 flex items-center justify-center p-4 sm:p-6">
@@ -119,10 +142,14 @@ export default function VoiceBusinessCardPage() {
       <div className="relative z-10 w-full max-w-md space-y-6">
         {/* Main Card Container */}
         <Card className="glass-panel border-white/[0.08] shadow-2xl p-6 sm:p-8 rounded-3xl space-y-6">
-          {!cardLoading && !isLiveCard && (
-            <div role="status" className="text-center text-[10px] uppercase tracking-wide text-amber-400/80 font-semibold">
-              Demo Card — backend not configured for this card yet
-            </div>
+          {/* Company logo — rendered from branding when the company has one */}
+          {card.company.logoUrl && (
+            /* eslint-disable-next-line @next/next/no-img-element */
+            <img
+              src={card.company.logoUrl}
+              alt={`${card.company.name} logo`}
+              className="h-8 w-auto mx-auto object-contain"
+            />
           )}
 
           {/* Employee Header */}
@@ -189,13 +216,31 @@ export default function VoiceBusinessCardPage() {
           {/* Live Streaming Transcript */}
           <TranscriptViewer messages={messages} />
 
+          {/* Services — straight from the company's own records */}
+          {card.services && card.services.length > 0 && (
+            <section aria-labelledby="services-heading" className="border-t border-white/[0.06] pt-4">
+              <h2 id="services-heading" className="text-[10px] uppercase tracking-wide text-slate-400 font-semibold mb-2">
+                What we do
+              </h2>
+              <ul className="space-y-2">
+                {card.services.map((service) => (
+                  <li key={service.name} className="text-xs">
+                    <p className="font-semibold text-slate-200">{service.name}</p>
+                    <p className="text-slate-400 leading-relaxed">{service.description}</p>
+                    {service.timeline && <p className="text-[11px] text-sky-400/90 mt-0.5">{service.timeline}</p>}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
           {/* Action Controls */}
           <CallControls
             isActive={voiceState !== "idle"}
             isMuted={isMuted}
             onToggleMute={toggleMute}
             onEndCall={endCall}
-            onBookCall={handleBookCall}
+            onBookCall={card.bookingUrl ? handleBookCall : undefined}
             contactInfo={{
               name: card.employee.name,
               email: card.employee.email,

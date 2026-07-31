@@ -11,6 +11,7 @@
     "test": "jest --forceExit",
     "test:watch": "jest --watch",
     "verify:migrations": "node scripts/verify-migrations.mjs",
+    "verify:db": "node --env-file=.env.local scripts/verify-live-db.mjs",
     "worker": "tsx --env-file=.env.local scripts/worker.ts",
     "seed:pagalava": "tsx --env-file=.env.local scripts/seed-pagalava.ts",
     "test:e2e": "playwright test"

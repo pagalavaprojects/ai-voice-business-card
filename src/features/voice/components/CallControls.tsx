@@ -9,7 +9,9 @@ interface CallControlsProps {
   isMuted: boolean;
   onToggleMute: () => void;
   onEndCall: () => void;
-  onBookCall: () => void;
+  /** Omitted when this company has no booking URL configured — the button is
+   * then hidden rather than sending visitors to a dead/demo calendar link. */
+  onBookCall?: () => void;
   /** Employee contact data used for vCard download */
   contactInfo?: {
     name: string;
@@ -91,11 +93,13 @@ export const CallControls: React.FC<CallControlsProps> = ({
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-3 pt-2">
-        <Button variant="default" onClick={onBookCall} className="w-full flex items-center justify-center gap-2 text-xs">
-          <Calendar className="h-4 w-4" />
-          Book Meeting
-        </Button>
+      <div className={`grid gap-3 pt-2 ${onBookCall ? "grid-cols-2" : "grid-cols-1"}`}>
+        {onBookCall && (
+          <Button variant="default" onClick={onBookCall} className="w-full flex items-center justify-center gap-2 text-xs">
+            <Calendar className="h-4 w-4" />
+            Book Meeting
+          </Button>
+        )}
         <Button
           variant="glass"
           onClick={handleSaveContact}

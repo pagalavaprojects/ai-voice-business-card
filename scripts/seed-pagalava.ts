@@ -213,7 +213,11 @@ async function seedPagalava() {
       department: "SALES",
       name: "Srinivasan Kandasamy — AI Voice Assistant",
       avatar_url: null,
-      voice_model_id: "vapi-default",
+      // OpenAI TTS voiceId — "nova" is one of OpenAI's female-sounding
+      // presets. Matches the model.provider ("openai") already used for
+      // the LLM, so no extra third-party voice-provider credential is
+      // needed beyond what's already configured.
+      voice_model_id: "nova",
       personality_prompt:
         "Professional, warm, and consultative voice assistant representing Pagalava Data Analytics' founder.",
       // Kept deliberately short (~48 words, ~19s at natural speaking pace)

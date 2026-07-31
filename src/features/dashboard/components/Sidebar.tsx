@@ -13,6 +13,7 @@ import {
   Bot,
 } from "lucide-react";
 import { cn } from "@/shared/ui/button";
+import { useCompany } from "@/features/dashboard/context/CompanyContext";
 
 const navItems = [
   { label: "Overview", href: "/dashboard", icon: LayoutDashboard },
@@ -25,6 +26,16 @@ const navItems = [
 
 export const Sidebar: React.FC = () => {
   const pathname = usePathname();
+  const { user } = useCompany();
+
+  const displayName = user?.full_name?.trim() || user?.email?.split("@")[0] || "Not signed in";
+  const initials =
+    displayName
+      .split(/[\s._-]+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part: string) => part[0]?.toUpperCase())
+      .join("") || "?";
 
   return (
     <aside className="w-64 bg-[#0c111d] border-r border-white/[0.08] flex flex-col justify-between p-4 min-h-screen">
@@ -64,15 +75,15 @@ export const Sidebar: React.FC = () => {
         </nav>
       </div>
 
-      {/* Footer User Profile */}
+      {/* Footer User Profile — the real signed-in user, not a hardcoded one */}
       <div className="border-t border-white/[0.08] pt-4 px-2 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div className="h-8 w-8 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-xs font-bold text-sky-400">
-            AD
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="h-8 w-8 shrink-0 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-xs font-bold text-sky-400">
+            {initials}
           </div>
-          <div className="text-xs">
-            <p className="font-semibold text-slate-200">Admin User</p>
-            <p className="text-[10px] text-slate-400">admin@acme.ai</p>
+          <div className="text-xs min-w-0">
+            <p className="font-semibold text-slate-200 truncate">{displayName}</p>
+            <p className="text-[10px] text-slate-400 truncate">{user?.email || "Not signed in"}</p>
           </div>
         </div>
       </div>
