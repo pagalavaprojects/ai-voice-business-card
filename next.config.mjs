@@ -2,6 +2,17 @@
 const nextConfig = {
   reactStrictMode: true,
   swcMinify: true,
+  webpack: (config) => {
+    // BullMQ v6 ships support for an alternative Valkey client and imports it
+    // unconditionally, but it is an optional peer dependency we deliberately
+    // do not install — every queue here connects through ioredis
+    // (see redisClient.ts). Left alone it emits a "Module not found" warning
+    // on every build for a module that is never executed. Resolving it to
+    // false keeps real missing-module warnings meaningful instead of training
+    // us to ignore build output.
+    config.resolve.fallback = { ...config.resolve.fallback, "@valkey/valkey-glide": false };
+    return config;
+  },
   async headers() {
     return [
       {

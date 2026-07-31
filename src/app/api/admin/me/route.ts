@@ -7,6 +7,12 @@ import { supabaseAdmin } from "@/shared/lib/supabase";
 
 const membershipRepo = new SupabaseMembershipRepository();
 
+// This route reads the session cookie, so it can never be statically
+// rendered. Declaring that explicitly stops the build from attempting a
+// static pass and logging a "Dynamic server usage" error for behaviour that
+// is entirely intended.
+export const dynamic = "force-dynamic";
+
 /** Returns the signed-in user plus every company they belong to, with role.
  * This is what lets the dashboard resolve "which company am I looking at"
  * instead of hardcoding one — every other admin page depends on it. */
