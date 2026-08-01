@@ -5,6 +5,7 @@ import { SupabaseSettingsRepository } from "@/core/infrastructure/database/supab
 import { Logger } from "@/shared/lib/logger";
 import { resolveOpenAIVoiceId } from "@/shared/lib/voice";
 import { resolvePublicBaseUrl } from "@/shared/lib/publicUrl";
+import { createWebhookToken } from "@/shared/lib/webhookToken";
 
 const knowledgeRepo = new SupabaseKnowledgeRepository();
 const settingsRepo = new SupabaseSettingsRepository();
@@ -66,9 +67,16 @@ export async function GET(req: NextRequest, { params }: { params: { companyId: s
     // arrive. Rather than advertise tools the assistant cannot actually
     // fulfil — which surfaces to the visitor as a broken promise mid-call —
     // withhold both the callback and the tools, and say so in the logs.
+    // The callback URL carries a signed token because the browser's inline
+    // assistant config overrides the dashboard's server settings, so Vapi
+    // sends an empty x-vapi-secret and a dashboard credential can never
+    // authenticate these calls. Signing here keeps VAPI_WEBHOOK_SECRET on the
+    // server — the client only ever receives a scoped, expiring HMAC.
     const publicBaseUrl = resolvePublicBaseUrl(req.nextUrl.origin);
+    const webhookToken = createWebhookToken(companyId, employeeId);
     const serverUrl = publicBaseUrl
-      ? `${publicBaseUrl}/api/vapi/webhook?companyId=${encodeURIComponent(companyId)}&employeeId=${encodeURIComponent(employeeId)}`
+      ? `${publicBaseUrl}/api/vapi/webhook?companyId=${encodeURIComponent(companyId)}&employeeId=${encodeURIComponent(employeeId)}` +
+        (webhookToken ? `&token=${encodeURIComponent(webhookToken)}` : "")
       : undefined;
 
     if (!serverUrl) {

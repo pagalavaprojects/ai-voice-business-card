@@ -1,4 +1,3 @@
-import { createHash } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { formatApiResponse, validateVapiWebhookSignature, isPlaceholderCredential } from "@/shared/lib/security";
 import { SupabaseConversationRepository } from "@/core/infrastructure/database/supabase/SupabaseConversationRepository";
@@ -8,6 +7,7 @@ import { promptAssemblyService, toolRegistry, agentRepo } from "@/core/infrastru
 import { Logger } from "@/shared/lib/logger";
 import { supabaseAdmin } from "@/shared/lib/supabase";
 import { resolveOpenAIVoiceId } from "@/shared/lib/voice";
+import { verifyWebhookToken } from "@/shared/lib/webhookToken";
 
 const conversationRepo = new SupabaseConversationRepository();
 const storage = new SupabaseStorageAdapter();
@@ -193,41 +193,34 @@ export async function POST(req: NextRequest) {
 
   try {
     const response = await withSpan("vapi_webhook", { job: "vapi_webhook" }, async (span) => {
-      if (!validateVapiWebhookSignature(req)) {
+      // Two accepted credentials, either of which proves the request came
+      // from a call we provisioned:
+      //
+      //  1. A matching x-vapi-secret — used when the assistant's server config
+      //     is set up in Vapi's dashboard with our secret.
+      //  2. A signed token in the callback URL — required for browser-started
+      //     calls, where the inline assistant config overrides the dashboard's
+      //     server settings and Vapi consequently sends an EMPTY
+      //     x-vapi-secret. Confirmed in production: header present,
+      //     zero-length. The secret itself is never shipped to the browser;
+      //     only this scoped, expiring HMAC over companyId+employeeId is.
+      const tokenValid = verifyWebhookToken(
+        req.nextUrl.searchParams.get("token"),
+        req.nextUrl.searchParams.get("companyId") || "",
+        req.nextUrl.searchParams.get("employeeId") || ""
+      );
+
+      if (!tokenValid && !validateVapiWebhookSignature(req)) {
         // A rejected webhook is otherwise invisible: Vapi retries quietly, no
         // conversation is ever written, and the only symptom is missing data
-        // with no explanation. Log which auth-ish headers actually arrived so
-        // a provider/secret mismatch is diagnosable from the logs alone.
-        //
-        // Header NAMES only, never values — the point is to see whether Vapi
-        // sent x-vapi-secret, Authorization, or something else entirely, not
-        // to record anyone's credential in a log aggregator.
-        const authHeaderNames = [...req.headers.keys()].filter((h) =>
-          /secret|auth|signature|token|api-key/i.test(h)
-        );
-
-        // TEMPORARY (remove once the secret is aligned): truncated SHA-256 of
-        // each side. A hash proves whether the values match without putting
-        // either secret in a log aggregator, and a 12-hex-char prefix is far
-        // too short to attack the preimage of a 32-byte random secret while
-        // still being unique enough to compare by eye.
-        const fingerprint = (v: string | undefined | null) =>
-          v ? createHash("sha256").update(v).digest("hex").slice(0, 12) : "(absent)";
-        const received = req.headers.get("x-vapi-secret");
-
-        Logger.warn("Vapi webhook rejected: secret mismatch", {
-          authHeadersPresent: authHeaderNames,
-          hasXVapiSecret: req.headers.has("x-vapi-secret"),
+        // with no explanation. Record which credential was attempted — names
+        // and presence only, never values.
+        Logger.warn("Vapi webhook rejected: no valid credential", {
+          hasToken: Boolean(req.nextUrl.searchParams.get("token")),
+          xVapiSecretLength: (req.headers.get("x-vapi-secret") || "").length,
           secretConfigured: !isPlaceholderCredential(process.env.VAPI_WEBHOOK_SECRET),
-          expectedFingerprint: fingerprint(process.env.VAPI_WEBHOOK_SECRET),
-          receivedFingerprint: fingerprint(received),
-          receivedLength: received?.length ?? 0,
-          // If the received value turns out to be a key we already hold, the
-          // mismatch is fixable from this side with no dashboard access.
-          matchesVapiPublicKey: received === process.env.NEXT_PUBLIC_VAPI_PUBLIC_KEY,
-          matchesVapiApiKey: received === process.env.VAPI_API_KEY,
         });
-        return formatApiResponse(null, 401, "Unauthorized: Invalid webhook secret", ["Invalid signature"]);
+        return formatApiResponse(null, 401, "Unauthorized: Invalid webhook credential", ["Invalid signature"]);
       }
 
       const payload = await req.json();
