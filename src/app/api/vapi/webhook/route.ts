@@ -1,3 +1,4 @@
+import { createHash } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { formatApiResponse, validateVapiWebhookSignature, isPlaceholderCredential } from "@/shared/lib/security";
 import { SupabaseConversationRepository } from "@/core/infrastructure/database/supabase/SupabaseConversationRepository";
@@ -204,10 +205,27 @@ export async function POST(req: NextRequest) {
         const authHeaderNames = [...req.headers.keys()].filter((h) =>
           /secret|auth|signature|token|api-key/i.test(h)
         );
+
+        // TEMPORARY (remove once the secret is aligned): truncated SHA-256 of
+        // each side. A hash proves whether the values match without putting
+        // either secret in a log aggregator, and a 12-hex-char prefix is far
+        // too short to attack the preimage of a 32-byte random secret while
+        // still being unique enough to compare by eye.
+        const fingerprint = (v: string | undefined | null) =>
+          v ? createHash("sha256").update(v).digest("hex").slice(0, 12) : "(absent)";
+        const received = req.headers.get("x-vapi-secret");
+
         Logger.warn("Vapi webhook rejected: secret mismatch", {
           authHeadersPresent: authHeaderNames,
           hasXVapiSecret: req.headers.has("x-vapi-secret"),
           secretConfigured: !isPlaceholderCredential(process.env.VAPI_WEBHOOK_SECRET),
+          expectedFingerprint: fingerprint(process.env.VAPI_WEBHOOK_SECRET),
+          receivedFingerprint: fingerprint(received),
+          receivedLength: received?.length ?? 0,
+          // If the received value turns out to be a key we already hold, the
+          // mismatch is fixable from this side with no dashboard access.
+          matchesVapiPublicKey: received === process.env.NEXT_PUBLIC_VAPI_PUBLIC_KEY,
+          matchesVapiApiKey: received === process.env.VAPI_API_KEY,
         });
         return formatApiResponse(null, 401, "Unauthorized: Invalid webhook secret", ["Invalid signature"]);
       }
