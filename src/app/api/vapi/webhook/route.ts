@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { formatApiResponse, validateVapiWebhookSignature } from "@/shared/lib/security";
+import { formatApiResponse, validateVapiWebhookSignature, isPlaceholderCredential } from "@/shared/lib/security";
 import { SupabaseConversationRepository } from "@/core/infrastructure/database/supabase/SupabaseConversationRepository";
 import { SupabaseStorageAdapter } from "@/core/infrastructure/storage/SupabaseStorageAdapter";
 import { withSpan, httpRequestDuration, voiceCallsTotal } from "@/core/infrastructure/telemetry/otel";
@@ -193,6 +193,22 @@ export async function POST(req: NextRequest) {
   try {
     const response = await withSpan("vapi_webhook", { job: "vapi_webhook" }, async (span) => {
       if (!validateVapiWebhookSignature(req)) {
+        // A rejected webhook is otherwise invisible: Vapi retries quietly, no
+        // conversation is ever written, and the only symptom is missing data
+        // with no explanation. Log which auth-ish headers actually arrived so
+        // a provider/secret mismatch is diagnosable from the logs alone.
+        //
+        // Header NAMES only, never values — the point is to see whether Vapi
+        // sent x-vapi-secret, Authorization, or something else entirely, not
+        // to record anyone's credential in a log aggregator.
+        const authHeaderNames = [...req.headers.keys()].filter((h) =>
+          /secret|auth|signature|token|api-key/i.test(h)
+        );
+        Logger.warn("Vapi webhook rejected: secret mismatch", {
+          authHeadersPresent: authHeaderNames,
+          hasXVapiSecret: req.headers.has("x-vapi-secret"),
+          secretConfigured: !isPlaceholderCredential(process.env.VAPI_WEBHOOK_SECRET),
+        });
         return formatApiResponse(null, 401, "Unauthorized: Invalid webhook secret", ["Invalid signature"]);
       }
 
