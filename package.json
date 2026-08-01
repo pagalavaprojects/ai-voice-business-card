@@ -2,6 +2,9 @@
   "name": "ai-voice-business-card",
   "version": "1.0.0",
   "private": true,
+  "redisMemoryServer": {
+    "disablePostinstall": "1"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
