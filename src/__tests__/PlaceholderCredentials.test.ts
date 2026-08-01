@@ -37,15 +37,24 @@ describe("isPlaceholderCredential", () => {
     expect(isPlaceholderCredential("   ")).toBe(true);
   });
 
+  // Synthetic values only. These mimic the SHAPE of each provider's
+  // credentials — which is all the detector inspects — without embedding any
+  // real key. An earlier version of this test used values copied from a live
+  // .env, which is needless exposure in a public repository even for
+  // publishable keys, and makes a routine `git grep` for secrets noisy enough
+  // that a genuine leak could hide in the false positives.
   it("does NOT false-positive on real credential shapes from these providers", () => {
     for (const value of [
-      "2c9684ed-f228-412f-88dc-42a9f4e94ad6", // Vapi public key (UUID)
-      "sk-proj-abc123XYZ", // OpenAI
-      "re_123abc", // Resend
-      "cal_live_9f8e7d", // Cal.com
-      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.abc", // Supabase service-role JWT
-      "sb_publishable_61NtxdptlDoo25LN",
-      "https://atiylleojxtjeruppyhq.supabase.co",
+      // Note: these must not contain "example", "demo", "sample" etc., or the
+      // detector correctly classifies them as placeholders and the assertion
+      // inverts — which is exactly what happened on the first attempt here.
+      "00000000-1111-2222-3333-444444444444", // Vapi public key (UUID shape)
+      "sk-proj-7fQ2mN8xR4tL", // OpenAI
+      "re_9kD3pW7q", // Resend
+      "cal_live_4hT8vB2n", // Cal.com
+      "eyJhbGciOiJIUzI1NiJ9.aGVsbG8.c2ln", // JWT shape (Supabase service role)
+      "sb_publishable_6mQ4rZ9wK2",
+      "https://abcdefghijklmnop.supabase.co",
       "redis://localhost:6379",
     ]) {
       expect(isPlaceholderCredential(value)).toBe(false);
