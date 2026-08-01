@@ -124,7 +124,32 @@ Prompt Builder; every save is versioned and can be rolled back.
 
 ---
 
+## Deploying to Vercel
+
+Full step-by-step with verification at each stage: **[DEPLOYMENT_CHECKLIST.md](DEPLOYMENT_CHECKLIST.md)**.
+
+The short version:
+
+1. Import [the repo](https://github.com/pagalavaprojects/ai-voice-business-card)
+   at [vercel.com/new](https://vercel.com/new) — Next.js is auto-detected, no
+   `vercel.json` needed.
+2. Set the environment variables (table above) **before** the first deploy.
+   `PUBLIC_BASE_URL` must be your production domain.
+3. Point Vapi's Server URL at `https://<domain>/api/vapi/webhook`, with a
+   secret identical to `VAPI_WEBHOOK_SECRET`.
+4. Verify: `curl https://<domain>/api/health` → `healthy`, then open a card,
+   press the mic, and confirm a row lands in `leads`.
+
+Two Vercel-specific things worth knowing:
+
+- **Leave `WORKER_ENABLED` unset.** Vercel can't run long-lived processes, so
+  knowledge indexing runs synchronously on the request instead of being queued
+  into something nothing drains.
+- **`NEXT_PUBLIC_*` variables are build-time.** Changing one needs a redeploy,
+  not a restart.
+
 ## Further reading
 
-`ARCHITECTURE.md` · `API.md` · `DEPLOYMENT.md` · `TROUBLESHOOTING.md` ·
+[`DEPLOYMENT_CHECKLIST.md`](DEPLOYMENT_CHECKLIST.md) ·
+[`TROUBLESHOOTING.md`](TROUBLESHOOTING.md) · `ARCHITECTURE.md` · `API.md` ·
 `SECURITY.md` · `TESTING.md`
