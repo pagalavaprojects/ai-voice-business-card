@@ -14,6 +14,25 @@ export function isRedisConfigured(): boolean {
   return !isPlaceholderCredential(process.env.REDIS_URL);
 }
 
+/**
+ * Whether a background worker process (scripts/worker.ts) is actually running
+ * and able to drain the queues.
+ *
+ * Deliberately NOT inferred from REDIS_URL. Redis is useful on its own for
+ * caching and distributed rate limiting, so it is entirely reasonable to
+ * configure it on a serverless host — but Vercel cannot run a long-lived
+ * worker process. Enqueuing on the strength of REDIS_URL alone means every
+ * uploaded document is handed to a queue nobody drains and sits at PENDING
+ * forever, with the request path reporting success.
+ *
+ * So this is an explicit opt-in: set WORKER_ENABLED=true only where a worker
+ * is genuinely deployed (a container host, or `npm run worker` locally).
+ * Defaulting to false makes the safe, synchronous path the default.
+ */
+export function isBackgroundWorkerEnabled(): boolean {
+  return isRedisConfigured() && process.env.WORKER_ENABLED === "true";
+}
+
 /** Single shared ioredis connection for plain cache reads/writes
  * (RedisCache). Unlike the third-party adapters (Resend, Cal.com, OpenAI)
  * there is no demo fallback here — an in-memory cache silently pretending

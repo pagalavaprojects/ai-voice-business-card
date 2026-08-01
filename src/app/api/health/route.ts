@@ -36,6 +36,13 @@ async function checkRedis(): Promise<{ status: string; latencyMs?: number; error
   }
 }
 
+// A health check that is cached is not a health check. This route only avoids
+// static prerendering today as a side effect of its no-store Supabase fetch —
+// declaring it explicitly means a future refactor of that query can't silently
+// turn liveness reporting into a build-time snapshot. It also stops the build
+// logging a "Dynamic server usage" exception on every static-render attempt.
+export const dynamic = "force-dynamic";
+
 export async function GET() {
   const [database, redis] = await Promise.all([checkDatabase(), checkRedis()]);
 

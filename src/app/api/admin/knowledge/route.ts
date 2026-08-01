@@ -7,12 +7,18 @@ import { SupabaseStorageAdapter } from "@/core/infrastructure/storage/SupabaseSt
 import { inferSourceType, parseDocumentText } from "@/core/infrastructure/knowledge/DocumentParser";
 import { KnowledgeStatus } from "@/core/domain/models/types";
 import { KnowledgeIndexingQueue } from "@/core/infrastructure/queue/KnowledgeIndexingQueue";
-import { isRedisConfigured } from "@/core/infrastructure/cache/redisClient";
+import { isBackgroundWorkerEnabled } from "@/core/infrastructure/cache/redisClient";
 
 const knowledgeRepo = new SupabaseKnowledgeDocumentRepository();
 const storage = new SupabaseStorageAdapter();
 
 const MAX_FILE_BYTES = 15 * 1024 * 1024; // 15MB
+
+// Parsing, chunking and embedding a large PDF makes several sequential OpenAI
+// calls and comfortably exceeds Vercel's 10s default when no worker is running
+// to take it off the request path. 60s is the Hobby ceiling and is honoured on
+// Pro too, so this is safe on either plan.
+export const maxDuration = 60;
 
 export async function GET(req: NextRequest) {
   try {
@@ -57,12 +63,16 @@ export async function POST(req: NextRequest) {
     const document = await knowledgeRepo.createDocument(companyId, file.name, sourceType, storagePath, file.size, access.userId);
 
     // Chunking + embedding is slow enough to risk a serverless request
-    // timeout on a large PDF — when Redis is available, hand it to a
-    // background worker (src/core/infrastructure/queue/KnowledgeIndexingQueue.ts)
-    // and return immediately with status PENDING. Without Redis, fall back
-    // to the original synchronous path rather than leaving the document
-    // stuck at PENDING forever with no worker able to pick it up.
-    if (isRedisConfigured()) {
+    // timeout on a large PDF, so hand it to a background worker when one is
+    // genuinely running and return immediately with status PENDING.
+    //
+    // Gated on WORKER_ENABLED rather than REDIS_URL: Redis is independently
+    // useful for caching and rate limiting, so it is perfectly reasonable to
+    // configure it on Vercel — which cannot run a long-lived worker. Keying
+    // off Redis alone would enqueue into a queue nobody drains, leaving every
+    // upload stuck at PENDING while the request reported success. Falling
+    // back to the synchronous path is slower but always completes.
+    if (isBackgroundWorkerEnabled()) {
       const indexingQueue = new KnowledgeIndexingQueue();
       await indexingQueue.enqueueIndexing(document.id);
 
@@ -82,7 +92,7 @@ export async function POST(req: NextRequest) {
       201,
       indexResult.embedded
         ? "Document uploaded and indexed successfully"
-        : `Document uploaded but not fully indexed: ${indexResult.error} (Redis not configured, indexed synchronously)`
+        : `Document uploaded but not fully indexed: ${indexResult.error}`
     );
   } catch (error) {
     return handleApiError(error);

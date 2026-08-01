@@ -11,6 +11,12 @@ import { resolveOpenAIVoiceId } from "@/shared/lib/voice";
 const conversationRepo = new SupabaseConversationRepository();
 const storage = new SupabaseStorageAdapter();
 
+// The end-of-call report downloads the call recording from Vapi and re-uploads
+// it to our own storage bucket, which for a long call is well over Vercel's
+// 10s default. A timeout here loses the whole report — transcript, lead score
+// and appointment linkage — not just the recording.
+export const maxDuration = 60;
+
 interface VapiMessage {
   type?: string;
   call?: { id?: string; customer?: { extension?: string } };

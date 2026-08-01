@@ -9,6 +9,13 @@ import { Logger } from "@/shared/lib/logger";
  * route by design (Prometheus scrapers don't send admin session cookies);
  * network-level restriction to the scraper is a live-infrastructure /
  * ingress concern, not something this route can enforce. */
+
+// Without this the route is statically prerendered at build time, and every
+// Prometheus scrape in production returns the same frozen snapshot captured
+// during `next build` — counters never advance, so dashboards look flat and
+// alerts can never fire. Metrics are inherently per-request.
+export const dynamic = "force-dynamic";
+
 export async function GET() {
   try {
     const body = await getPrometheusMetricsText();

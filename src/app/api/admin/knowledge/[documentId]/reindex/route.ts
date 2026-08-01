@@ -10,6 +10,11 @@ import { parseDocumentText } from "@/core/infrastructure/knowledge/DocumentParse
 const knowledgeRepo = new SupabaseKnowledgeDocumentRepository();
 const storage = new SupabaseStorageAdapter();
 
+// Downloads the stored file, then re-chunks and re-embeds it — the same
+// multi-call OpenAI work as the initial upload, so it needs the same headroom
+// above Vercel's 10s default.
+export const maxDuration = 60;
+
 const ReindexSchema = z.object({ company_id: z.string().uuid() });
 
 export async function POST(req: NextRequest, { params }: { params: { documentId: string } }) {
