@@ -2,6 +2,20 @@ import { EndConversationData, IConversationRepository } from "@/core/domain/repo
 import { Conversation, ConversationMessage } from "@/core/domain/models/types";
 import { supabaseAdmin } from "@/shared/lib/supabase";
 
+/**
+ * Coerces a value destined for an INT column. Postgres rejects a float
+ * outright ("invalid input syntax for type integer: 19.488") rather than
+ * truncating, so rounding has to happen before the write. Returns null for
+ * absent or non-finite input so the column stays NULL instead of the update
+ * failing — a missing duration is worth far less than losing the transcript,
+ * summary and tool history that travel with it.
+ */
+function toIntOrNull(value: number | null | undefined): number | null {
+  if (value === null || value === undefined) return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.round(n) : null;
+}
+
 export class SupabaseConversationRepository implements IConversationRepository {
   async createConversation(companyId: string, employeeId: string, vapiCallId?: string): Promise<Conversation> {
     const { data, error } = await supabaseAdmin
@@ -93,13 +107,23 @@ export class SupabaseConversationRepository implements IConversationRepository {
       .update({
         status: "SUMMARIZED",
         ended_at: new Date().toISOString(),
-        duration_seconds: data.durationSeconds,
+        // duration_seconds and lead_score are INT columns, but callers receive
+        // these from third parties as arbitrary numbers — Vapi reports call
+        // duration as a float (e.g. 19.488), which Postgres rejects outright
+        // with `invalid input syntax for type integer`. That failure took down
+        // the whole end-of-call report in production: no transcript, no
+        // summary, no duration, no tools_called persisted.
+        //
+        // Rounded here at the repository boundary rather than in the webhook,
+        // because this is where the integer column contract actually lives —
+        // fixing it in one caller would leave every other caller exposed.
+        duration_seconds: toIntOrNull(data.durationSeconds),
         summary: data.summary,
         sentiment: data.sentiment,
         transcript: data.transcript,
         intent: data.intent,
         ...(data.toolsCalled && { tools_called: data.toolsCalled }),
-        lead_score: data.leadScore,
+        lead_score: toIntOrNull(data.leadScore),
         appointment_id: data.appointmentId,
         audio_metadata: data.audioMetadata || {},
       })
