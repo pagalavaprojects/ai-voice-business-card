@@ -8,7 +8,10 @@
 | **Repository** | https://github.com/pagalavaprojects/ai-voice-business-card |
 | **Demo card** | [`/33333333…/44444444…`](https://ai-voice-business-card.vercel.app/33333333-3333-3333-3333-333333333333/44444444-4444-4444-4444-444444444444) |
 | **Last updated** | 2026-08-02 |
-| **Completion** | **~86%** — production-deployed, two integrations pending credentials |
+| **Completion** | **~88%** — production-deployed; analytics live, integrations pending credentials |
+
+> This file is refreshed after every completed module. If it looks stale
+> against the repo, trust the repo and raise it.
 
 ---
 
@@ -37,9 +40,10 @@ inward; repositories abstract Supabase behind interfaces.
 
 | Metric | Value |
 |---|---|
-| Commits | 43 |
-| Source | 13,445 lines TypeScript |
-| API routes | 34 |
+| Commits | 45 |
+| Source | 14,148 lines TypeScript |
+| API routes | 35 |
+| Dashboard pages | 8 |
 | Database | 26 tables · 35 indexes · 43 FKs · 26 RLS policies |
 | Migrations | 8, apply cleanly from scratch |
 | Unit/integration tests | **117 passing**, 1 skipped (documented) |
@@ -148,6 +152,36 @@ correlation ID), `env.config.ts` defaulted everything to placeholders so
 validation could never fail (now real), four missing hot-path indexes, and dead
 code removal.
 
+### Phase 6 — Analytics dashboard *(current)*
+New `/dashboard/analytics` with **15 metrics computed entirely from live
+Supabase rows**: conversations, leads, qualified leads, conversion rate, average
+duration, total voice minutes, calls per day/week/month, lead funnel,
+appointment funnel, per-employee performance, tool usage, success rate and
+failed calls.
+
+**Five requested metrics were deliberately not built**, because the data does
+not exist and a plausible-looking number is worse than an absent one. The page
+names each one and why, instead of rendering empty charts that look like bugs:
+
+| Not shown | Why |
+|---|---|
+| Lead source | No `source` column — every lead arrives via the voice card |
+| Most asked questions | `conversations.intent` exists but is never populated |
+| Prompt module usage | All six modules run every time — six identical bars |
+| AI response latency | Never measured per conversation |
+
+Charts are **hand-rolled SVG, no charting library** — the page lands at 101 kB
+first load where recharts would have added tens of kB for three simple forms.
+The palette was **validated by script** against the app's real panel surface
+(`#13171f`) rather than eyeballed: lightness band, chroma floor, CVD
+separation, normal-vision floor and contrast all pass in categorical and
+ordinal modes. Employee comparison uses a single hue because it compares one
+measure across rows — magnitude, not identity. Status colours always ship with
+a text label, and the employee table repeats every charted number.
+
+Also fixed: the **AI Agents page had never been linked in the sidebar** since
+the agents module was built, so it was reachable only by typing the URL.
+
 ---
 
 ## 5. Recurring theme
@@ -175,14 +209,15 @@ Each is now either genuinely working or **failing honestly and loudly**.
 | Database | 90% | Indexed, constrained; 2 orphan tables remain |
 | Voice pipeline | 90% | Live and verified; latency unmeasured |
 | Public business card | 95% | Redesigned, WCAG AA, 320–1440px |
-| Admin dashboard | 75% | 7 pages real; no analytics/monitoring page |
+| Admin dashboard | 82% | 8 pages real incl. analytics; no live monitoring |
+| Analytics | 75% | 15 real metrics; 4 need instrumentation that doesn't exist |
 | Knowledge base / RAG | 85% | Complete — inert until `OPENAI_API_KEY` is set |
 | Booking | 70% | Code correct; needs Cal.com credentials |
 | Email | 70% | Code correct; needs Resend key |
 | Testing | 88% | 117 unit + 27 browser; no load testing |
 | Observability | 80% | Config complete; stack never run |
 | Deployment | 95% | Live on Vercel, HTTPS, auto-deploy from GitHub |
-| **Overall** | **~86%** | |
+| **Overall** | **~88%** | |
 
 ---
 
@@ -222,13 +257,22 @@ reported by `/api/health`:
 
 ### Next features (priority order)
 
-1. **Analytics dashboard** — highest value per hour; all data is already
-   captured, this is a display layer only.
-2. **Products / Services / Employees CRUD** — currently editable only via SQL,
-   which blocks self-serve onboarding.
-3. **Hot / Warm / Cold lead tiers** — scores exist; only sorting is missing.
-4. **Live call monitoring**, audit-log writing, voice-latency instrumentation.
-5. Later: AI memory across calls, multi-agent routing, CRM integrations,
+1. ~~Analytics dashboard~~ — **done** (Phase 6).
+2. **Products CRUD** — *in progress next*. Products are shown on the public
+   card and used by voice tools, but editable only via SQL.
+3. **Services CRUD** — same, to the same standard.
+4. **Employee CRUD** — create, invite, deactivate, voice + knowledge
+   assignment. Blocks self-serve onboarding today.
+5. **Company settings** — logo, brand colours, social links, business hours,
+   card theme.
+6. **Lead management** — Hot/Warm/Cold tiers (scores already exist; only
+   sorting and filtering are missing), bulk actions, assignment.
+7. **Instrumentation for the four unmeasured analytics** — lead source,
+   intent capture, per-conversation latency, prompt-module attribution.
+   Roughly half a day each; all four need real data capture, not UI.
+8. **Live call monitoring**, audit-log writing (`audit_logs` exists with no
+   writers), notifications.
+9. Later: AI memory across calls, multi-agent routing, CRM integrations,
    billing.
 
 ### Known limitations
