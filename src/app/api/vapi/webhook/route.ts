@@ -40,7 +40,23 @@ interface VapiMessage {
 async function archiveRecording(companyId: string, conversationId: string, recordingUrl: string): Promise<string | null> {
   try {
     const response = await fetch(recordingUrl);
-    if (!response.ok) return null;
+    if (!response.ok) {
+      // Previously returned null with no log at all, so a permanently failing
+      // archive was indistinguishable from "no recording was offered".
+      //
+      // Vapi stores recordings in its own private bucket and hands over a bare
+      // object URL with no presigned query string, so an unauthenticated GET
+      // is rejected (R2: InvalidArgument/Authorization). Downloading it needs
+      // Vapi credentials — with VAPI_API_KEY still a placeholder this cannot
+      // succeed, and that is worth stating once per call rather than failing
+      // invisibly. The conversation itself is unaffected: the original URL is
+      // retained in audio_metadata, so the recording stays retrievable.
+      Logger.warn("Call recording not archived: source URL rejected the download", {
+        status: response.status,
+        vapiApiKeyConfigured: !isPlaceholderCredential(process.env.VAPI_API_KEY),
+      });
+      return null;
+    }
     const buffer = Buffer.from(await response.arrayBuffer());
     const contentType = response.headers.get("content-type") || "audio/wav";
     const extension = contentType.includes("mp3") ? "mp3" : contentType.includes("ogg") ? "ogg" : "wav";
