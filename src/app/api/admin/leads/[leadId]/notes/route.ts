@@ -5,6 +5,13 @@ import { handleApiError } from "@/shared/lib/apiHandler";
 import { requireCompanyAccess } from "@/shared/lib/tenant";
 import { SupabaseCRMRepository } from "@/core/infrastructure/database/supabase/SupabaseCRMRepository";
 
+// Reads the session cookie and/or query params, so it can never be rendered
+// statically. Declared explicitly to stop Next attempting a static pass that
+// always throws "Dynamic server usage" — noise that buried real errors in the
+// build log.
+export const dynamic = "force-dynamic";
+
+
 const crmRepo = new SupabaseCRMRepository();
 
 const AddNoteSchema = z.object({ company_id: z.string().uuid(), content: z.string().min(1).max(4000) });

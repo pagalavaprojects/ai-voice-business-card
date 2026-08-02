@@ -6,6 +6,14 @@ import { requireCompanyAccess } from "@/shared/lib/tenant";
 import { SupabaseBookingRepository } from "@/core/infrastructure/database/supabase/SupabaseBookingRepository";
 import { CalcomAdapter } from "@/core/infrastructure/booking/calcom/CalcomAdapter";
 import { AppointmentStatus } from "@/core/domain/models/types";
+import { Logger } from "@/shared/lib/logger";
+
+// Reads the session cookie and/or query params, so it can never be rendered
+// statically. Declared explicitly to stop Next attempting a static pass that
+// always throws "Dynamic server usage" — noise that buried real errors in the
+// build log.
+export const dynamic = "force-dynamic";
+
 
 const bookingRepo = new SupabaseBookingRepository();
 const calcom = new CalcomAdapter();
@@ -48,13 +56,29 @@ export async function POST(req: NextRequest) {
 
     await requireCompanyAccess(req, parsed.company_id, "write:appointments");
 
-    const calcomBooking = await calcom.createBooking({
-      eventTypeId: parsed.event_type_id,
-      start: parsed.start_time,
-      end: parsed.end_time,
-      responses: { name: parsed.attendee_name, email: parsed.attendee_email },
-      timeZone: parsed.timezone,
-    });
+    // Cal.com now throws rather than returning a fabricated booking, so an
+    // unconfigured calendar produces an honest REQUESTED appointment instead
+    // of a row carrying a synthetic booking id and a dead demo meeting URL.
+    let calcomBookingId: string | undefined;
+    let meetingUrl: string | undefined;
+    let confirmed = false;
+
+    try {
+      const calcomBooking = await calcom.createBooking({
+        eventTypeId: parsed.event_type_id,
+        start: parsed.start_time,
+        end: parsed.end_time,
+        responses: { name: parsed.attendee_name, email: parsed.attendee_email },
+        timeZone: parsed.timezone,
+      });
+      calcomBookingId = calcomBooking.uid;
+      meetingUrl = calcomBooking.meetingUrl;
+      confirmed = true;
+    } catch (err) {
+      Logger.warn("Cal.com booking unavailable; storing appointment as REQUESTED", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
 
     const appointment = await bookingRepo.createAppointment({
       company_id: parsed.company_id,
@@ -62,11 +86,18 @@ export async function POST(req: NextRequest) {
       lead_id: parsed.lead_id,
       start_time: parsed.start_time,
       end_time: parsed.end_time,
-      calcom_booking_id: calcomBooking.uid,
-      meeting_url: calcomBooking.meetingUrl,
+      calcom_booking_id: calcomBookingId,
+      meeting_url: meetingUrl,
+      status: confirmed ? AppointmentStatus.BOOKED : AppointmentStatus.REQUESTED,
     });
 
-    return formatApiResponse(appointment, 201, calcom.isConfigured() ? "Appointment booked via Cal.com" : "Appointment booked (Cal.com demo mode — Requires Live Infrastructure)");
+    return formatApiResponse(
+      appointment,
+      201,
+      confirmed
+        ? "Appointment booked via Cal.com"
+        : "Preferred time saved as a request — Cal.com is not configured, so no calendar invitation was sent"
+    );
   } catch (error) {
     return handleApiError(error);
   }

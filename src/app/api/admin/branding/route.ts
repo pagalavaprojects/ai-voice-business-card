@@ -5,6 +5,13 @@ import { handleApiError } from "@/shared/lib/apiHandler";
 import { requireCompanyAccess } from "@/shared/lib/tenant";
 import { SupabaseSettingsRepository } from "@/core/infrastructure/database/supabase/SupabaseSettingsRepository";
 
+// Reads the session cookie and/or query params, so it can never be rendered
+// statically. Declared explicitly to stop Next attempting a static pass that
+// always throws "Dynamic server usage" — noise that buried real errors in the
+// build log.
+export const dynamic = "force-dynamic";
+
+
 const settingsRepo = new SupabaseSettingsRepository();
 
 const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;

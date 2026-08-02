@@ -16,7 +16,7 @@ export class SupabaseBookingRepository implements IBookingRepository {
         end_time: validated.end_time,
         calcom_booking_id: validated.calcom_booking_id,
         meeting_url: validated.meeting_url,
-        status: "BOOKED",
+        status: validated.status ?? "BOOKED",
       })
       .select()
       .single();

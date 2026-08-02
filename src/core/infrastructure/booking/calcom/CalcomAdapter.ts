@@ -24,6 +24,16 @@ export interface CalcomSlot {
   time: string;
 }
 
+/** Thrown when a real booking is impossible because Cal.com isn't configured.
+ * Typed so callers can degrade deliberately — capturing the visitor's
+ * preferred time as REQUESTED — instead of reporting a confirmed meeting. */
+export class CalcomUnavailableError extends Error {
+  constructor() {
+    super("Cal.com is not configured — CALCOM_API_KEY is missing or a placeholder");
+    this.name = "CalcomUnavailableError";
+  }
+}
+
 export class CalcomAdapter {
   private apiKey: string;
 
@@ -65,14 +75,17 @@ export class CalcomAdapter {
 
   async createBooking(request: CalcomBookingRequest): Promise<CalcomBookingResponse> {
     if (!this.isConfigured()) {
-      // Graceful fallback if live Cal.com API key is not yet configured
-      return {
-        id: Math.floor(Math.random() * 100000),
-        uid: `cal_demo_${Date.now()}`,
-        title: `Meeting with ${request.responses.name}`,
-        meetingUrl: "https://cal.com/demo-meeting",
-        status: "ACCEPTED",
-      };
+      // Throws rather than returning a fabricated booking.
+      //
+      // This previously returned a synthetic id and a dead
+      // "cal.com/demo-meeting" URL with status ACCEPTED, which callers stored
+      // and reported as a confirmed meeting. Nobody was ever booked and no
+      // invite was sent — the visitor simply never heard from anyone.
+      //
+      // Same reasoning as OpenAIEmbeddingAdapter refusing to invent vectors:
+      // a fake success is worse than a clean failure, because the caller can
+      // handle a failure honestly and cannot detect a convincing lie.
+      throw new CalcomUnavailableError();
     }
 
     const response = await fetch("https://api.cal.com/v1/bookings", {

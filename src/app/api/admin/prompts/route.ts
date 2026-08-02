@@ -8,6 +8,13 @@ import { SupabaseKnowledgeRepository } from "@/core/infrastructure/database/supa
 import { PromptAssemblyService } from "@/core/application/services/PromptAssemblyService";
 import { RedisCache } from "@/core/infrastructure/cache/RedisCache";
 
+// Reads the session cookie and/or query params, so it can never be rendered
+// statically. Declared explicitly to stop Next attempting a static pass that
+// always throws "Dynamic server usage" — noise that buried real errors in the
+// build log.
+export const dynamic = "force-dynamic";
+
+
 const promptRepo = new SupabasePromptRepository();
 const promptAssemblyService = new PromptAssemblyService(new SupabaseKnowledgeRepository(), promptRepo, new RedisCache());
 

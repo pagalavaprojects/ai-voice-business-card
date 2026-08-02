@@ -1,0 +1,12 @@
+-- The voice assistant can capture a visitor's preferred meeting time even when
+-- Cal.com is unavailable or unconfigured. Previously there was no way to
+-- express that: the enum only had BOOKED/CANCELLED/COMPLETED, so an
+-- appointment with no calendar event behind it was still stored as BOOKED and
+-- the caller was told "your meeting is confirmed" — for a meeting that existed
+-- nowhere but this table, with no invite sent to anyone.
+--
+-- REQUESTED distinguishes "we captured the intent, a human must confirm" from
+-- "there is a real calendar event". The distinction has to live in the data,
+-- not just in what the assistant says, so the dashboard and any follow-up
+-- automation can tell the two apart.
+ALTER TYPE appointment_status ADD VALUE IF NOT EXISTS 'REQUESTED';

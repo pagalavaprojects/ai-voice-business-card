@@ -12,7 +12,11 @@ import { apiFetch, ApiClientError } from "@/shared/lib/apiClient";
 import { Appointment, AppointmentStatus } from "@/core/domain/models/types";
 
 const statusConfig: Record<AppointmentStatus, { label: string; icon: React.ElementType; colorClass: string; badgeVariant: "success" | "warning" | "danger" }> = {
-  BOOKED: { label: "Booked", icon: AlertCircle, colorClass: "text-amber-400", badgeVariant: "warning" },
+  // Surfaced distinctly on purpose: a REQUESTED row has no calendar event
+  // behind it and is waiting on a human, which is exactly the queue an admin
+  // needs to see. Showing it as "Booked" would hide work that must be done.
+  REQUESTED: { label: "Needs confirmation", icon: AlertCircle, colorClass: "text-amber-400", badgeVariant: "warning" },
+  BOOKED: { label: "Booked", icon: CheckCircle, colorClass: "text-sky-400", badgeVariant: "success" },
   COMPLETED: { label: "Completed", icon: CheckCircle, colorClass: "text-emerald-400", badgeVariant: "success" },
   CANCELLED: { label: "Cancelled", icon: XCircle, colorClass: "text-rose-400", badgeVariant: "danger" },
 };

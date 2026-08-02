@@ -5,6 +5,13 @@ import { Logger } from "@/shared/lib/logger";
 import { supabaseAdmin } from "@/shared/lib/supabase";
 import { AppointmentStatus } from "@/core/domain/models/types";
 
+// Reads the session cookie and/or query params, so it can never be rendered
+// statically. Declared explicitly to stop Next attempting a static pass that
+// always throws "Dynamic server usage" — noise that buried real errors in the
+// build log.
+export const dynamic = "force-dynamic";
+
+
 const bookingRepo = new SupabaseBookingRepository();
 
 interface CalcomWebhookPayload {

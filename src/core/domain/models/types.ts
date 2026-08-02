@@ -31,6 +31,11 @@ export enum ConversationStatus {
 }
 
 export enum AppointmentStatus {
+  /** Captured from the visitor, but NOT confirmed on a calendar — Cal.com was
+   * unconfigured or unreachable. A human still has to confirm it. Kept
+   * distinct from BOOKED so nothing downstream mistakes an intention for an
+   * actual calendar entry. */
+  REQUESTED = "REQUESTED",
   BOOKED = "BOOKED",
   CANCELLED = "CANCELLED",
   COMPLETED = "COMPLETED",
@@ -317,6 +322,10 @@ export const CreateAppointmentSchema = z.object({
   end_time: z.string().datetime(),
   calcom_booking_id: z.string().optional(),
   meeting_url: z.string().url().optional(),
+  /** Defaults to BOOKED for the admin path, which always creates a real
+   * Cal.com event first. The voice path passes REQUESTED when it could not
+   * reach a calendar, so an unconfirmed intent is never stored as a booking. */
+  status: z.nativeEnum(AppointmentStatus).optional(),
 });
 
 export const CreateProductSchema = z.object({

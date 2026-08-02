@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/shared/lib/supabase";
 import { isPlaceholderCredential } from "@/shared/lib/security";
 import { isRedisConfigured, getRedisClient } from "@/core/infrastructure/cache/redisClient";
+import { validateEnvironment } from "@/config/env.config";
 
 /**
  * Real connectivity checks, not just "is the env var present" — the
@@ -71,6 +72,11 @@ export async function GET() {
         calendar,
         embeddings,
       },
+      // Surfaced so a misconfiguration is diagnosable from outside the box.
+      // Reported rather than thrown at startup: crashing on an unconfigured
+      // optional integration would turn a degraded feature into an outage,
+      // and every one of them already degrades honestly on its own.
+      configuration: validateEnvironment(),
     },
     { status: status === "healthy" ? 200 : status === "unhealthy" ? 503 : 200 }
   );

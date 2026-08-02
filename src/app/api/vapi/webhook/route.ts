@@ -9,6 +9,13 @@ import { supabaseAdmin } from "@/shared/lib/supabase";
 import { resolveOpenAIVoiceId } from "@/shared/lib/voice";
 import { verifyWebhookToken } from "@/shared/lib/webhookToken";
 
+// Reads the session cookie and/or query params, so it can never be rendered
+// statically. Declared explicitly to stop Next attempting a static pass that
+// always throws "Dynamic server usage" — noise that buried real errors in the
+// build log.
+export const dynamic = "force-dynamic";
+
+
 const conversationRepo = new SupabaseConversationRepository();
 const storage = new SupabaseStorageAdapter();
 

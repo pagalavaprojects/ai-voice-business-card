@@ -30,19 +30,37 @@ describe("handleApiError", () => {
     expect(json.errors).toEqual(expect.arrayContaining([expect.stringContaining("email"), expect.stringContaining("age")]));
   });
 
-  it("converts an unexpected Error to 500 without swallowing its message", async () => {
-    const response = handleApiError(new Error("Supabase connection reset"));
+  // These two previously asserted that the raw error message was returned to
+  // the caller. That was the defect: a Postgres failure reached the browser
+  // verbatim as `invalid input syntax for type integer: "19.488"`, disclosing
+  // column types and query shape. The detail now goes to the logs under a
+  // correlation id and only the id is returned.
+  it("does not leak internal error detail to the client on a 500", async () => {
+    const response = handleApiError(new Error("Supabase connection reset: password authentication failed for user 'postgres'"));
     const json = await response.json();
 
     expect(response.status).toBe(500);
-    expect(json.errors).toContain("Supabase connection reset");
+    expect(JSON.stringify(json)).not.toContain("password authentication failed");
+    expect(JSON.stringify(json)).not.toContain("Supabase connection reset");
+    expect(json.message).toBe("Something went wrong on our end. Please try again.");
   });
 
-  it("converts a non-Error thrown value to a generic 500", async () => {
-    const response = handleApiError("a plain string was thrown");
+  it("returns a correlation id so a reported failure can be found in the logs", async () => {
+    const response = handleApiError(new Error("boom"));
     const json = await response.json();
 
+    const reference = (json.errors as string[]).find((e) => e.startsWith("Reference: "));
+    expect(reference).toBeDefined();
+    expect(reference).toMatch(/^Reference: [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+  });
+
+  it("gives each failure a distinct id", async () => {
+    const idOf = async (r: Response) => ((await r.json()).errors as string[])[0];
+    expect(await idOf(handleApiError(new Error("a")))).not.toBe(await idOf(handleApiError(new Error("b"))));
+  });
+
+  it("handles a non-Error thrown value without crashing", async () => {
+    const response = handleApiError("a plain string was thrown");
     expect(response.status).toBe(500);
-    expect(json.errors).toContain("Internal server error");
   });
 });

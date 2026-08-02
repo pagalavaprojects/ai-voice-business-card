@@ -4,6 +4,13 @@ import { handleApiError } from "@/shared/lib/apiHandler";
 import { requireCompanyAccess } from "@/shared/lib/tenant";
 import { SupabasePromptRepository } from "@/core/infrastructure/database/supabase/SupabasePromptRepository";
 
+// Reads the session cookie and/or query params, so it can never be rendered
+// statically. Declared explicitly to stop Next attempting a static pass that
+// always throws "Dynamic server usage" — noise that buried real errors in the
+// build log.
+export const dynamic = "force-dynamic";
+
+
 const promptRepo = new SupabasePromptRepository();
 
 export async function GET(req: NextRequest, { params }: { params: { templateId: string } }) {

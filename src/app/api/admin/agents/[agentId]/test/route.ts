@@ -7,6 +7,13 @@ import { SupabaseAgentRepository } from "@/core/infrastructure/database/supabase
 import { SupabasePromptRepository } from "@/core/infrastructure/database/supabase/SupabasePromptRepository";
 import { AgentReadiness } from "@/core/domain/repositories/IAgentRepository";
 
+// Reads the session cookie and/or query params, so it can never be rendered
+// statically. Declared explicitly to stop Next attempting a static pass that
+// always throws "Dynamic server usage" — noise that buried real errors in the
+// build log.
+export const dynamic = "force-dynamic";
+
+
 const agentRepo = new SupabaseAgentRepository();
 const promptRepo = new SupabasePromptRepository();
 

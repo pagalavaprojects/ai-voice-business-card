@@ -9,6 +9,7 @@ import { RedisCache } from "@/core/infrastructure/cache/RedisCache";
 import { PromptAssemblyService } from "@/core/application/services/PromptAssemblyService";
 import { ToolRegistry } from "@/core/application/tools/ToolRegistry";
 import { NotificationService } from "@/core/application/services/NotificationService";
+import { CalcomAdapter } from "@/core/infrastructure/booking/calcom/CalcomAdapter";
 
 // Shared by both the assistant-request path (webhook) and the public
 // business-card route (client fetches the assembled prompt/tools before
@@ -23,4 +24,17 @@ export const agentRepo = new SupabaseAgentRepository();
 const notificationService = new NotificationService(new ResendEmailAdapter(), new SupabaseEmailLogRepository());
 
 export const promptAssemblyService = new PromptAssemblyService(knowledgeRepo, promptRepo, new RedisCache());
-export const toolRegistry = new ToolRegistry(crmRepo, bookingRepo, knowledgeRepo, notificationService);
+
+// CALCOM_EVENT_TYPE_ID was documented in .env.example but never read by any
+// code, which is part of why the voice tool never reached Cal.com. Without a
+// valid id there is no event type to book against, so book_appointment
+// captures the request as REQUESTED instead of pretending to confirm it.
+const calcomEventTypeId = Number(process.env.CALCOM_EVENT_TYPE_ID);
+export const toolRegistry = new ToolRegistry(
+  crmRepo,
+  bookingRepo,
+  knowledgeRepo,
+  notificationService,
+  new CalcomAdapter(),
+  Number.isFinite(calcomEventTypeId) && calcomEventTypeId > 0 ? calcomEventTypeId : undefined
+);

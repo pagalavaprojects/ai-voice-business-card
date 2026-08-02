@@ -3,6 +3,8 @@ import { IBookingRepository } from "../../domain/repositories/IBookingRepository
 import { IKnowledgeRepository } from "../../domain/repositories/IKnowledgeRepository";
 import { NotificationService } from "../services/NotificationService";
 import { LeadQualificationService } from "../services/LeadQualificationService";
+import { CalcomAdapter } from "../../infrastructure/booking/calcom/CalcomAdapter";
+import { AppointmentStatus } from "../../domain/models/types";
 import { Logger } from "@/shared/lib/logger";
 
 export const KNOWN_TOOL_NAMES = [
@@ -36,7 +38,12 @@ export class ToolRegistry {
     private crmRepo: ICRMRepository,
     private bookingRepo: IBookingRepository,
     private knowledgeRepo: IKnowledgeRepository,
-    private notificationService?: NotificationService
+    private notificationService?: NotificationService,
+    // Optional so existing tests can construct a registry without a calendar.
+    // When absent, book_appointment captures the request as REQUESTED rather
+    // than silently claiming a confirmed booking.
+    private calcom?: CalcomAdapter,
+    private calcomEventTypeId?: number
   ) {
     this.qualificationService = new LeadQualificationService(crmRepo);
     this.registerDefaultTools();
@@ -122,37 +129,81 @@ export class ToolRegistry {
         required: ["lead_id", "start_time", "end_time"],
       },
       execute: async (args, context) => {
+        const lead = await this.crmRepo.getLeadById(String(args.lead_id));
+
+        // Attempt a REAL calendar booking first. Previously this wrote a row
+        // and nothing else, then told the caller "Appointment successfully
+        // scheduled" — no Cal.com event, no invite, nobody on the call.
+        //
+        // When Cal.com genuinely cannot book, the intent is still captured but
+        // recorded as REQUESTED, and the message says a confirmation is coming
+        // rather than claiming one already happened.
+        let calcomBookingId: string | undefined;
+        let meetingUrl: string | undefined;
+        let confirmed = false;
+
+        if (this.calcom && this.calcomEventTypeId) {
+          try {
+            const booking = await this.calcom.createBooking({
+              eventTypeId: this.calcomEventTypeId,
+              start: String(args.start_time),
+              end: String(args.end_time),
+              responses: { name: lead?.name ?? "Website visitor", email: lead?.email ?? "" },
+              timeZone: String(args.timezone || "UTC"),
+            });
+            calcomBookingId = booking.uid;
+            meetingUrl = booking.meetingUrl;
+            confirmed = true;
+          } catch (err) {
+            // A calendar outage must not lose the lead's stated preference —
+            // it downgrades to REQUESTED so a human can follow up.
+            Logger.warn("Cal.com booking failed during voice call; capturing as REQUESTED", {
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
+
         const appointment = await this.bookingRepo.createAppointment({
           company_id: context.companyId,
           employee_id: context.employeeId,
           lead_id: String(args.lead_id),
           start_time: String(args.start_time),
           end_time: String(args.end_time),
+          calcom_booking_id: calcomBookingId,
+          meeting_url: meetingUrl,
+          status: confirmed ? AppointmentStatus.BOOKED : AppointmentStatus.REQUESTED,
         });
 
-        if (this.notificationService) {
-          const lead = await this.crmRepo.getLeadById(String(args.lead_id));
-          if (lead) {
-            const when = new Date(appointment.start_time).toLocaleString();
-            this.notificationService
-              .send({
-                companyId: context.companyId,
-                to: lead.email,
-                subject: "Your meeting is confirmed",
-                templateName: "appointment_confirmation",
-                html: `<p>Hi ${lead.name},</p><p>Your meeting is confirmed for <strong>${when}</strong>.</p>${
-                  appointment.meeting_url ? `<p><a href="${appointment.meeting_url}">Join the meeting</a></p>` : ""
-                }`,
-              })
-              .catch((err) => Logger.error("book_appointment confirmation email failed", { error: err instanceof Error ? err.message : String(err) }));
-          }
+        // The email must match reality too — telling someone a meeting is
+        // confirmed when no calendar entry exists is the same lie in a
+        // different channel.
+        if (this.notificationService && lead) {
+          const when = new Date(appointment.start_time).toLocaleString();
+          this.notificationService
+            .send({
+              companyId: context.companyId,
+              to: lead.email,
+              subject: confirmed ? "Your meeting is confirmed" : "We've received your meeting request",
+              templateName: confirmed ? "appointment_confirmation" : "appointment_requested",
+              html: confirmed
+                ? `<p>Hi ${lead.name},</p><p>Your meeting is confirmed for <strong>${when}</strong>.</p>${
+                    appointment.meeting_url ? `<p><a href="${appointment.meeting_url}">Join the meeting</a></p>` : ""
+                  }`
+                : `<p>Hi ${lead.name},</p><p>Thanks — we've noted your preferred time of <strong>${when}</strong>. You'll receive a calendar invitation once it's confirmed.</p>`,
+            })
+            .catch((err) => Logger.error("book_appointment email failed", { error: err instanceof Error ? err.message : String(err) }));
         }
 
         return {
           success: true,
           appointment_id: appointment.id,
           status: appointment.status,
-          message: "Appointment successfully scheduled.",
+          confirmed,
+          // What the assistant says to the caller. It must not promise a
+          // calendar entry that was never created.
+          message: confirmed
+            ? "Appointment confirmed and a calendar invitation has been sent."
+            : "Preferred time noted. A confirmation will follow shortly by email.",
         };
       },
     });
