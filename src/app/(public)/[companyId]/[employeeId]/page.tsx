@@ -26,7 +26,17 @@ interface PublicCardData {
   };
   branding?: { primaryColor: string | null; secondaryColor: string | null };
   services?: Array<{ name: string; description: string; deliverables?: string[]; timeline?: string }>;
-  products?: Array<{ name: string; description: string; benefits?: string[]; pricing?: number; currency?: string }>;
+  products?: Array<{
+    name: string;
+    description: string;
+    benefits?: string[];
+    pricing?: number;
+    currency?: string;
+    discountPercent?: number | null;
+    imageUrl?: string | null;
+    featured?: boolean;
+    cta?: { label: string; url: string } | null;
+  }>;
   suggestedQuestions?: string[];
   socialLinks?: Record<string, string>;
   whatsappUrl?: string | null;
@@ -328,17 +338,48 @@ export default function VoiceBusinessCardPage() {
             </h2>
             <ul className="space-y-4">
               {card.products.map((p) => (
-                <li key={p.name}>
-                  <div className="flex items-baseline justify-between gap-3">
-                    <p className="text-sm font-bold text-slate-100">{p.name}</p>
-                    {typeof p.pricing === "number" && p.pricing > 0 && (
-                      <span className="text-xs font-mono text-sky-400 whitespace-nowrap">
-                        {p.currency === "USD" ? "$" : `${p.currency ?? ""} `}
-                        {p.pricing}
-                      </span>
+                <li key={p.name} className="flex gap-3">
+                  {p.imageUrl && (
+                    /* eslint-disable-next-line @next/next/no-img-element */
+                    <img
+                      src={p.imageUrl}
+                      alt=""
+                      // Decorative alongside the visible name — empty alt keeps
+                      // screen readers from announcing the filename.
+                      className="h-14 w-14 rounded-xl object-cover border border-white/[0.08] shrink-0"
+                      loading="lazy"
+                    />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-baseline justify-between gap-3">
+                      <p className="text-sm font-bold text-slate-100 truncate">
+                        {p.name}
+                        {p.featured && (
+                          <span className="ml-2 text-[9px] uppercase tracking-wide text-amber-300 bg-amber-400/10 border border-amber-400/25 rounded-full px-1.5 py-0.5 align-middle">
+                            Featured
+                          </span>
+                        )}
+                      </p>
+                      {typeof p.pricing === "number" && p.pricing > 0 && (
+                        <span className="text-xs font-mono text-sky-400 whitespace-nowrap">
+                          {p.currency === "USD" ? "$" : `${p.currency ?? ""} `}
+                          {p.pricing}
+                          {p.discountPercent ? <span className="text-emerald-400 ml-1.5">−{p.discountPercent}%</span> : null}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-slate-300 leading-relaxed mt-1">{p.description}</p>
+                    {p.cta && (
+                      <a
+                        href={p.cta.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-block mt-2 text-[11px] font-semibold text-sky-300 hover:text-sky-200 underline underline-offset-2 focus:outline-none focus:ring-2 focus:ring-sky-500 rounded"
+                      >
+                        {p.cta.label} →
+                      </a>
                     )}
                   </div>
-                  <p className="text-xs text-slate-300 leading-relaxed mt-1">{p.description}</p>
                 </li>
               ))}
             </ul>

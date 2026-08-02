@@ -96,6 +96,19 @@ export interface Product extends BaseEntity {
   pricing: number;
   currency: string;
   target_audience?: string | null;
+  slug?: string | null;
+  short_description?: string | null;
+  category?: string | null;
+  discount_percent: number;
+  sku?: string | null;
+  image_path?: string | null;
+  gallery_paths: string[];
+  cta_label?: string | null;
+  cta_url?: string | null;
+  display_order: number;
+  is_featured: boolean;
+  is_active: boolean;
+  deleted_at?: string | null;
 }
 
 export interface Service extends BaseEntity {
@@ -328,16 +341,41 @@ export const CreateAppointmentSchema = z.object({
   status: z.nativeEnum(AppointmentStatus).optional(),
 });
 
+// Slug rule: URL-safe, lowercase, hyphen-separated. Enforced here rather than
+// only normalised in the UI so an API caller can't create "My Product!" as a
+// slug and break card URLs later.
+const SlugSchema = z
+  .string()
+  .min(2)
+  .max(160)
+  .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Slug must be lowercase letters, numbers and hyphens");
+
 export const CreateProductSchema = z.object({
   company_id: z.string().uuid(),
-  name: z.string().min(2),
+  name: z.string().min(2).max(255),
   description: z.string().min(5),
-  features: z.array(z.string()),
-  benefits: z.array(z.string()),
+  features: z.array(z.string().min(1)).default([]),
+  benefits: z.array(z.string().min(1)).default([]),
   pricing: z.number().nonnegative(),
-  currency: z.string().default("USD"),
-  target_audience: z.string().optional(),
+  currency: z.string().min(3).max(10).default("USD"),
+  target_audience: z.string().optional().nullable(),
+  slug: SlugSchema.optional().nullable(),
+  short_description: z.string().max(280).optional().nullable(),
+  category: z.string().max(80).optional().nullable(),
+  discount_percent: z.number().min(0).max(100).default(0),
+  sku: z.string().max(64).optional().nullable(),
+  image_path: z.string().optional().nullable(),
+  gallery_paths: z.array(z.string()).default([]),
+  cta_label: z.string().max(60).optional().nullable(),
+  cta_url: z.string().url().optional().nullable(),
+  display_order: z.number().int().min(0).default(0),
+  is_featured: z.boolean().default(false),
+  is_active: z.boolean().default(true),
 });
+
+/** Everything editable except tenancy; company_id travels separately for the
+ * authorization check and is never updatable. */
+export const UpdateProductSchema = CreateProductSchema.omit({ company_id: true }).partial();
 
 export const CreateFAQSchema = z.object({
   company_id: z.string().uuid(),

@@ -31,6 +31,9 @@ export type Permission =
   | "write:prompts"
   | "read:appointments"
   | "write:appointments"
+  | "read:products"
+  | "write:products"
+  | "delete:products"
   | "read:employees"
   | "read:settings"
   | "manage:settings"
@@ -45,6 +48,7 @@ const rolePermissions: Record<UserRole, Permission[]> = {
     "read:knowledge", "write:knowledge", "delete:knowledge",
     "read:prompts", "write:prompts",
     "read:appointments", "write:appointments",
+    "read:products", "write:products", "delete:products",
     "read:employees",
     "read:settings", "manage:settings", "manage:api_keys", "manage:members", "manage:branding",
   ],
@@ -54,6 +58,7 @@ const rolePermissions: Record<UserRole, Permission[]> = {
     "read:knowledge", "write:knowledge", "delete:knowledge",
     "read:prompts", "write:prompts",
     "read:appointments", "write:appointments",
+    "read:products", "write:products", "delete:products",
     "read:employees",
     "read:settings", "manage:settings", "manage:api_keys", "manage:members", "manage:branding",
   ],
@@ -63,6 +68,7 @@ const rolePermissions: Record<UserRole, Permission[]> = {
     "read:knowledge", "write:knowledge",
     "read:prompts", "write:prompts",
     "read:appointments", "write:appointments",
+    "read:products", "write:products",
     "read:employees",
     "read:settings",
   ],
@@ -72,6 +78,7 @@ const rolePermissions: Record<UserRole, Permission[]> = {
     "read:knowledge",
     "read:prompts",
     "read:appointments", "write:appointments",
+    "read:products",
     "read:employees",
     "read:settings",
   ],
@@ -81,6 +88,7 @@ const rolePermissions: Record<UserRole, Permission[]> = {
     "read:knowledge",
     "read:prompts",
     "read:appointments",
+    "read:products",
     "read:employees",
     "read:settings",
   ],

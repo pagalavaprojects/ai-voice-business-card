@@ -15,8 +15,20 @@ export class SupabaseKnowledgeRepository implements IKnowledgeRepository {
     return (data as Employee) || null;
   }
 
+  // This repository is the PUBLIC read path — the card, prompt assembly and
+  // voice tools all come through here. It filters to active products so a
+  // deactivated product disappears from every visitor-facing surface at once;
+  // the admin module reads through SupabaseProductRepository, which sees
+  // everything.
   async getProductsByCompany(companyId: string): Promise<Product[]> {
-    const { data, error } = await supabaseAdmin.from("products").select().eq("company_id", companyId).is("deleted_at", null);
+    const { data, error } = await supabaseAdmin
+      .from("products")
+      .select()
+      .eq("company_id", companyId)
+      .eq("is_active", true)
+      .is("deleted_at", null)
+      .order("display_order", { ascending: true })
+      .order("created_at", { ascending: true });
     if (error) throw new Error(`getProductsByCompany failed: ${error.message}`);
     return (data as Product[]) || [];
   }
@@ -46,10 +58,13 @@ export class SupabaseKnowledgeRepository implements IKnowledgeRepository {
   }
 
   async searchProducts(companyId: string, query: string): Promise<Product[]> {
+    // Same active-only rule as getProductsByCompany: the voice assistant must
+    // not recommend a product the admin has taken off sale.
     const { data, error } = await supabaseAdmin
       .from("products")
       .select()
       .eq("company_id", companyId)
+      .eq("is_active", true)
       .textSearch("fts", query, { config: "english", type: "plain" })
       .is("deleted_at", null);
 

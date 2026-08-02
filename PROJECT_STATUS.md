@@ -8,7 +8,7 @@
 | **Repository** | https://github.com/pagalavaprojects/ai-voice-business-card |
 | **Demo card** | [`/33333333…/44444444…`](https://ai-voice-business-card.vercel.app/33333333-3333-3333-3333-333333333333/44444444-4444-4444-4444-444444444444) |
 | **Last updated** | 2026-08-02 |
-| **Completion** | **~88%** — production-deployed; analytics live, integrations pending credentials |
+| **Completion** | **~90%** — production-deployed; analytics + products live, integrations pending credentials |
 
 > This file is refreshed after every completed module. If it looks stale
 > against the repo, trust the repo and raise it.
@@ -40,14 +40,14 @@ inward; repositories abstract Supabase behind interfaces.
 
 | Metric | Value |
 |---|---|
-| Commits | 45 |
-| Source | 14,148 lines TypeScript |
-| API routes | 35 |
-| Dashboard pages | 8 |
-| Database | 26 tables · 35 indexes · 43 FKs · 26 RLS policies |
-| Migrations | 8, apply cleanly from scratch |
-| Unit/integration tests | **117 passing**, 1 skipped (documented) |
-| Browser tests | **27 passing** across 3 viewports |
+| Commits | 46 |
+| Source | 15,840 lines TypeScript |
+| API routes | 40 |
+| Dashboard pages | 9 |
+| Database | 26 tables · 37 indexes · 43 FKs · 26 RLS policies |
+| Migrations | 9, apply cleanly from scratch |
+| Unit/integration tests | **134 passing**, 1 skipped (documented) |
+| Browser tests | **30 passing** across 3 viewports |
 | Accessibility | WCAG 2.1 AA — zero violations |
 | Build | Zero warnings, zero build-time error logs |
 | Code hygiene | 0 TODOs · 0 `any` · 0 `@ts-ignore` |
@@ -182,6 +182,43 @@ a text label, and the employee table repeats every charted number.
 Also fixed: the **AI Agents page had never been linked in the sidebar** since
 the agents module was built, so it was reachable only by typing the URL.
 
+### Phase 7 — Products management module *(current)*
+Full CRUD at `/dashboard/products`, replacing SQL-only editing.
+
+Stat tiles (total / active / inactive / featured / added-30d) computed in the
+same request as the list, so tiles and table can never disagree. Table has
+search, status filter, sort, pagination, row selection, bulk
+activate/deactivate/delete, CSV export, duplicate, edit and soft delete.
+Create/edit form covers every requested field with drag-and-drop image upload
+(real progress via XHR, since `fetch` still cannot observe upload progress).
+
+Decisions worth recording:
+
+- **Additive migration only.** `is_active` defaults TRUE so existing seeded
+  products stay visible the moment it applies — deactivation is an explicit
+  admin action, never a migration side effect.
+- **The public read path filters to active products.**
+  `SupabaseKnowledgeRepository` (used by the card, prompt assembly and the
+  voice tool) now returns active-only in display order, so deactivating a
+  product removes it from every visitor-facing surface at once. The admin
+  module reads through a separate `SupabaseProductRepository` that sees
+  everything.
+- **The form validates with the same Zod schema the API enforces**, so inline
+  errors are exactly what the server would reject — it cannot pass locally
+  and 422 remotely.
+- **Duplicates start inactive.** Duplicating is usually step one of "make a
+  variant"; a half-edited copy must not be pitched by the AI.
+- **SVG is rejected for product images** (unlike the logo upload) because
+  these render on the public card and SVG can carry scripts.
+- Bulk operations scope by `company_id` in the WHERE clause as well as by id,
+  so another tenant's ids are a no-op even if authorization were bypassed.
+
+New RBAC permissions `read/write/delete:products` follow the leads pattern —
+managers edit the catalog, only OWNER/ADMIN delete.
+
+17 new unit tests (schema bounds, slug rules, CSV quoting, form mapping) plus
+an e2e test that the products surface is closed to anonymous callers.
+
 ---
 
 ## 5. Recurring theme
@@ -209,7 +246,7 @@ Each is now either genuinely working or **failing honestly and loudly**.
 | Database | 90% | Indexed, constrained; 2 orphan tables remain |
 | Voice pipeline | 90% | Live and verified; latency unmeasured |
 | Public business card | 95% | Redesigned, WCAG AA, 320–1440px |
-| Admin dashboard | 82% | 8 pages real incl. analytics; no live monitoring |
+| Admin dashboard | 86% | 9 pages real incl. analytics + products; no live monitoring |
 | Analytics | 75% | 15 real metrics; 4 need instrumentation that doesn't exist |
 | Knowledge base / RAG | 85% | Complete — inert until `OPENAI_API_KEY` is set |
 | Booking | 70% | Code correct; needs Cal.com credentials |
@@ -217,7 +254,7 @@ Each is now either genuinely working or **failing honestly and loudly**.
 | Testing | 88% | 117 unit + 27 browser; no load testing |
 | Observability | 80% | Config complete; stack never run |
 | Deployment | 95% | Live on Vercel, HTTPS, auto-deploy from GitHub |
-| **Overall** | **~88%** | |
+| **Overall** | **~90%** | |
 
 ---
 
@@ -227,6 +264,10 @@ Each is now either genuinely working or **failing honestly and loudly**.
 
 **Two migrations to apply** in the Supabase SQL Editor — `ALTER TYPE` and
 `CREATE INDEX` cannot go through the JS client:
+
+Three migrations are pending: `20260803` (appointment status), `20260804`
+(hot-path indexes) and `20260805` (products catalog columns). Until `20260805`
+applies, the Products page returns an error about a missing `category` column.
 
 ```sql
 ALTER TYPE appointment_status ADD VALUE IF NOT EXISTS 'REQUESTED';
@@ -258,9 +299,9 @@ reported by `/api/health`:
 ### Next features (priority order)
 
 1. ~~Analytics dashboard~~ — **done** (Phase 6).
-2. **Products CRUD** — *in progress next*. Products are shown on the public
-   card and used by voice tools, but editable only via SQL.
-3. **Services CRUD** — same, to the same standard.
+2. ~~Products CRUD~~ — **done** (Phase 7).
+3. **Services CRUD** — *next*. Same standard as Products; the `services`
+   table needs the equivalent catalog columns.
 4. **Employee CRUD** — create, invite, deactivate, voice + knowledge
    assignment. Blocks self-serve onboarding today.
 5. **Company settings** — logo, brand colours, social links, business hours,

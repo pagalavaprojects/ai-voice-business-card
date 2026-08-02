@@ -19,7 +19,8 @@
     "verify:db": "node --env-file-if-exists=.env.local scripts/verify-live-db.mjs",
     "worker": "tsx --env-file-if-exists=.env.local scripts/worker.ts",
     "seed:pagalava": "tsx --env-file-if-exists=.env.local scripts/seed-pagalava.ts",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "seed:products": "node --env-file-if-exists=.env.local scripts/seed-products.mjs"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.1",

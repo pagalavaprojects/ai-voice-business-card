@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { SupabaseKnowledgeRepository } from "@/core/infrastructure/database/supabase/SupabaseKnowledgeRepository";
 import { promptAssemblyService, toolRegistry, agentRepo } from "@/core/infrastructure/bootstrap/assistantRuntime";
 import { SupabaseSettingsRepository } from "@/core/infrastructure/database/supabase/SupabaseSettingsRepository";
+import { SupabaseStorageAdapter } from "@/core/infrastructure/storage/SupabaseStorageAdapter";
 import { Logger } from "@/shared/lib/logger";
 import { resolveOpenAIVoiceId } from "@/shared/lib/voice";
 import { resolvePublicBaseUrl } from "@/shared/lib/publicUrl";
@@ -17,6 +18,7 @@ export const dynamic = "force-dynamic";
 
 const knowledgeRepo = new SupabaseKnowledgeRepository();
 const settingsRepo = new SupabaseSettingsRepository();
+const storage = new SupabaseStorageAdapter();
 
 const DEFAULT_FIRST_MESSAGE = "Hello! Thank you for scanning my business card. How can I help you today?";
 
@@ -156,12 +158,19 @@ export async function GET(req: NextRequest, { params }: { params: { companyId: s
         deliverables: s.deliverables,
         timeline: s.timeline,
       })),
+      // Already active-only and display-ordered from the repository. The
+      // short description is preferred on the card when present — the full
+      // description is what the AI uses in conversation.
       products: products.map((p) => ({
         name: p.name,
-        description: p.description,
+        description: p.short_description?.trim() || p.description,
         benefits: p.benefits,
         pricing: p.pricing,
         currency: p.currency,
+        discountPercent: p.discount_percent > 0 ? p.discount_percent : null,
+        imageUrl: p.image_path ? storage.getPublicUrl("product-images", p.image_path) : null,
+        featured: p.is_featured,
+        cta: p.cta_label && p.cta_url ? { label: p.cta_label, url: p.cta_url } : null,
       })),
       // The visitor's opening problem is "what do I even ask a voice AI?".
       // Reusing real FAQ questions gives concrete starting points that the

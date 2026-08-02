@@ -12,6 +12,7 @@ import {
   Settings,
   Bot,
   BarChart3,
+  Package,
 } from "lucide-react";
 import { cn } from "@/shared/ui/button";
 import { useCompany } from "@/features/dashboard/context/CompanyContext";
@@ -23,6 +24,7 @@ const navItems = [
   // The agents page has existed since the agents module was built but was
   // never linked here, so it was only reachable by typing the URL.
   { label: "AI Agents", href: "/dashboard/agents", icon: Bot },
+  { label: "Products", href: "/dashboard/products", icon: Package },
   { label: "Knowledge Base", href: "/dashboard/knowledge", icon: BookOpen },
   { label: "Prompt Editor", href: "/dashboard/prompts", icon: FileCode },
   { label: "Appointments", href: "/dashboard/appointments", icon: Calendar },
