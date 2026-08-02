@@ -35,7 +35,13 @@ test.describe("Public pages (real browser, no live infrastructure required)", ()
     // VoiceMicButton sets a dynamic aria-label per call state — "idle" on
     // first render — this is the exact accessibility behavior code-reviewed
     // (not browser-verified) in the original audit.
-    await expect(page.getByRole("button", { name: /Start voice conversation/i })).toBeVisible();
+    //
+    // Explicit timeout: the card renders a loading state until
+    // /api/public/... resolves, and that route now fans out to six Supabase
+    // queries plus QR generation. Under the suite's eight parallel workers
+    // that can exceed Playwright's 5s default and fail intermittently — which
+    // is a slow round trip, not a broken button.
+    await expect(page.getByRole("button", { name: /Start voice conversation/i })).toBeVisible({ timeout: 20_000 });
 
     expect(consoleErrors).toEqual([]);
   });

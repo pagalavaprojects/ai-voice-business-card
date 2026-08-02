@@ -18,6 +18,13 @@ test.describe("Accessibility (real axe-core scan, WCAG 2.1 AA)", () => {
 
   test("voice widget page has no WCAG 2.1 AA violations", async ({ page }) => {
     await page.goto(SEEDED_CARD_PATH);
+
+    // Wait for the card itself before scanning. This page renders a loading
+    // spinner until /api/public/... resolves, so scanning straight after
+    // goto() can audit an almost-empty document and pass without ever having
+    // examined the real content — a green result that guarantees nothing.
+    await expect(page.getByRole("button", { name: /Start voice conversation/i })).toBeVisible({ timeout: 20_000 });
+
     const results = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]).analyze();
     expect(results.violations, JSON.stringify(results.violations, null, 2)).toEqual([]);
   });

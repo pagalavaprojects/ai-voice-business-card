@@ -6,11 +6,39 @@ import { Logger } from "@/shared/lib/logger";
 import { resolveOpenAIVoiceId } from "@/shared/lib/voice";
 import { resolvePublicBaseUrl } from "@/shared/lib/publicUrl";
 import { createWebhookToken } from "@/shared/lib/webhookToken";
+import QRCode from "qrcode";
 
 const knowledgeRepo = new SupabaseKnowledgeRepository();
 const settingsRepo = new SupabaseSettingsRepository();
 
 const DEFAULT_FIRST_MESSAGE = "Hello! Thank you for scanning my business card. How can I help you today?";
+
+/** wa.me requires a bare international number — no +, spaces or punctuation.
+ * Returns null rather than a broken link when the stored phone can't produce
+ * a plausible number, so the UI can hide the action instead of offering a
+ * WhatsApp button that opens an error page. */
+function toWhatsappUrl(phone: string | null | undefined): string | null {
+  if (!phone) return null;
+  const digits = phone.replace(/\D/g, "");
+  return digits.length >= 8 && digits.length <= 15 ? `https://wa.me/${digits}` : null;
+}
+
+/** QR encoding this card's own URL, so it can be shown on a screen for
+ * someone else to scan. Returns null on failure — a missing QR should hide
+ * one optional action, never fail the whole card request. */
+async function renderCardQr(origin: string, companyId: string, employeeId: string): Promise<string | null> {
+  try {
+    const target = `${resolvePublicBaseUrl(origin) ?? origin}/${companyId}/${employeeId}`;
+    return await QRCode.toString(target, {
+      type: "svg",
+      margin: 1,
+      color: { dark: "#0f172a", light: "#ffffff" },
+    });
+  } catch (err) {
+    Logger.warn("QR generation failed for business card", { error: err instanceof Error ? err.message : String(err) });
+    return null;
+  }
+}
 
 /** Intentionally unauthenticated — this is the data behind the public
  * voice business card (whoever scans the card's QR/NFC hits this route
@@ -40,9 +68,18 @@ export async function GET(req: NextRequest, { params }: { params: { companyId: s
       return NextResponse.json({ message: "Business card not found" }, { status: 404 });
     }
 
-    const agent = await agentRepo.getAgentByEmployee(employeeId).catch(() => null);
-    const services = await knowledgeRepo.getServicesByCompany(companyId).catch(() => []);
-    const settings = await settingsRepo.getSettings(companyId).catch(() => null);
+    // Everything the card renders is fetched together: a visitor who scans a
+    // QR code should get one round trip, not a waterfall of requests while
+    // they stare at a spinner. Each degrades to empty independently so one
+    // missing table never blanks the whole card.
+    const [agent, services, products, faqs, settings, branding] = await Promise.all([
+      agentRepo.getAgentByEmployee(employeeId).catch(() => null),
+      knowledgeRepo.getServicesByCompany(companyId).catch(() => []),
+      knowledgeRepo.getProductsByCompany(companyId).catch(() => []),
+      knowledgeRepo.getFAQsByCompany(companyId).catch(() => []),
+      settingsRepo.getSettings(companyId).catch(() => null),
+      settingsRepo.getBranding(companyId).catch(() => null),
+    ]);
 
     // The "Book Meeting" button previously always opened a hard-coded
     // cal.com/demo/30min link — a real dead end for any visitor who clicked
@@ -102,12 +139,35 @@ export async function GET(req: NextRequest, { params }: { params: { companyId: s
         workingHours: employee.working_hours,
         avatarUrl: agent?.avatar_url ?? null,
       },
+      branding: {
+        primaryColor: branding?.primary_color ?? null,
+        secondaryColor: branding?.secondary_color ?? null,
+      },
       services: services.map((s) => ({
         name: s.name,
         description: s.description,
         deliverables: s.deliverables,
         timeline: s.timeline,
       })),
+      products: products.map((p) => ({
+        name: p.name,
+        description: p.description,
+        benefits: p.benefits,
+        pricing: p.pricing,
+        currency: p.currency,
+      })),
+      // The visitor's opening problem is "what do I even ask a voice AI?".
+      // Reusing real FAQ questions gives concrete starting points that the
+      // assistant is provably able to answer, rather than invented prompts
+      // that might miss the knowledge base entirely.
+      suggestedQuestions: faqs.slice(0, 4).map((f) => f.question),
+      socialLinks: employee.social_links ?? {},
+      // Rendered server-side into an inline SVG so the QR library never
+      // reaches the client bundle — the card is the first thing a visitor
+      // loads, often on mobile data, and this keeps it off the critical path.
+      qrSvg: await renderCardQr(req.nextUrl.origin, companyId, employeeId),
+      // Derived, not stored: a wa.me link needs the number stripped to digits.
+      whatsappUrl: toWhatsappUrl(employee.phone),
       bookingUrl,
       firstMessage: agent?.first_message?.trim() || DEFAULT_FIRST_MESSAGE,
       systemPrompt,
