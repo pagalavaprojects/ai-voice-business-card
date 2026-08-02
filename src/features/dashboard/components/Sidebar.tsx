@@ -11,13 +11,18 @@ import {
   Calendar,
   Settings,
   Bot,
+  BarChart3,
 } from "lucide-react";
 import { cn } from "@/shared/ui/button";
 import { useCompany } from "@/features/dashboard/context/CompanyContext";
 
 const navItems = [
   { label: "Overview", href: "/dashboard", icon: LayoutDashboard },
+  { label: "Analytics", href: "/dashboard/analytics", icon: BarChart3 },
   { label: "Leads", href: "/dashboard/leads", icon: Users },
+  // The agents page has existed since the agents module was built but was
+  // never linked here, so it was only reachable by typing the URL.
+  { label: "AI Agents", href: "/dashboard/agents", icon: Bot },
   { label: "Knowledge Base", href: "/dashboard/knowledge", icon: BookOpen },
   { label: "Prompt Editor", href: "/dashboard/prompts", icon: FileCode },
   { label: "Appointments", href: "/dashboard/appointments", icon: Calendar },

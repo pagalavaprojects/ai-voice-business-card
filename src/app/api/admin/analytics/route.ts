@@ -1,0 +1,201 @@
+import { NextRequest } from "next/server";
+import { formatApiResponse } from "@/shared/lib/security";
+import { handleApiError } from "@/shared/lib/apiHandler";
+import { requireCompanyAccess } from "@/shared/lib/tenant";
+import { supabaseAdmin } from "@/shared/lib/supabase";
+
+export const dynamic = "force-dynamic";
+
+/**
+ * Analytics computed entirely from this company's own rows.
+ *
+ * Deliberately NOT reported here, because the data to support them does not
+ * exist and a plausible-looking number would be worse than an absent one:
+ *
+ *   - Lead source — there is no `source` column; every lead arrives through
+ *     the voice card, so any breakdown would be invented.
+ *   - Most-asked questions — `conversations.intent` exists but is never
+ *     populated; deriving it needs transcript analysis that isn't built.
+ *   - Prompt-module usage — all six modules take part in every assembly, so
+ *     a chart would be six identical bars carrying no information.
+ *   - AI latency / response time — never measured per conversation. The OTel
+ *     histogram covers HTTP handler duration, which is not the same thing.
+ *
+ * Each needs instrumentation added on purpose rather than a placeholder.
+ */
+
+type Bucket = { key: string; calls: number };
+
+/** Groups ISO timestamps into day/week/month buckets in one pass. */
+function bucketByPeriod(timestamps: string[], period: "day" | "week" | "month"): Bucket[] {
+  const counts = new Map<string, number>();
+
+  for (const ts of timestamps) {
+    const d = new Date(ts);
+    if (Number.isNaN(d.getTime())) continue;
+
+    let key: string;
+    if (period === "day") {
+      key = d.toISOString().slice(0, 10);
+    } else if (period === "month") {
+      key = d.toISOString().slice(0, 7);
+    } else {
+      // ISO week starting Monday, keyed by that Monday's date so the bucket
+      // label is a real day rather than an opaque week number.
+      const monday = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+      const shift = (monday.getUTCDay() + 6) % 7;
+      monday.setUTCDate(monday.getUTCDate() - shift);
+      key = monday.toISOString().slice(0, 10);
+    }
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+
+  return [...counts.entries()].map(([key, calls]) => ({ key, calls })).sort((a, b) => a.key.localeCompare(b.key));
+}
+
+/** Fills gaps so a quiet day renders as zero rather than vanishing and making
+ * the line imply continuous activity. */
+function fillDays(buckets: Bucket[], days: number): Bucket[] {
+  const byKey = new Map(buckets.map((b) => [b.key, b.calls]));
+  const out: Bucket[] = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date();
+    d.setUTCDate(d.getUTCDate() - i);
+    const key = d.toISOString().slice(0, 10);
+    out.push({ key, calls: byKey.get(key) ?? 0 });
+  }
+  return out;
+}
+
+export async function GET(req: NextRequest) {
+  try {
+    const companyId = req.nextUrl.searchParams.get("companyId");
+    if (!companyId) return formatApiResponse(null, 400, "companyId query parameter is required");
+
+    await requireCompanyAccess(req, companyId, "read:leads");
+
+    const windowDays = Math.min(Number(req.nextUrl.searchParams.get("days")) || 30, 365);
+    const since = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000).toISOString();
+
+    const [conversations, leads, appointments, employees] = await Promise.all([
+      supabaseAdmin
+        .from("conversations")
+        .select("id, employee_id, created_at, duration_seconds, status, tools_called, audio_metadata")
+        .eq("company_id", companyId)
+        .gte("created_at", since)
+        .order("created_at", { ascending: true })
+        .limit(5000),
+      supabaseAdmin
+        .from("leads")
+        .select("id, employee_id, status, score, score_category, created_at")
+        .eq("company_id", companyId)
+        .is("deleted_at", null)
+        .gte("created_at", since)
+        .limit(5000),
+      supabaseAdmin.from("appointments").select("id, status").eq("company_id", companyId).gte("created_at", since).limit(5000),
+      supabaseAdmin.from("employees").select("id, name, designation").eq("company_id", companyId).is("deleted_at", null),
+    ]);
+
+    const convRows = conversations.data ?? [];
+    const leadRows = leads.data ?? [];
+    const apptRows = appointments.data ?? [];
+    const employeeRows = employees.data ?? [];
+
+    // ---- Headline counts -------------------------------------------------
+    const totalConversations = convRows.length;
+    const totalLeads = leadRows.length;
+    const qualifiedLeads = leadRows.filter((l) => l.score_category === "HIGH" || l.score_category === "MEDIUM").length;
+
+    const durations = convRows.map((c) => Number(c.duration_seconds)).filter((n) => Number.isFinite(n) && n > 0);
+    const avgDurationSeconds = durations.length ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length) : null;
+    const totalVoiceSeconds = durations.reduce((a, b) => a + b, 0);
+
+    // ---- Call outcomes ---------------------------------------------------
+    // endedReason comes from Vapi's end-of-call report. Anything containing
+    // "error" or "failed" is a genuine failure; a customer hanging up is a
+    // normal ending, not a failure.
+    let failedCalls = 0;
+    let completedCalls = 0;
+    for (const c of convRows) {
+      const reason = String((c.audio_metadata as Record<string, unknown> | null)?.endedReason ?? "");
+      if (/error|failed|timeout/i.test(reason)) failedCalls++;
+      else if (c.status === "SUMMARIZED" || reason) completedCalls++;
+    }
+    // Only calls that actually reached an outcome can be scored.
+    const scorableCalls = failedCalls + completedCalls;
+    const successRatePercent = scorableCalls > 0 ? Math.round((completedCalls / scorableCalls) * 1000) / 10 : null;
+
+    // ---- Tool usage — what visitors actually asked the AI to do ----------
+    const toolCounts = new Map<string, number>();
+    for (const c of convRows) {
+      for (const tool of (c.tools_called as string[] | null) ?? []) {
+        toolCounts.set(tool, (toolCounts.get(tool) ?? 0) + 1);
+      }
+    }
+    const toolUsage = [...toolCounts.entries()].map(([tool, count]) => ({ tool, count })).sort((a, b) => b.count - a.count);
+
+    // ---- Funnels ---------------------------------------------------------
+    const leadStatusOrder = ["NEW", "CONTACTED", "QUALIFIED", "CONVERTED"];
+    const leadFunnel = leadStatusOrder.map((stage) => ({ stage, count: leadRows.filter((l) => l.status === stage).length }));
+
+    const apptStatusOrder = ["REQUESTED", "BOOKED", "COMPLETED", "CANCELLED"];
+    const appointmentFunnel = apptStatusOrder.map((stage) => ({ stage, count: apptRows.filter((a) => a.status === stage).length }));
+
+    // ---- Per-employee performance ---------------------------------------
+    const employeePerformance = employeeRows
+      .map((e) => {
+        const calls = convRows.filter((c) => c.employee_id === e.id);
+        const empLeads = leadRows.filter((l) => l.employee_id === e.id);
+        const empDurations = calls.map((c) => Number(c.duration_seconds)).filter((n) => Number.isFinite(n) && n > 0);
+        return {
+          employeeId: e.id,
+          name: e.name,
+          designation: e.designation,
+          calls: calls.length,
+          leads: empLeads.length,
+          qualified: empLeads.filter((l) => l.score_category === "HIGH" || l.score_category === "MEDIUM").length,
+          avgDurationSeconds: empDurations.length ? Math.round(empDurations.reduce((a, b) => a + b, 0) / empDurations.length) : null,
+          conversionPercent: calls.length > 0 ? Math.round((empLeads.length / calls.length) * 1000) / 10 : null,
+        };
+      })
+      .sort((a, b) => b.calls - a.calls);
+
+    const timestamps = convRows.map((c) => String(c.created_at));
+
+    return formatApiResponse(
+      {
+        windowDays,
+        totalConversations,
+        totalLeads,
+        qualifiedLeads,
+        // Null rather than 0 when there is nothing to divide by — a 0% rate
+        // reads as a measured failure rather than an absence of data.
+        conversionPercent: totalConversations > 0 ? Math.round((totalLeads / totalConversations) * 1000) / 10 : null,
+        avgDurationSeconds,
+        totalVoiceMinutes: Math.round(totalVoiceSeconds / 60),
+        successRatePercent,
+        failedCalls,
+        completedCalls,
+        callsPerDay: fillDays(bucketByPeriod(timestamps, "day"), Math.min(windowDays, 30)),
+        callsPerWeek: bucketByPeriod(timestamps, "week"),
+        callsPerMonth: bucketByPeriod(timestamps, "month"),
+        leadFunnel,
+        appointmentFunnel,
+        employeePerformance,
+        toolUsage,
+        // Named so the UI can state plainly what isn't measured yet, instead
+        // of rendering an empty chart that looks like a bug.
+        unavailableMetrics: [
+          { metric: "Lead source", reason: "No source is recorded — every lead arrives through the voice card." },
+          { metric: "Most asked questions", reason: "Requires transcript analysis; conversations.intent is never populated." },
+          { metric: "Prompt module usage", reason: "All six modules take part in every assembly, so there is no variation to chart." },
+          { metric: "AI response latency", reason: "Not yet measured per conversation." },
+        ],
+      },
+      200,
+      "Analytics retrieved successfully"
+    );
+  } catch (error) {
+    return handleApiError(error);
+  }
+}
