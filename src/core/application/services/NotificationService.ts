@@ -9,6 +9,9 @@ export interface NotificationRequest {
   subject: string;
   html: string;
   templateName: string;
+  /** The company's configured sender name, resolved by the caller that already
+   * holds its settings. Omitted falls back to the platform name. */
+  fromName?: string;
 }
 
 /**
@@ -33,7 +36,12 @@ export class NotificationService {
       const result = await withExponentialBackoff(
         async () => {
           attemptCount += 1;
-          return this.emailAdapter.sendEmail({ to: request.to, subject: request.subject, html: request.html });
+          return this.emailAdapter.sendEmail({
+            to: request.to,
+            subject: request.subject,
+            html: request.html,
+            fromName: request.fromName,
+          });
         },
         { maxRetries: 2, initialDelayMs: 500, backoffFactor: 2 }
       );

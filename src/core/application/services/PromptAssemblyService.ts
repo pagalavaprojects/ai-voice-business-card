@@ -80,19 +80,38 @@ export class PromptAssemblyService {
     const servicesText = services
       .map((sv) => `- ${s(sv.name)}: ${s(sv.description)} (Deliverables: ${sv.deliverables.map(s).join(", ")})`)
       .join("\n");
-    const faqsText = faqs.map((f) => `Q: ${s(f.question)}\nA: ${s(f.answer)}`).join("\n\n");
+    // Policy-tagged FAQs get their own section rather than sitting in the
+    // general FAQ list: a policy ("no refunds after 14 days") is a rule the
+    // assistant must follow, not just information it may share, and burying
+    // it among ordinary Q&A gives it no more weight than trivia.
+    const isPolicy = (f: (typeof faqs)[number]) => /polic/i.test(f.category);
+    const policyFaqs = faqs.filter(isPolicy);
+    const generalFaqs = faqs.filter((f) => !isPolicy(f));
+    const faqsText = generalFaqs.map((f) => `Q: ${s(f.question)}\nA: ${s(f.answer)}`).join("\n\n");
+    const policiesText = policyFaqs.map((f) => `- ${s(f.question)}: ${s(f.answer)}`).join("\n");
+
+    // Per-employee instructions from the Employee module. Sanitised and fenced
+    // like every other admin-authored field — an override is written by a
+    // company admin, not by the platform, so it is untrusted from the prompt's
+    // point of view even though it is meant to be instructive. Placed after the
+    // shared behavior module so it refines rather than replaces it: an employee
+    // must not be able to switch off the security guardrails below.
+    const employeeNotes = employee.prompt_override?.trim()
+      ? `\n${fenceUntrustedContent("EMPLOYEE-SPECIFIC NOTES", sanitizePromptContent(employee.prompt_override))}`
+      : "";
 
     const systemPrompt = `
 === DIGITAL TWIN IDENTITY ===
 ${resolve("identity")}
 
-Working Hours: ${employee.working_hours || "9 AM - 5 PM EST"}
+Working Hours: ${employee.working_hours || "9 AM - 5 PM EST"}${employee.timezone ? ` (${employee.timezone})` : ""}
 Contact Email: ${employee.email}
 Phone: ${employee.phone}
 Office: ${employee.office_address || "Remote"}
 
 === BEHAVIOR & TONE ===
 ${resolve("behavior")}
+${employeeNotes}
 
 === SALES GUIDELINES ===
 ${resolve("sales")}
@@ -114,11 +133,12 @@ ${fenceUntrustedContent("COMPANY SERVICES", servicesText) || "No public services
 
 === FREQUENTLY ASKED QUESTIONS ===
 ${fenceUntrustedContent("FREQUENTLY ASKED QUESTIONS", faqsText) || "No FAQs listed."}
-
+${policyFaqs.length > 0 ? `\n=== COMPANY POLICIES (follow these exactly, do not soften or negotiate them) ===\n${fenceUntrustedContent("COMPANY POLICIES", policiesText)}\n` : ""}
 === MANDATORY INSTRUCTIONS ===
 1. If asked to book a meeting, collect the user's Name, Email, and Phone number before calling the 'book_appointment' function.
 2. Once you understand the visitor's company/needs, save their details using 'save_lead'.
 3. NEVER invent prices or features not explicitly listed in the knowledge base above.
+4. For questions not answered by the products, services, FAQs, or policies above, use the 'search_knowledge_base' tool before saying you don't know.
     `.trim();
 
     if (this.cache && !draftOverride) {

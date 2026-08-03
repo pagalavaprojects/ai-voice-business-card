@@ -3,10 +3,11 @@ import { formatApiResponse, validateVapiWebhookSignature, isPlaceholderCredentia
 import { SupabaseConversationRepository } from "@/core/infrastructure/database/supabase/SupabaseConversationRepository";
 import { SupabaseStorageAdapter } from "@/core/infrastructure/storage/SupabaseStorageAdapter";
 import { withSpan, httpRequestDuration, voiceCallsTotal } from "@/core/infrastructure/telemetry/otel";
-import { promptAssemblyService, toolRegistry, agentRepo } from "@/core/infrastructure/bootstrap/assistantRuntime";
+import { promptAssemblyService, toolRegistry, agentRepo, settingsRepo } from "@/core/infrastructure/bootstrap/assistantRuntime";
 import { Logger } from "@/shared/lib/logger";
 import { supabaseAdmin } from "@/shared/lib/supabase";
-import { resolveOpenAIVoiceId } from "@/shared/lib/voice";
+import { resolveCallVoiceId } from "@/shared/lib/voice";
+import { SupabaseKnowledgeRepository } from "@/core/infrastructure/database/supabase/SupabaseKnowledgeRepository";
 import { verifyWebhookToken } from "@/shared/lib/webhookToken";
 
 // Reads the session cookie and/or query params, so it can never be rendered
@@ -17,6 +18,7 @@ export const dynamic = "force-dynamic";
 
 
 const conversationRepo = new SupabaseConversationRepository();
+const knowledgeRepo = new SupabaseKnowledgeRepository();
 const storage = new SupabaseStorageAdapter();
 
 // The end-of-call report downloads the call recording from Vapi and re-uploads
@@ -98,7 +100,16 @@ async function handleVapiMessage(req: NextRequest, message: VapiMessage): Promis
     // Vapi speaks this verbatim before the model runs, so a company's
     // scripted opening (e.g. a specific pitch) has to come from the
     // agent record, not the system prompt — see first_message on ai_agents.
-    const agent = await agentRepo.getAgentByEmployee(employeeId).catch(() => null);
+    // The employee is fetched alongside it purely for their voice override, so
+    // a phone call and a browser call sound like the same person.
+    const [agent, employee, settings] = await Promise.all([
+      agentRepo.getAgentByEmployee(employeeId).catch(() => null),
+      knowledgeRepo.getEmployeeById(employeeId).catch(() => null),
+      // The company's default voice from Settings, the last step before the
+      // platform default. Degrades to null so a settings outage cannot fail
+      // the call — it just falls through to the platform voice.
+      settingsRepo.getSettings(companyId).catch(() => null),
+    ]);
     const firstMessage = agent?.first_message?.trim() || "Hello! Thank you for scanning my business card. How can I help you today?";
 
     return NextResponse.json({
@@ -112,7 +123,11 @@ async function handleVapiMessage(req: NextRequest, message: VapiMessage): Promis
         },
         voice: {
           provider: "openai",
-          voiceId: resolveOpenAIVoiceId(agent?.voice_model_id),
+          voiceId: resolveCallVoiceId(
+            employee?.voice_id,
+            agent?.voice_model_id,
+            (settings?.voice_settings as Record<string, unknown> | undefined)?.default_voice_model as string | undefined
+          ),
         },
       },
     });

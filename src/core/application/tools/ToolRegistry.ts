@@ -4,6 +4,9 @@ import { IKnowledgeRepository } from "../../domain/repositories/IKnowledgeReposi
 import { NotificationService } from "../services/NotificationService";
 import { LeadQualificationService } from "../services/LeadQualificationService";
 import { CalcomAdapter } from "../../infrastructure/booking/calcom/CalcomAdapter";
+import { ISettingsRepository } from "../../domain/repositories/ISettingsRepository";
+import { IKnowledgeDocumentRepository } from "../../domain/repositories/IKnowledgeDocumentRepository";
+import { OpenAIEmbeddingAdapter } from "../../infrastructure/embeddings/OpenAIEmbeddingAdapter";
 import { AppointmentStatus } from "../../domain/models/types";
 import { Logger } from "@/shared/lib/logger";
 
@@ -13,6 +16,7 @@ export const KNOWN_TOOL_NAMES = [
   "search_products",
   "search_services",
   "search_faqs",
+  "search_knowledge_base",
   "get_company_information",
   "get_employee_information",
 ] as const;
@@ -43,10 +47,51 @@ export class ToolRegistry {
     // When absent, book_appointment captures the request as REQUESTED rather
     // than silently claiming a confirmed booking.
     private calcom?: CalcomAdapter,
-    private calcomEventTypeId?: number
+    /** Platform-wide fallback from CALCOM_EVENT_TYPE_ID. The per-company
+     * setting below takes precedence; this covers single-tenant deployments
+     * that configure everything through the environment. */
+    private calcomEventTypeId?: number,
+    /** Lets a company's own Settings page drive the calendar and the email
+     * sender name. Optional so existing tests can construct a registry
+     * without one. */
+    private settingsRepo?: ISettingsRepository,
+    /** The RAG knowledge base (uploaded PDFs/DOCX/TXT, chunked and embedded)
+     * already had a full admin pipeline — upload, index, status, an admin-only
+     * search endpoint — but was never reachable from a live call: no tool
+     * existed for the assistant to query it, so an admin could upload and
+     * index a document and it would still never inform a single answer.
+     * Optional so existing tests and deployments without a document store can
+     * construct a registry without one. */
+    private knowledgeDocumentRepo?: IKnowledgeDocumentRepository,
+    private embeddingAdapter?: OpenAIEmbeddingAdapter
   ) {
     this.qualificationService = new LeadQualificationService(crmRepo);
     this.registerDefaultTools();
+  }
+
+  /** The Settings page writes calendar_settings.event_type_id and
+   * email_settings.sender_name. Before this they were stored and never read,
+   * so both fields looked configurable and changed nothing — the calendar
+   * always used the env var and every email went out under the platform's own
+   * name. A settings read failure degrades to the platform defaults rather
+   * than failing the booking. */
+  private async resolveCompanyDefaults(companyId: string): Promise<{ eventTypeId?: number; fromName?: string }> {
+    if (!this.settingsRepo) return { eventTypeId: this.calcomEventTypeId };
+    try {
+      const settings = await this.settingsRepo.getSettings(companyId);
+      const configuredId = Number((settings?.calendar_settings as Record<string, unknown> | undefined)?.event_type_id);
+      const senderName = (settings?.email_settings as Record<string, unknown> | undefined)?.sender_name;
+      return {
+        eventTypeId: Number.isFinite(configuredId) && configuredId > 0 ? configuredId : this.calcomEventTypeId,
+        fromName: typeof senderName === "string" && senderName.trim() ? senderName.trim() : undefined,
+      };
+    } catch (err) {
+      Logger.warn("Could not load company settings for booking; using platform defaults", {
+        companyId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return { eventTypeId: this.calcomEventTypeId };
+    }
   }
 
   private registerDefaultTools() {
@@ -129,7 +174,10 @@ export class ToolRegistry {
         required: ["lead_id", "start_time", "end_time"],
       },
       execute: async (args, context) => {
-        const lead = await this.crmRepo.getLeadById(String(args.lead_id));
+        const [lead, companyDefaults] = await Promise.all([
+          this.crmRepo.getLeadById(String(args.lead_id)),
+          this.resolveCompanyDefaults(context.companyId),
+        ]);
 
         // Attempt a REAL calendar booking first. Previously this wrote a row
         // and nothing else, then told the caller "Appointment successfully
@@ -142,10 +190,10 @@ export class ToolRegistry {
         let meetingUrl: string | undefined;
         let confirmed = false;
 
-        if (this.calcom && this.calcomEventTypeId) {
+        if (this.calcom && companyDefaults.eventTypeId) {
           try {
             const booking = await this.calcom.createBooking({
-              eventTypeId: this.calcomEventTypeId,
+              eventTypeId: companyDefaults.eventTypeId,
               start: String(args.start_time),
               end: String(args.end_time),
               responses: { name: lead?.name ?? "Website visitor", email: lead?.email ?? "" },
@@ -185,6 +233,7 @@ export class ToolRegistry {
               to: lead.email,
               subject: confirmed ? "Your meeting is confirmed" : "We've received your meeting request",
               templateName: confirmed ? "appointment_confirmation" : "appointment_requested",
+              fromName: companyDefaults.fromName,
               html: confirmed
                 ? `<p>Hi ${lead.name},</p><p>Your meeting is confirmed for <strong>${when}</strong>.</p>${
                     appointment.meeting_url ? `<p><a href="${appointment.meeting_url}">Join the meeting</a></p>` : ""
@@ -271,6 +320,45 @@ export class ToolRegistry {
       execute: async (args, context) => {
         const faqs = await this.knowledgeRepo.searchFAQs(context.companyId, String(args.query));
         return { success: true, results: faqs.map((f) => ({ question: f.question, answer: f.answer })) };
+      },
+    });
+
+    // 5b. Search Knowledge Base Tool — the RAG documents an admin uploads on
+    // the Knowledge Base page (contracts, policy PDFs, pricing sheets, etc.),
+    // distinct from the short structured FAQ table search_faqs covers.
+    this.register({
+      name: "search_knowledge_base",
+      description:
+        "Search uploaded company documents (policies, contracts, detailed guides) for information not covered by products, services, or FAQs.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "What to look for in the company's uploaded documents" },
+        },
+        required: ["query"],
+      },
+      execute: async (args, context) => {
+        if (!this.knowledgeDocumentRepo) {
+          return { success: false, message: "No knowledge base is configured for this company." };
+        }
+        const query = String(args.query);
+        try {
+          const chunks =
+            this.embeddingAdapter?.isConfigured()
+              ? await this.knowledgeDocumentRepo.searchByVector(context.companyId, (await this.embeddingAdapter.embed([query]))[0])
+              : await this.knowledgeDocumentRepo.searchByText(context.companyId, query);
+
+          return {
+            success: true,
+            results: chunks.map((c) => ({ content: c.content })),
+          };
+        } catch (err) {
+          // A document-store outage must degrade to "I don't have that on
+          // file" for the visitor, not crash the whole tool call — the
+          // assistant still has products/services/FAQs to fall back on.
+          Logger.warn("search_knowledge_base failed", { error: err instanceof Error ? err.message : String(err) });
+          return { success: false, message: "Could not search the knowledge base right now." };
+        }
       },
     });
 

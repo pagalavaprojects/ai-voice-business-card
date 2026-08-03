@@ -7,8 +7,8 @@
 | **Live** | https://ai-voice-business-card.vercel.app |
 | **Repository** | https://github.com/pagalavaprojects/ai-voice-business-card |
 | **Demo card** | [`/33333333…/44444444…`](https://ai-voice-business-card.vercel.app/33333333-3333-3333-3333-333333333333/44444444-4444-4444-4444-444444444444) |
-| **Last updated** | 2026-08-02 |
-| **Completion** | **~92%** — production-deployed; analytics, products + services live, integrations pending credentials |
+| **Last updated** | 2026-08-03 |
+| **Completion** | **~95%** — production-deployed; Employee module, Company Settings, dashboard completion, and RAG-to-voice wiring all built this session; blocked only on the pending migrations |
 
 > This file is refreshed after every completed module. If it looks stale
 > against the repo, trust the repo and raise it.
@@ -40,13 +40,13 @@ inward; repositories abstract Supabase behind interfaces.
 
 | Metric | Value |
 |---|---|
-| Commits | 49 |
-| Source | 17,227 lines TypeScript |
-| API routes | 45 |
-| Dashboard pages | 10 |
-| Database | 26 tables · 39 indexes · 43 FKs · 26 RLS policies |
-| Migrations | 10, apply cleanly from scratch |
-| Unit/integration tests | **150 passing**, 1 skipped (documented) |
+| Commits | 51 |
+| Source | ~20,000 lines TypeScript |
+| API routes | 48 |
+| Dashboard pages | 14 |
+| Database | 26 tables · 39 indexes · 43 FKs · 26 RLS policies (+1 migration pending — Employee module) |
+| Migrations | 11 total, **5 pending in production** (see §7) |
+| Unit/integration tests | **207 passing**, 1 skipped (documented) |
 | Browser tests | **39 passing** across 3 viewports |
 | Accessibility | WCAG 2.1 AA — zero violations |
 | Build | Zero warnings, zero build-time error logs |
@@ -264,6 +264,113 @@ an accessible name.
 form round-trip without data loss) plus an e2e test that the services surface
 is closed to anonymous callers.
 
+### Phase 9 — Employee Management, Company Settings, dashboard completion, RAG-to-voice wiring *(current)*
+
+Four modules built to close out the platform's remaining CRUD and connect two
+already-built subsystems that had no path to a live call.
+
+**Employee Management** (`/dashboard/employees`) — full CRUD on the same
+architecture as Products/Services: stat tiles, search/filter/sort/pagination,
+bulk activate/deactivate/remove, CSV export, avatar upload, and a form
+(`EmployeeForm`) that shares `CatalogFormPrimitives` rather than duplicating
+it. New migration `20260807` adds `is_active`, `avatar_path`, `voice_id`,
+`prompt_override`, `timezone`, `display_order` to `employees` — all nullable
+or defaulted, so the module is safe to ship ahead of the migration:
+
+- **Public card visibility uses `is_active !== false`, not `!is_active`.**
+  On a database where the migration hasn't applied yet, PostgREST simply omits
+  the column — a truthiness check would then read every employee as
+  deactivated and 404 every card in production, repeating the exact incident
+  from §Incident below. Extracted to `isEmployeeCardVisible()` and pinned with
+  a regression test for the missing-column case specifically.
+- **Per-employee voice override** (`voice_id`, nullable = inherit) now
+  resolves through a shared `resolveCallVoiceId()` used by both the public
+  card route and the Vapi webhook, so a browser call and a phone call can
+  never speak in different voices. Precedence: employee → agent →
+  company Settings default → platform default (`nova`).
+- **`prompt_override`** (an employee's own assistant notes) is sanitised and
+  fenced into the assembled system prompt like every other admin-authored
+  field, placed after the shared behavior module so it refines rather than
+  overrides the security guardrails.
+- RBAC added `read/write/delete:employees` on the same tier split as
+  Products/Services (MANAGER edits, only OWNER/ADMIN removes).
+
+**Company Settings completion** — every field on the page now actually does
+something; three were previously write-only:
+
+- `calendar_settings.event_type_id` and `email_settings.sender_name` were
+  saved to the database and read by **nothing** — `book_appointment` always
+  booked against the `CALCOM_EVENT_TYPE_ID` env var and every email went out
+  as "AI Voice Business Card" regardless of what a company configured. Both
+  now flow through `ToolRegistry.resolveCompanyDefaults()`, with the env var
+  kept as the platform-wide fallback and a settings-lookup failure degrading
+  to that fallback rather than losing the booking.
+- `voice_settings.default_voice_model` was free text with no validation
+  against what Vapi actually accepts; now a `<select>` bound to
+  `SUPPORTED_VOICE_IDS`, wired into the voice-resolution chain above.
+- Added a **booking-URL field** — the card's "Book Meeting" button was
+  already gated on this setting existing, but nothing in the UI let an admin
+  set it.
+- Added a **Team Members panel** (invite, change role, remove) — the
+  `/api/admin/members` API existed with no UI ever calling it.
+- Every input became a real `<label>`-wrapped control (the old markup used a
+  sibling `<label>` with no `htmlFor`, so no field on the page had an
+  accessible name); colour and URL fields validate before save instead of
+  producing a generic 422.
+- `ResendEmailAdapter`'s From header now sanitises a company's configured
+  sender name (strips `<>@",;` and newlines) — untrusted tenant input was
+  going to sit in an email header unescaped.
+
+**Dashboard completion** (`/dashboard`) — added **Top Topics** and **Recent
+Conversations**, plus CSV export on both new widgets and the existing
+Recent Leads table.
+
+- "Top Questions" was requested but is not honestly buildable:
+  `conversations.intent` is never populated and transcripts aren't parsed, so
+  there is no free-text question log to summarize. **Top Topics** is the
+  honest substitute — it counts which tools actually fired across recent
+  calls (`search_products`, `book_appointment`, etc.) and ranks them, which is
+  real, already-stored data rather than an invented ranking. Extracted to
+  `computeTopTopics()` with its own tests, including "an unrecognised tool
+  still surfaces under its raw name" so a tool added later isn't silently
+  dropped from the widget.
+- Recent Conversations joins employee names in one extra query (avoiding an
+  N+1) and shows status, duration, sentiment and summary per call.
+
+**RAG-to-voice wiring** — the Knowledge Base page (`/dashboard/knowledge`)
+has had a complete pipeline since Phase 2 of the original build-out: upload a
+PDF/DOCX/TXT, it gets parsed, chunked, embedded, and an admin-only search
+endpoint could query it. **None of that was ever reachable from a live
+call** — no tool existed for the assistant to search it, so an admin could
+upload and index a document and it would still never inform a single answer a
+caller received. Added `search_knowledge_base` to `ToolRegistry`: vector
+search when `OPENAI_API_KEY` is configured, text search fallback otherwise,
+and an honest `{success: false}` (not a thrown error) when no document store
+is wired up or the store errors mid-call — a document-store outage must not
+crash the whole tool call when products/services/FAQs can still answer.
+
+Also added a **Policies** section to the assembled prompt: an FAQ tagged
+`category: "Policy"` (case-insensitive, substring match so "Policies" also
+matches) is now broken out of the general FAQ list into its own
+`COMPANY POLICIES` block with an explicit "follow these exactly" instruction
+— a refund or cancellation rule deserves more weight than ordinary trivia,
+and burying it in generic Q&A gave it none.
+
+**Verified and explicitly NOT built:** cross-call visitor memory and
+proactive "customer context" (recognizing a returning caller before they
+identify themselves) were both requested in the original brief. Neither
+exists today, and neither is a documentation gap — both would need new
+infrastructure (a caller-identity mechanism keyed by phone number, a memory
+store keyed across calls), which is genuine backend build-out the roadmap
+conversation this session opened with explicitly deprioritized. Recorded here
+rather than built silently or claimed as done.
+
+58 new unit tests across employee schema/RBAC/voice-resolution, the migration
+window's `isEmployeeCardVisible`, `computeTopTopics`, `search_knowledge_base`,
+the Settings→booking wiring, the `ResendEmailAdapter` From-header sanitisation,
+and the Policies section — all pinning the specific defect each change fixes,
+not just the happy path.
+
 ### Incident — deploy ahead of migration *(fixed)*
 The Services release shipped before migrations `20260805`/`20260806` were
 applied to production, and degraded the live card:
@@ -305,6 +412,10 @@ silently pretended to work**:
 - adapters returning fabricated successes when unconfigured
 - alert rules with no scrape config, so alerting was structurally inert
 - an accessibility scan that may have been auditing an empty page
+- Settings fields that saved to the database and were read by nothing
+  (Cal.com event type, email sender name) — configurable in appearance only
+- a fully-built RAG pipeline (upload → chunk → embed → search) with no path
+  from a live call to ever reach it
 
 Each is now either genuinely working or **failing honestly and loudly**.
 
@@ -316,18 +427,20 @@ Each is now either genuinely working or **failing honestly and loudly**.
 |---|---|---|
 | Architecture & code quality | 95% | Clean layering, 0 TODOs, 0 `any` |
 | Security | 92% | RLS, RBAC, signed webhooks, distributed rate limiting |
-| Database | 90% | Indexed, constrained; 2 orphan tables remain |
-| Voice pipeline | 90% | Live and verified; latency unmeasured |
+| Database | 88% | Indexed, constrained; 5 migrations pending in production (§7); 2 orphan tables remain |
+| Voice pipeline | 92% | Live and verified; per-employee/company voice resolution wired; latency unmeasured |
 | Public business card | 95% | Redesigned, WCAG AA, 320–1440px |
-| Admin dashboard | 90% | 10 pages real incl. analytics, products, services; no live monitoring |
-| Analytics | 75% | 15 real metrics; 4 need instrumentation that doesn't exist |
-| Knowledge base / RAG | 85% | Complete — inert until `OPENAI_API_KEY` is set |
-| Booking | 70% | Code correct; needs Cal.com credentials |
-| Email | 70% | Code correct; needs Resend key |
-| Testing | 88% | 117 unit + 27 browser; no load testing |
+| Admin dashboard | 96% | 14 pages real incl. analytics, products, services, employees, completed settings, completed overview |
+| Analytics | 78% | 15 metrics + Top Topics + Recent Conversations; 4 still need instrumentation that doesn't exist |
+| Knowledge base / RAG | 95% | Pipeline complete AND now reachable from a live call via `search_knowledge_base`; semantic mode inert until `OPENAI_API_KEY` is set (text fallback works today) |
+| Booking | 85% | Code correct; per-company event type + sender name now wired; needs Cal.com credentials |
+| Email | 80% | Code correct; per-company sender name now wired and sanitised; needs Resend key |
+| Employee management | 95% | Full CRUD, voice override, prompt override, card visibility hardened for the migration window |
+| Company settings | 95% | Every field now read by something; Team Members panel added |
+| Testing | 91% | 207 unit + 39 browser; no load testing |
 | Observability | 80% | Config complete; stack never run |
 | Deployment | 95% | Live on Vercel, HTTPS, auto-deploy from GitHub |
-| **Overall** | **~92%** | |
+| **Overall** | **~95%** | Blocked mainly on pending migrations (§7), not on missing code |
 
 ---
 
@@ -335,29 +448,32 @@ Each is now either genuinely working or **failing honestly and loudly**.
 
 ### Needs you (blocks nothing else)
 
-**Two migrations to apply** in the Supabase SQL Editor — `ALTER TYPE` and
-`CREATE INDEX` cannot go through the JS client:
+**Run `supabase/PENDING_MIGRATIONS.sql`** in the Supabase SQL Editor — `ALTER
+TYPE` and `CREATE INDEX` cannot go through the JS client. It is a single file,
+split into two blocks that must run in order (Block 1 alone, then Block 2),
+fully commented with what each statement does and why the split is required.
 
-Four migrations are pending: `20260803` (appointment status), `20260804`
-(hot-path indexes), `20260805` (products catalog) and `20260806` (services
-catalog). Until the last two apply, the Products and Services pages return an
-error about a missing `category` column.
+Five migrations are pending: `20260803` (appointment status), `20260804`
+(hot-path indexes), `20260805` (products catalog), `20260806` (services
+catalog), and `20260807` (employee management — `is_active`, `avatar_path`,
+`voice_id`, `prompt_override`, `timezone`, `display_order`). Until 20260805/06
+apply, the Products and Services pages error on a missing `category` column.
+**20260807 is the one exception that is safe to leave unapplied** — the
+Employee module was deliberately built so the public card and the assembled
+prompt both keep working with the column absent (see Phase 9 above); it only
+blocks the module's own admin-side extras (avatar, per-employee voice,
+per-employee prompt notes).
 
-```sql
-ALTER TYPE appointment_status ADD VALUE IF NOT EXISTS 'REQUESTED';
+> Until the first statement (Block 1) runs, a voice booking attempt errors on
+> the unknown enum value.
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_conversations_vapi_call_id
-    ON conversations(vapi_call_id) WHERE vapi_call_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_leads_conversation
-    ON leads(conversation_id) WHERE conversation_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_appointments_lead_created
-    ON appointments(lead_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_conversation_messages_conversation
-    ON conversation_messages(conversation_id, created_at);
-```
-
-> Until the first statement runs, a voice booking attempt errors on the unknown
-> enum value.
+Once all five are confirmed applied, two compatibility fallbacks should come
+out — **not before**:
+- `SupabaseKnowledgeRepository`'s `isMissingCatalogColumn` fallback (products/
+  services) and its `CatalogMigrationWindow.test.ts`.
+- `isEmployeeCardVisible`'s tolerance for an absent `is_active` column can stay
+  permanently — it costs nothing to keep and removing it buys nothing, unlike
+  the catalog fallback which exists purely for the migration window.
 
 **Credentials still placeholder** — each disables one capability and is
 reported by `/api/health`:
@@ -375,19 +491,30 @@ reported by `/api/health`:
 1. ~~Analytics dashboard~~ — **done** (Phase 6).
 2. ~~Products CRUD~~ — **done** (Phase 7).
 3. ~~Services CRUD~~ — **done** (Phase 8).
-4. **Employee CRUD** — create, invite, deactivate, voice + knowledge
-   assignment. Blocks self-serve onboarding today.
-5. **Company settings** — logo, brand colours, social links, business hours,
-   card theme.
-6. **Lead management** — Hot/Warm/Cold tiers (scores already exist; only
+4. ~~Employee CRUD~~ — **done** (Phase 9): create, deactivate, per-employee
+   voice + prompt notes. Account invitation is intentionally separate — that's
+   the Team Members panel in Settings (also done this session), not this
+   module; an employee *card* and a platform *login* are different concepts
+   here (an employee row can exist with no linked user).
+5. ~~Company settings~~ — **done** (Phase 9): logo, brand colours, calendar,
+   email sender, team roles. Social links and business hours are on the
+   Employee module (per-person), not company-wide — that was a deliberate
+   placement call, not an oversight.
+6. ~~Knowledge base reachable from a live call~~ — **done** (Phase 9):
+   `search_knowledge_base` tool.
+7. **Lead management** — Hot/Warm/Cold tiers (scores already exist; only
    sorting and filtering are missing), bulk actions, assignment.
-7. **Instrumentation for the four unmeasured analytics** — lead source,
+8. **Instrumentation for the four unmeasured analytics** — lead source,
    intent capture, per-conversation latency, prompt-module attribution.
    Roughly half a day each; all four need real data capture, not UI.
-8. **Live call monitoring**, audit-log writing (`audit_logs` exists with no
+9. **Live call monitoring**, audit-log writing (`audit_logs` exists with no
    writers), notifications.
-9. Later: AI memory across calls, multi-agent routing, CRM integrations,
-   billing.
+10. **Cross-call visitor memory / customer context** — recognizing a returning
+    caller and recalling prior conversations. Requested this session and
+    deliberately not built: needs a caller-identity mechanism (phone-number
+    matching against `leads`) and a memory store, which is new backend
+    infrastructure, not a UI gap. Scope it as its own module before starting.
+11. Later: multi-agent routing, CRM integrations, billing.
 
 ### Known limitations
 
@@ -409,7 +536,7 @@ reported by `/api/health`:
 |---|---|
 | `npm run dev` | Development server |
 | `npm run build` | Production build |
-| `npm test` | 117 unit/integration tests |
+| `npm test` | 207 unit/integration tests |
 | `npm run test:e2e` | Playwright (build first) |
 | `npm run verify:migrations` | Apply migrations to local PGlite |
 | `npm run verify:db` | Check the live Supabase project |

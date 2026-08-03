@@ -4,7 +4,14 @@ import { supabaseAdmin } from "@/shared/lib/supabase";
  * a file: knowledge documents here, and company logos / CSV exports /
  * voice call recordings in Phase 9. One bucket per concern keeps RLS and
  * lifecycle rules simple. */
-export type StorageBucket = "knowledge-documents" | "company-logos" | "exports" | "voice-assets" | "product-images" | "service-images";
+export type StorageBucket =
+  | "knowledge-documents"
+  | "company-logos"
+  | "exports"
+  | "voice-assets"
+  | "product-images"
+  | "service-images"
+  | "employee-avatars";
 
 export class SupabaseStorageAdapter {
   async ensureBucket(bucket: StorageBucket, isPublic: boolean): Promise<void> {

@@ -75,6 +75,9 @@ export interface Company extends BaseEntity {
 }
 
 export interface Employee extends BaseEntity {
+  /** Per-employee overrides below are nullable on purpose: NULL means
+   * "inherit the company default". Storing a copy of the company value would
+   * silently stop tracking later changes to it. */
   company_id: string;
   user_id?: string | null;
   name: string;
@@ -85,6 +88,13 @@ export interface Employee extends BaseEntity {
   working_hours?: string | null;
   social_links?: Record<string, string> | null;
   vapi_agent_id?: string | null;
+  is_active: boolean;
+  avatar_path?: string | null;
+  voice_id?: string | null;
+  prompt_override?: string | null;
+  timezone?: string | null;
+  display_order: number;
+  deleted_at?: string | null;
 }
 
 export interface Product extends BaseEntity {
@@ -415,6 +425,44 @@ export const CreateServiceSchema = z.object({
 });
 
 export const UpdateServiceSchema = CreateServiceSchema.omit({ company_id: true }).partial();
+
+/** Voice identities the platform offers. Lives in the domain because it is
+ * what an admin is allowed to pick, not a transport detail — `shared/lib/voice`
+ * imports this list to validate what actually reaches Vapi, so the dropdown and
+ * the runtime can never drift apart. */
+export const SUPPORTED_VOICE_IDS = ["alloy", "echo", "fable", "onyx", "nova", "shimmer", "marin", "cedar"] as const;
+export type SupportedVoiceId = (typeof SUPPORTED_VOICE_IDS)[number];
+
+export const CreateEmployeeSchema = z.object({
+  company_id: z.string().uuid(),
+  name: z.string().min(2).max(255),
+  designation: z.string().min(2).max(255),
+  // Both appear on the public card and both are what a lead uses to reach a
+  // human, so neither is optional — a card with no way to make contact is the
+  // one failure mode this module exists to prevent.
+  email: z.string().email(),
+  phone: z.string().min(6).max(40),
+  office_address: z.string().max(500).optional().nullable(),
+  working_hours: z.string().max(120).optional().nullable(),
+  /** Free-form label→URL. Values must be absolute URLs: the card renders these
+   * as links, and a relative value would silently resolve against our own
+   * origin instead of the intended profile. */
+  social_links: z.record(z.string().url()).optional().nullable(),
+  avatar_path: z.string().optional().nullable(),
+  /** NULL means "inherit the company/agent default" rather than a stored copy
+   * of it, so changing the default later still reaches these employees. */
+  voice_id: z.enum(SUPPORTED_VOICE_IDS).optional().nullable(),
+  prompt_override: z.string().max(4000).optional().nullable(),
+  timezone: z.string().max(64).optional().nullable(),
+  display_order: z.number().int().min(0).default(0),
+  is_active: z.boolean().default(true),
+});
+
+/** Everything editable except tenancy; company_id travels separately for the
+ * authorization check and is never updatable. `user_id` is deliberately absent
+ * — linking an employee row to a login is the Members module's job, and
+ * allowing it here would let an employee edit grant someone else's access. */
+export const UpdateEmployeeSchema = CreateEmployeeSchema.omit({ company_id: true }).partial();
 
 export const CreateFAQSchema = z.object({
   company_id: z.string().uuid(),

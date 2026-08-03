@@ -1,14 +1,63 @@
 "use client";
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Key, Globe, Save, Palette, Mic, CalendarClock, Loader2, Plus, Trash2, Copy, Upload } from "lucide-react";
+import { Key, Globe, Save, Palette, Mic, CalendarClock, Loader2, Plus, Trash2, Copy, Upload, UserPlus, Users } from "lucide-react";
 import { Card } from "@/shared/ui/card";
 import { useToast } from "@/shared/ui/toast";
 import { Button } from "@/shared/ui/button";
 import { Dialog } from "@/shared/ui/dialog";
 import { useCompany } from "@/features/dashboard/context/CompanyContext";
 import { apiFetch, ApiClientError } from "@/shared/lib/apiClient";
-import { ApiKeyRecord, Branding, Company, Settings } from "@/core/domain/models/types";
+import { ApiKeyRecord, Branding, Company, CompanyMember, Settings, SUPPORTED_VOICE_IDS, UserProfile } from "@/core/domain/models/types";
+import { makePublicUrlResolver } from "@/features/dashboard/components/catalog/CatalogFormPrimitives";
+
+type MemberRole = CompanyMember["role"];
+type MemberRow = CompanyMember & { user: UserProfile | null };
+
+const ROLES: MemberRole[] = ["OWNER", "ADMIN", "MANAGER", "EMPLOYEE", "VIEWER"];
+
+const logoUrlOf = makePublicUrlResolver("company-logos");
+
+/** Two things the card actually renders, so an invalid value is visible to
+ * every visitor rather than to the admin who typed it. */
+const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
+function isHttpUrl(value: string): boolean {
+  try {
+    return ["http:", "https:"].includes(new URL(value).protocol);
+  } catch {
+    return false;
+  }
+}
+
+/** Label + control pair. Written as a wrapping <label> so the association
+ * cannot drift: the previous markup used a sibling <label> with no `htmlFor`,
+ * which left every control on this page without an accessible name. */
+function SettingField({
+  label,
+  hint,
+  error,
+  children,
+}: {
+  label: React.ReactNode;
+  hint?: string;
+  error?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <label className="block text-xs">
+      <span className="block font-medium text-slate-300 mb-1">
+        {label}
+        {hint && <span className="ml-2 font-normal text-slate-500">{hint}</span>}
+      </span>
+      {children}
+      {error && (
+        <span role="alert" className="block text-[11px] text-rose-300 mt-1">
+          {error}
+        </span>
+      )}
+    </label>
+  );
+}
 
 export default function SettingsPage() {
   const { activeCompanyId, loading: companyLoading } = useCompany();
@@ -16,6 +65,7 @@ export default function SettingsPage() {
 
   const [branding, setBranding] = useState<Branding | null>(null);
   const [apiKeys, setApiKeys] = useState<ApiKeyRecord[]>([]);
+  const [members, setMembers] = useState<MemberRow[]>([]);
   const [saving, setSaving] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const logoInputRef = useRef<HTMLInputElement>(null);
@@ -24,30 +74,41 @@ export default function SettingsPage() {
   const [website, setWebsite] = useState("");
   const [primaryColor, setPrimaryColor] = useState("#0369a1");
   const [secondaryColor, setSecondaryColor] = useState("#0f172a");
-  const [voiceModel, setVoiceModel] = useState("vapi-default");
+  const [voiceModel, setVoiceModel] = useState("");
   const [eventTypeId, setEventTypeId] = useState("");
+  const [bookingUrl, setBookingUrl] = useState("");
   const [senderName, setSenderName] = useState("");
+  const [errors, setErrors] = useState<Record<string, string>>({});
 
   const [newKeyDialogOpen, setNewKeyDialogOpen] = useState(false);
   const [newKeyName, setNewKeyName] = useState("");
   const [createdRawKey, setCreatedRawKey] = useState<string | null>(null);
 
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState<MemberRole>("EMPLOYEE");
+  const [inviting, setInviting] = useState(false);
+  const [inviteError, setInviteError] = useState<string | null>(null);
+
   const load = useCallback(async () => {
     if (!activeCompanyId) return;
     try {
-      const [settingsData, keys] = await Promise.all([
+      const [settingsData, keys, memberList] = await Promise.all([
         apiFetch<{ company: Company; branding: Branding | null; settings: Settings | null }>(`/api/admin/settings?companyId=${activeCompanyId}`),
         apiFetch<ApiKeyRecord[]>(`/api/admin/api-keys?companyId=${activeCompanyId}`),
+        apiFetch<MemberRow[]>(`/api/admin/members?companyId=${activeCompanyId}`),
       ]);
       setBranding(settingsData.branding);
       setApiKeys(keys);
+      setMembers(memberList);
 
       setName(settingsData.company.name);
       setWebsite(settingsData.company.website);
       setPrimaryColor(settingsData.branding?.primary_color ?? "#0369a1");
       setSecondaryColor(settingsData.branding?.secondary_color ?? "#0f172a");
-      setVoiceModel((settingsData.settings?.voice_settings?.default_voice_model as string) ?? "vapi-default");
+      setVoiceModel((settingsData.settings?.voice_settings?.default_voice_model as string) ?? "");
       setEventTypeId(String(settingsData.settings?.calendar_settings?.event_type_id ?? ""));
+      setBookingUrl((settingsData.settings?.calendar_settings?.booking_url as string) ?? "");
       setSenderName((settingsData.settings?.email_settings?.sender_name as string) ?? "");
     } catch (err) {
       showToast(err instanceof ApiClientError ? err.message : "Failed to load settings", "error");
@@ -58,13 +119,26 @@ export default function SettingsPage() {
     load();
   }, [load]);
 
+  const setError = (key: string, message: string | null) =>
+    setErrors((prev) => {
+      const next = { ...prev };
+      if (message) next[key] = message;
+      else delete next[key];
+      return next;
+    });
+
   const handleSaveProfile = async () => {
     if (!activeCompanyId) return;
+    // The API requires a valid URL; catching it here means the admin sees which
+    // field is wrong instead of a generic 422 toast.
+    if (name.trim().length < 2) return setError("name", "Company name must be at least 2 characters");
+    if (!isHttpUrl(website.trim())) return setError("website", "Enter a full URL, including https://");
+    setErrors({});
     setSaving(true);
     try {
       await apiFetch("/api/admin/settings", {
         method: "PUT",
-        body: JSON.stringify({ company_id: activeCompanyId, name, website }),
+        body: JSON.stringify({ company_id: activeCompanyId, name: name.trim(), website: website.trim() }),
       });
       showToast("Company profile saved", "success");
     } catch (err) {
@@ -76,6 +150,11 @@ export default function SettingsPage() {
 
   const handleSaveBranding = async () => {
     if (!activeCompanyId) return;
+    // These two colors are painted onto the public card, so a malformed value
+    // is visible to every visitor rather than to the admin who typed it.
+    if (!HEX_COLOR.test(primaryColor)) return setError("primaryColor", "Use a 6-digit hex colour, e.g. #0369a1");
+    if (!HEX_COLOR.test(secondaryColor)) return setError("secondaryColor", "Use a 6-digit hex colour, e.g. #0f172a");
+    setErrors({});
     setSaving(true);
     try {
       const updated = await apiFetch<Branding>("/api/admin/branding", {
@@ -113,15 +192,28 @@ export default function SettingsPage() {
 
   const handleSaveVoiceAndCalendar = async () => {
     if (!activeCompanyId) return;
+    if (eventTypeId.trim() && !(Number(eventTypeId) > 0)) {
+      return setError("eventTypeId", "Cal.com event type IDs are positive numbers");
+    }
+    if (bookingUrl.trim() && !isHttpUrl(bookingUrl.trim())) {
+      return setError("bookingUrl", "Enter a full URL, including https://");
+    }
+    setErrors({});
     setSaving(true);
     try {
       await apiFetch<Settings>("/api/admin/settings", {
         method: "PUT",
         body: JSON.stringify({
           company_id: activeCompanyId,
-          voice_settings: { default_voice_model: voiceModel },
-          calendar_settings: { event_type_id: eventTypeId ? Number(eventTypeId) : undefined },
-          email_settings: { sender_name: senderName },
+          // Empty means "no company default", which is what the resolution
+          // chain treats as inherit — not an empty string it would have to
+          // special-case.
+          voice_settings: { default_voice_model: voiceModel || null },
+          calendar_settings: {
+            event_type_id: eventTypeId.trim() ? Number(eventTypeId) : null,
+            booking_url: bookingUrl.trim() || null,
+          },
+          email_settings: { sender_name: senderName.trim() || null },
         }),
       });
       showToast("Configuration saved", "success");
@@ -161,6 +253,59 @@ export default function SettingsPage() {
     }
   };
 
+  const handleInviteMember = async () => {
+    if (!activeCompanyId) return;
+    setInviting(true);
+    setInviteError(null);
+    try {
+      await apiFetch<CompanyMember>("/api/admin/members", {
+        method: "POST",
+        body: JSON.stringify({ company_id: activeCompanyId, email: inviteEmail.trim(), role: inviteRole }),
+      });
+      showToast("Member invited", "success");
+      setInviteOpen(false);
+      setInviteEmail("");
+      // Refetch rather than appending: the response carries no joined user
+      // profile, so an optimistic row would render without a name or email.
+      setMembers(await apiFetch<MemberRow[]>(`/api/admin/members?companyId=${activeCompanyId}`));
+    } catch (err) {
+      setInviteError(err instanceof ApiClientError ? err.message : "Failed to invite member");
+    } finally {
+      setInviting(false);
+    }
+  };
+
+  const handleChangeRole = async (memberId: string, role: MemberRole) => {
+    if (!activeCompanyId) return;
+    const previous = members;
+    setMembers((prev) => prev.map((m) => (m.id === memberId ? { ...m, role } : m)));
+    try {
+      await apiFetch(`/api/admin/members/${memberId}`, {
+        method: "PUT",
+        body: JSON.stringify({ company_id: activeCompanyId, role }),
+      });
+      showToast("Role updated", "success");
+    } catch (err) {
+      // Roll the optimistic change back: leaving the new role on screen after a
+      // rejected write would misrepresent who can do what.
+      setMembers(previous);
+      showToast(err instanceof ApiClientError ? err.message : "Failed to update role", "error");
+    }
+  };
+
+  const handleRemoveMember = async (memberId: string) => {
+    if (!activeCompanyId) return;
+    const previous = members;
+    setMembers((prev) => prev.filter((m) => m.id !== memberId));
+    try {
+      await apiFetch(`/api/admin/members/${memberId}?companyId=${activeCompanyId}`, { method: "DELETE" });
+      showToast("Member removed", "success");
+    } catch (err) {
+      setMembers(previous);
+      showToast(err instanceof ApiClientError ? err.message : "Failed to remove member", "error");
+    }
+  };
+
   if (companyLoading) return <div className="text-sm text-slate-500">Loading workspace…</div>;
   if (!activeCompanyId) return <div className="text-sm text-slate-500">No company selected.</div>;
 
@@ -168,7 +313,7 @@ export default function SettingsPage() {
     <div className="space-y-6 max-w-5xl mx-auto">
       <div>
         <h1 className="text-2xl font-bold text-slate-100 tracking-tight">Organization Settings</h1>
-        <p className="text-xs text-slate-400">Configure tenant branding, voice defaults, calendar integration, and platform API keys.</p>
+        <p className="text-xs text-slate-400">Configure tenant branding, voice defaults, calendar integration, team access, and platform API keys.</p>
       </div>
 
       <Card className="glass-panel border-white/[0.08] p-6 space-y-4">
@@ -176,18 +321,16 @@ export default function SettingsPage() {
           <Globe className="h-4 w-4 text-sky-400" />
           Company Profile
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-          <div>
-            <label className="block font-medium text-slate-300 mb-1">Company Name</label>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <SettingField label="Company name" error={errors.name}>
             <input value={name} onChange={(e) => setName(e.target.value)} className="dashboard-input" />
-          </div>
-          <div>
-            <label className="block font-medium text-slate-300 mb-1">Company Website</label>
-            <input value={website} onChange={(e) => setWebsite(e.target.value)} className="dashboard-input" />
-          </div>
+          </SettingField>
+          <SettingField label="Company website" hint="shown on the card" error={errors.website}>
+            <input value={website} onChange={(e) => setWebsite(e.target.value)} placeholder="https://example.com" className="dashboard-input" />
+          </SettingField>
         </div>
         <Button variant="default" size="sm" onClick={handleSaveProfile} disabled={saving} className="flex items-center gap-2">
-          {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+          {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <Save className="h-3.5 w-3.5" aria-hidden="true" />}
           Save Profile
         </Button>
       </Card>
@@ -198,38 +341,64 @@ export default function SettingsPage() {
           Branding
         </div>
         <div className="flex items-center gap-4">
-          {branding?.logo_storage_path && (
-            <div className="h-12 w-12 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-[10px] text-slate-500">
-              Logo set
+          {branding?.logo_storage_path ? (
+            // The real logo, not a "Logo set" caption: the point of this tile is
+            // to confirm what visitors will actually see.
+            /* eslint-disable-next-line @next/next/no-img-element */
+            <img
+              src={logoUrlOf(branding.logo_storage_path)}
+              alt="Current company logo"
+              className="h-12 w-12 rounded-lg object-contain bg-white/5 border border-white/10 p-1"
+            />
+          ) : (
+            <div className="h-12 w-12 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-[10px] text-slate-500 text-center leading-tight">
+              No logo
             </div>
           )}
-          <input ref={logoInputRef} type="file" accept="image/png,image/jpeg,image/svg+xml,image/webp" className="hidden" onChange={(e) => {
-            const file = e.target.files?.[0];
-            if (file) handleLogoUpload(file);
-          }} />
+          <input
+            ref={logoInputRef}
+            type="file"
+            aria-label="Choose a logo file"
+            accept="image/png,image/jpeg,image/svg+xml,image/webp"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) handleLogoUpload(file);
+            }}
+          />
           <Button variant="outline" size="sm" onClick={() => logoInputRef.current?.click()} disabled={uploadingLogo} className="flex items-center gap-2">
-            {uploadingLogo ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+            {uploadingLogo ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <Upload className="h-3.5 w-3.5" aria-hidden="true" />}
             Upload Logo
           </Button>
         </div>
-        <div className="grid grid-cols-2 gap-4 text-xs">
-          <div>
-            <label className="block font-medium text-slate-300 mb-1">Primary Color</label>
+        <div className="grid grid-cols-2 gap-4">
+          <SettingField label="Primary colour" error={errors.primaryColor}>
             <div className="flex items-center gap-2">
-              <input type="color" value={primaryColor} onChange={(e) => setPrimaryColor(e.target.value)} className="h-8 w-10 rounded border border-white/10 bg-transparent" />
+              <input
+                type="color"
+                aria-label="Pick a primary colour"
+                value={HEX_COLOR.test(primaryColor) ? primaryColor : "#0369a1"}
+                onChange={(e) => setPrimaryColor(e.target.value)}
+                className="h-8 w-10 rounded border border-white/10 bg-transparent"
+              />
               <input value={primaryColor} onChange={(e) => setPrimaryColor(e.target.value)} className="dashboard-input font-mono" />
             </div>
-          </div>
-          <div>
-            <label className="block font-medium text-slate-300 mb-1">Secondary Color</label>
+          </SettingField>
+          <SettingField label="Secondary colour" error={errors.secondaryColor}>
             <div className="flex items-center gap-2">
-              <input type="color" value={secondaryColor} onChange={(e) => setSecondaryColor(e.target.value)} className="h-8 w-10 rounded border border-white/10 bg-transparent" />
+              <input
+                type="color"
+                aria-label="Pick a secondary colour"
+                value={HEX_COLOR.test(secondaryColor) ? secondaryColor : "#0f172a"}
+                onChange={(e) => setSecondaryColor(e.target.value)}
+                className="h-8 w-10 rounded border border-white/10 bg-transparent"
+              />
               <input value={secondaryColor} onChange={(e) => setSecondaryColor(e.target.value)} className="dashboard-input font-mono" />
             </div>
-          </div>
+          </SettingField>
         </div>
         <Button variant="default" size="sm" onClick={handleSaveBranding} disabled={saving} className="flex items-center gap-2">
-          {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+          {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <Save className="h-3.5 w-3.5" aria-hidden="true" />}
           Save Branding
         </Button>
       </Card>
@@ -237,29 +406,110 @@ export default function SettingsPage() {
       <Card className="glass-panel border-white/[0.08] p-6 space-y-4">
         <div className="flex items-center gap-2 text-slate-100 font-bold text-sm border-b border-white/[0.08] pb-3">
           <Mic className="h-4 w-4 text-amber-400" />
-          Voice, Calendar & Email Defaults
+          Voice, Calendar &amp; Email Defaults
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
-          <div>
-            <label className="block font-medium text-slate-300 mb-1">Default Voice Model</label>
-            <input value={voiceModel} onChange={(e) => setVoiceModel(e.target.value)} className="dashboard-input" />
-          </div>
-          <div>
-            <label className="block font-medium text-slate-300 mb-1 flex items-center gap-1">
-              <CalendarClock className="h-3 w-3" />
-              Cal.com Event Type ID
-            </label>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <SettingField label="Default voice" hint="employees and agents can override">
+            {/* A select, not free text: the runtime only accepts these ids, so a
+                typed value was silently discarded and the setting appeared to
+                do nothing. */}
+            <select value={voiceModel} onChange={(e) => setVoiceModel(e.target.value)} className="dashboard-input">
+              <option value="">Platform default (nova)</option>
+              {SUPPORTED_VOICE_IDS.map((voice) => (
+                <option key={voice} value={voice}>
+                  {voice}
+                </option>
+              ))}
+            </select>
+          </SettingField>
+          <SettingField
+            label={
+              <span className="inline-flex items-center gap-1">
+                <CalendarClock className="h-3 w-3" aria-hidden="true" />
+                Cal.com event type ID
+              </span>
+            }
+            hint="used by book_appointment"
+            error={errors.eventTypeId}
+          >
             <input value={eventTypeId} onChange={(e) => setEventTypeId(e.target.value)} className="dashboard-input" placeholder="12345" />
-          </div>
-          <div>
-            <label className="block font-medium text-slate-300 mb-1">Email Sender Name</label>
+          </SettingField>
+          <SettingField label="Booking page URL" hint="shows the card's Book Meeting button" error={errors.bookingUrl}>
+            <input value={bookingUrl} onChange={(e) => setBookingUrl(e.target.value)} className="dashboard-input" placeholder="https://cal.com/your-team/30min" />
+          </SettingField>
+          <SettingField label="Email sender name" hint="appears in the From line">
             <input value={senderName} onChange={(e) => setSenderName(e.target.value)} className="dashboard-input" placeholder="Acme AI Voice" />
-          </div>
+          </SettingField>
         </div>
         <Button variant="default" size="sm" onClick={handleSaveVoiceAndCalendar} disabled={saving} className="flex items-center gap-2">
-          {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+          {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <Save className="h-3.5 w-3.5" aria-hidden="true" />}
           Save Configuration
         </Button>
+      </Card>
+
+      <Card className="glass-panel border-white/[0.08] p-6 space-y-4">
+        <div className="flex items-center justify-between border-b border-white/[0.08] pb-3">
+          <div className="flex items-center gap-2 text-slate-100 font-bold text-sm">
+            <Users className="h-4 w-4 text-indigo-400" />
+            Team Members
+          </div>
+          <Button variant="outline" size="sm" onClick={() => { setInviteError(null); setInviteOpen(true); }} className="flex items-center gap-1">
+            <UserPlus className="h-3.5 w-3.5" aria-hidden="true" />
+            Invite
+          </Button>
+        </div>
+        <p className="text-[11px] text-slate-500">
+          Roles control what each person can change. Only Owners and Admins can remove catalog entries or employees; Managers can edit but not delete.
+        </p>
+        {members.length === 0 ? (
+          <p className="text-xs text-slate-500">No members yet.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="text-[10px] uppercase tracking-wider text-slate-400 border-b border-white/[0.08]">
+                <tr>
+                  <th scope="col" className="pb-2 font-semibold">Member</th>
+                  <th scope="col" className="pb-2 font-semibold">Status</th>
+                  <th scope="col" className="pb-2 font-semibold">Role</th>
+                  <th scope="col" className="pb-2 font-semibold text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/[0.06]">
+                {members.map((member) => {
+                  const label = member.user?.full_name?.trim() || member.user?.email || "Unknown user";
+                  return (
+                    <tr key={member.id}>
+                      <td className="py-2.5">
+                        <div className="text-slate-200 font-medium">{label}</div>
+                        {member.user?.full_name && <div className="text-slate-500">{member.user.email}</div>}
+                      </td>
+                      <td className="py-2.5 text-slate-400">{member.status}</td>
+                      <td className="py-2.5">
+                        <select
+                          value={member.role}
+                          onChange={(e) => handleChangeRole(member.id, e.target.value as MemberRole)}
+                          aria-label={`Role for ${label}`}
+                          className="dashboard-input py-1"
+                        >
+                          {ROLES.map((role) => (
+                            <option key={role} value={role}>
+                              {role}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="py-2.5 text-right">
+                        <Button variant="ghost" size="sm" onClick={() => handleRemoveMember(member.id)} aria-label={`Remove ${label}`}>
+                          <Trash2 className="h-3.5 w-3.5 text-rose-400" aria-hidden="true" />
+                        </Button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </Card>
 
       <Card className="glass-panel border-white/[0.08] p-6 space-y-4">
@@ -269,7 +519,7 @@ export default function SettingsPage() {
             Platform API Keys
           </div>
           <Button variant="outline" size="sm" onClick={() => setNewKeyDialogOpen(true)} className="flex items-center gap-1">
-            <Plus className="h-3.5 w-3.5" />
+            <Plus className="h-3.5 w-3.5" aria-hidden="true" />
             New Key
           </Button>
         </div>
@@ -287,7 +537,7 @@ export default function SettingsPage() {
                   <span className="text-rose-400">Revoked</span>
                 ) : (
                   <Button variant="ghost" size="sm" onClick={() => handleRevokeKey(key.id)} aria-label={`Revoke ${key.name}`}>
-                    <Trash2 className="h-3.5 w-3.5 text-rose-400" />
+                    <Trash2 className="h-3.5 w-3.5 text-rose-400" aria-hidden="true" />
                   </Button>
                 )}
               </div>
@@ -313,27 +563,61 @@ export default function SettingsPage() {
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => {
-                  navigator.clipboard.writeText(createdRawKey);
-                  showToast("Copied to clipboard", "success");
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(createdRawKey);
+                    showToast("Copied to clipboard", "success");
+                  } catch {
+                    showToast("Could not copy — your browser blocked clipboard access", "error");
+                  }
                 }}
                 aria-label="Copy API key"
               >
-                <Copy className="h-3.5 w-3.5" />
+                <Copy className="h-3.5 w-3.5" aria-hidden="true" />
               </Button>
             </div>
           </div>
         ) : (
           <div className="space-y-3">
-            <label className="block text-xs">
-              <span className="block text-[11px] uppercase tracking-wide text-slate-500 mb-1">Key name</span>
+            <SettingField label="Key name">
               <input value={newKeyName} onChange={(e) => setNewKeyName(e.target.value)} className="dashboard-input" placeholder="e.g. Zapier integration" />
-            </label>
+            </SettingField>
             <Button variant="default" size="sm" onClick={handleCreateApiKey}>
               Create Key
             </Button>
           </div>
         )}
+      </Dialog>
+
+      <Dialog open={inviteOpen} onClose={() => setInviteOpen(false)} title="Invite a team member" size="sm">
+        <div className="space-y-3">
+          {inviteError && (
+            <div role="alert" className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs">
+              {inviteError}
+            </div>
+          )}
+          <SettingField label="Email" hint="they must already have an account">
+            <input type="email" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} className="dashboard-input" placeholder="teammate@example.com" />
+          </SettingField>
+          <SettingField label="Role">
+            <select value={inviteRole} onChange={(e) => setInviteRole(e.target.value as MemberRole)} className="dashboard-input">
+              {ROLES.map((role) => (
+                <option key={role} value={role}>
+                  {role}
+                </option>
+              ))}
+            </select>
+          </SettingField>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={() => setInviteOpen(false)}>
+              Cancel
+            </Button>
+            <Button variant="default" size="sm" disabled={inviting} onClick={handleInviteMember} className="flex items-center gap-2">
+              {inviting && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />}
+              Send invite
+            </Button>
+          </div>
+        </div>
       </Dialog>
     </div>
   );

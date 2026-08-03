@@ -4,9 +4,10 @@ import { promptAssemblyService, toolRegistry, agentRepo } from "@/core/infrastru
 import { SupabaseSettingsRepository } from "@/core/infrastructure/database/supabase/SupabaseSettingsRepository";
 import { SupabaseStorageAdapter } from "@/core/infrastructure/storage/SupabaseStorageAdapter";
 import { Logger } from "@/shared/lib/logger";
-import { resolveOpenAIVoiceId } from "@/shared/lib/voice";
+import { resolveCallVoiceId } from "@/shared/lib/voice";
 import { resolvePublicBaseUrl } from "@/shared/lib/publicUrl";
 import { createWebhookToken } from "@/shared/lib/webhookToken";
+import { isEmployeeCardVisible } from "@/shared/lib/employeeVisibility";
 import QRCode from "qrcode";
 
 // Reads the session cookie and/or query params, so it can never be rendered
@@ -73,7 +74,10 @@ export async function GET(req: NextRequest, { params }: { params: { companyId: s
       knowledgeRepo.getEmployeeById(employeeId),
     ]);
 
-    if (!company || !employee || employee.company_id !== companyId) {
+    // See isEmployeeCardVisible: only an explicit `false` takes a card offline,
+    // so a database that has not applied migration 20260807 yet keeps serving
+    // every card instead of 404ing all of them.
+    if (!company || !employee || employee.company_id !== companyId || !isEmployeeCardVisible(employee)) {
       return NextResponse.json({ message: "Business card not found" }, { status: 404 });
     }
 
@@ -146,7 +150,13 @@ export async function GET(req: NextRequest, { params }: { params: { companyId: s
         phone: employee.phone,
         officeAddress: employee.office_address,
         workingHours: employee.working_hours,
-        avatarUrl: agent?.avatar_url ?? null,
+        // The employee's own photo wins over the agent artwork: the card is a
+        // person's business card, and the agent avatar is a fallback for
+        // employees who haven't uploaded one.
+        avatarUrl: employee.avatar_path
+          ? storage.getPublicUrl("employee-avatars", employee.avatar_path)
+          : agent?.avatar_url ?? null,
+        timezone: employee.timezone ?? null,
       },
       branding: {
         primaryColor: branding?.primary_color ?? null,
@@ -198,7 +208,11 @@ export async function GET(req: NextRequest, { params }: { params: { companyId: s
       tools: serverUrl ? toolRegistry.getAllToolDefinitions() : [],
       toolsEnabled: Boolean(serverUrl),
       serverUrl,
-      voiceId: resolveOpenAIVoiceId(agent?.voice_model_id),
+      voiceId: resolveCallVoiceId(
+        employee.voice_id,
+        agent?.voice_model_id,
+        (settings?.voice_settings as Record<string, unknown> | undefined)?.default_voice_model as string | undefined
+      ),
     });
   } catch (err) {
     // Supabase unreachable/unconfigured (e.g. placeholder credentials) is

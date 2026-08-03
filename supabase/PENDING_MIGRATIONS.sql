@@ -9,7 +9,7 @@
 -- very likely work — but splitting removes the question entirely for the cost
 -- of one extra paste.
 --
--- All four are purely additive: no foreign keys, no triggers, no data
+-- All five are purely additive: no foreign keys, no triggers, no data
 -- migration, no policy changes. Every existing row stays valid and visible
 -- (is_active defaults TRUE).
 --
@@ -31,7 +31,7 @@ ALTER TYPE appointment_status ADD VALUE IF NOT EXISTS 'REQUESTED';
 
 
 -- ════════════════════════════════════════════════════════════════════════════
--- BLOCK 2 — run after Block 1 succeeds   (migrations 20260804, 20260805, 20260806)
+-- BLOCK 2 — run after Block 1 succeeds   (migrations 20260804–20260807)
 -- ════════════════════════════════════════════════════════════════════════════
 
 -- ---- 20260804: hot-path indexes -------------------------------------------
@@ -99,6 +99,38 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_services_company_slug
 CREATE INDEX IF NOT EXISTS idx_services_company_active_order
     ON services(company_id, display_order, created_at)
     WHERE deleted_at IS NULL AND is_active = TRUE;
+
+
+-- ---- 20260807: employee management -----------------------------------------
+-- Deliberately kept OFF the public critical path. The business card reads
+-- name / designation / email / phone / office_address / working_hours, all of
+-- which already exist, and the new code treats a missing is_active as "no
+-- opinion" rather than "disabled" — so shipping this module before the
+-- migration applies cannot blank a card, which is exactly how the catalog
+-- release degraded production.
+ALTER TABLE employees
+    -- Enable/disable without deleting: a departed employee's card should stop
+    -- answering while their conversation history stays intact for reporting.
+    ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE NOT NULL,
+    ADD COLUMN IF NOT EXISTS avatar_path TEXT,
+    -- Per-employee overrides. NULL means "inherit the company/agent default",
+    -- which is why these are nullable rather than defaulted — a stored copy of
+    -- the shared value would silently stop tracking later changes to it.
+    ADD COLUMN IF NOT EXISTS voice_id VARCHAR(40),
+    ADD COLUMN IF NOT EXISTS prompt_override TEXT,
+    ADD COLUMN IF NOT EXISTS timezone VARCHAR(64),
+    ADD COLUMN IF NOT EXISTS display_order INT DEFAULT 0 NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_employees_company_active
+    ON employees(company_id, display_order, created_at)
+    WHERE deleted_at IS NULL;
+
+-- One employee row per linked auth user per company. Partial so the many
+-- employees with no user_id (card-only, never invited) don't collide, and so a
+-- soft-deleted row frees the link for re-invitation.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_employees_company_user
+    ON employees(company_id, user_id)
+    WHERE user_id IS NOT NULL AND deleted_at IS NULL;
 
 -- ============================================================================
 -- Expected result: "Success. No rows returned" for each block.

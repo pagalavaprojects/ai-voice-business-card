@@ -38,6 +38,8 @@ export type Permission =
   | "write:services"
   | "delete:services"
   | "read:employees"
+  | "write:employees"
+  | "delete:employees"
   | "read:settings"
   | "manage:settings"
   | "manage:api_keys"
@@ -53,7 +55,7 @@ const rolePermissions: Record<UserRole, Permission[]> = {
     "read:appointments", "write:appointments",
     "read:products", "write:products", "delete:products",
     "read:services", "write:services", "delete:services",
-    "read:employees",
+    "read:employees", "write:employees", "delete:employees",
     "read:settings", "manage:settings", "manage:api_keys", "manage:members", "manage:branding",
   ],
   ADMIN: [
@@ -64,7 +66,7 @@ const rolePermissions: Record<UserRole, Permission[]> = {
     "read:appointments", "write:appointments",
     "read:products", "write:products", "delete:products",
     "read:services", "write:services", "delete:services",
-    "read:employees",
+    "read:employees", "write:employees", "delete:employees",
     "read:settings", "manage:settings", "manage:api_keys", "manage:members", "manage:branding",
   ],
   MANAGER: [
@@ -75,7 +77,9 @@ const rolePermissions: Record<UserRole, Permission[]> = {
     "read:appointments", "write:appointments",
     "read:products", "write:products",
     "read:services", "write:services",
-    "read:employees",
+    // Write but not delete, the same tier split the catalog modules use: a
+    // manager curates the roster, only OWNER/ADMIN can remove someone from it.
+    "read:employees", "write:employees",
     "read:settings",
   ],
   EMPLOYEE: [

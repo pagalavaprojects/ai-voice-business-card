@@ -88,7 +88,10 @@ export async function GET(req: NextRequest) {
         id: e.id,
         title: e.name,
         subtitle: e.designation,
-        href: `/dashboard/prompts`,
+        // Was /dashboard/prompts, which only ever had an employee picker.
+        // Now that the roster has its own page, that is where a search hit for
+        // a person belongs.
+        href: `/dashboard/employees`,
       })),
     ];
 

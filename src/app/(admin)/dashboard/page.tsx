@@ -2,11 +2,14 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { MessageSquare, Users, Calendar, Clock, Loader2, AlertCircle } from "lucide-react";
+import { MessageSquare, Users, Calendar, Clock, Loader2, AlertCircle, Download, MessagesSquare } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/shared/ui/card";
 import { Badge } from "@/shared/ui/badge";
+import { Button } from "@/shared/ui/button";
 import { useCompany } from "@/features/dashboard/context/CompanyContext";
 import { apiFetch, ApiClientError } from "@/shared/lib/apiClient";
+import { useToast } from "@/shared/ui/toast";
+import { toCsv, downloadCsv } from "@/shared/lib/csv";
 
 interface RecentLead {
   id: string;
@@ -16,6 +19,23 @@ interface RecentLead {
   score_category: "HIGH" | "MEDIUM" | "LOW" | null;
   status: string;
   created_at: string;
+}
+
+interface RecentConversation {
+  id: string;
+  employeeName: string;
+  status: string;
+  startedAt: string;
+  endedAt: string | null;
+  durationSeconds: number | null;
+  summary: string | null;
+  sentiment: string | null;
+}
+
+interface TopTopic {
+  tool: string;
+  label: string;
+  count: number;
 }
 
 interface DashboardStats {
@@ -29,6 +49,8 @@ interface DashboardStats {
   avgDurationSeconds: number | null;
   leadConversionPercent: number | null;
   recentLeads: RecentLead[];
+  recentConversations: RecentConversation[];
+  topTopics: TopTopic[];
 }
 
 function formatDuration(seconds: number | null): string {
@@ -40,6 +62,7 @@ function formatDuration(seconds: number | null): string {
 
 export default function DashboardOverviewPage() {
   const { activeCompanyId, loading: companyLoading } = useCompany();
+  const { showToast } = useToast();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -60,6 +83,33 @@ export default function DashboardOverviewPage() {
   useEffect(() => {
     fetchStats();
   }, [fetchStats]);
+
+  const exportRecentLeads = () => {
+    if (!stats || stats.recentLeads.length === 0) return;
+    const csv = toCsv(
+      ["Name", "Email", "Category", "Score", "Status", "Captured"],
+      stats.recentLeads.map((l) => [l.name, l.email, l.score_category ?? "", l.score ?? "", l.status, new Date(l.created_at).toISOString()])
+    );
+    downloadCsv(`recent-leads-${new Date().toISOString().slice(0, 10)}.csv`, csv);
+    showToast(`Exported ${stats.recentLeads.length} lead${stats.recentLeads.length === 1 ? "" : "s"}`, "success");
+  };
+
+  const exportRecentConversations = () => {
+    if (!stats || stats.recentConversations.length === 0) return;
+    const csv = toCsv(
+      ["Employee", "Status", "Started", "Duration (s)", "Sentiment", "Summary"],
+      stats.recentConversations.map((c) => [
+        c.employeeName,
+        c.status,
+        new Date(c.startedAt).toISOString(),
+        c.durationSeconds ?? "",
+        c.sentiment ?? "",
+        c.summary ?? "",
+      ])
+    );
+    downloadCsv(`recent-conversations-${new Date().toISOString().slice(0, 10)}.csv`, csv);
+    showToast(`Exported ${stats.recentConversations.length} conversation${stats.recentConversations.length === 1 ? "" : "s"}`, "success");
+  };
 
   if (companyLoading) return <div className="text-sm text-slate-400">Loading workspace…</div>;
   if (!activeCompanyId) return <div className="text-sm text-slate-400">No company selected.</div>;
@@ -147,9 +197,17 @@ export default function DashboardOverviewPage() {
                 <h2 className="text-base font-bold text-slate-100">Recent Leads</h2>
                 <p className="text-xs text-slate-400">The five most recent leads captured by your AI.</p>
               </div>
-              <Link href="/dashboard/leads" className="text-xs font-semibold text-sky-400 hover:underline">
-                View all leads →
-              </Link>
+              <div className="flex items-center gap-3">
+                {stats.recentLeads.length > 0 && (
+                  <Button variant="glass" size="sm" onClick={exportRecentLeads} className="text-xs flex items-center gap-1.5">
+                    <Download className="h-3.5 w-3.5" aria-hidden="true" />
+                    Export CSV
+                  </Button>
+                )}
+                <Link href="/dashboard/leads" className="text-xs font-semibold text-sky-400 hover:underline whitespace-nowrap">
+                  View all leads →
+                </Link>
+              </div>
             </div>
 
             {stats.recentLeads.length === 0 ? (
@@ -187,6 +245,78 @@ export default function DashboardOverviewPage() {
               </div>
             )}
           </Card>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <Card className="glass-panel border-white/[0.08] p-6 space-y-4">
+              <div>
+                <h2 className="text-base font-bold text-slate-100">Top Topics</h2>
+                <p className="text-xs text-slate-400">
+                  What visitors&apos; calls actually triggered, most common first.{" "}
+                  {stats.topTopics.length > 0 && "There's no free-text question log yet, so this is the closest honest signal."}
+                </p>
+              </div>
+
+              {stats.topTopics.length === 0 ? (
+                <p className="text-xs text-slate-400 py-4 text-center">No calls have triggered a tool yet.</p>
+              ) : (
+                <ul className="space-y-2.5">
+                  {stats.topTopics.map((topic) => {
+                    const max = stats.topTopics[0].count;
+                    const pct = max > 0 ? Math.round((topic.count / max) * 100) : 0;
+                    return (
+                      <li key={topic.tool}>
+                        <div className="flex items-center justify-between text-xs mb-1">
+                          <span className="text-slate-300">{topic.label}</span>
+                          <span className="font-mono font-bold text-slate-200 tabular-nums">{topic.count}</span>
+                        </div>
+                        <div className="h-1.5 rounded-full bg-white/[0.06] overflow-hidden">
+                          <div className="h-full rounded-full bg-sky-400/70" style={{ width: `${pct}%` }} />
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </Card>
+
+            <Card className="glass-panel border-white/[0.08] p-6 space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <MessagesSquare className="h-4 w-4 text-violet-400" aria-hidden="true" />
+                  <h2 className="text-base font-bold text-slate-100">Recent Conversations</h2>
+                </div>
+                {stats.recentConversations.length > 0 && (
+                  <Button variant="glass" size="sm" onClick={exportRecentConversations} className="text-xs flex items-center gap-1.5">
+                    <Download className="h-3.5 w-3.5" aria-hidden="true" />
+                    Export CSV
+                  </Button>
+                )}
+              </div>
+
+              {stats.recentConversations.length === 0 ? (
+                <p className="text-xs text-slate-400 py-4 text-center">No calls yet. They&apos;ll appear here as soon as someone talks to your card.</p>
+              ) : (
+                <ul className="space-y-3 divide-y divide-white/[0.06]">
+                  {stats.recentConversations.map((c) => (
+                    <li key={c.id} className="pt-3 first:pt-0 text-xs">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-medium text-slate-100">{c.employeeName}</span>
+                        <span className="text-slate-500 whitespace-nowrap">{new Date(c.startedAt).toLocaleString()}</span>
+                      </div>
+                      <div className="flex items-center gap-2 mt-1 text-slate-400">
+                        <Badge variant={c.status === "ENDED" || c.status === "SUMMARIZED" ? "success" : c.status === "FAILED" ? "outline" : "warning"}>
+                          {c.status}
+                        </Badge>
+                        <span>{formatDuration(c.durationSeconds)}</span>
+                        {c.sentiment && <span className="capitalize">· {c.sentiment}</span>}
+                      </div>
+                      {c.summary && <p className="mt-1.5 text-slate-400 line-clamp-2">{c.summary}</p>}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Card>
+          </div>
         </>
       ) : null}
     </div>

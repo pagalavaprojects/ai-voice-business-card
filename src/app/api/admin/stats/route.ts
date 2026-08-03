@@ -3,6 +3,7 @@ import { formatApiResponse } from "@/shared/lib/security";
 import { handleApiError } from "@/shared/lib/apiHandler";
 import { requireCompanyAccess } from "@/shared/lib/tenant";
 import { supabaseAdmin } from "@/shared/lib/supabase";
+import { computeTopTopics } from "@/shared/lib/dashboardTopics";
 
 export const dynamic = "force-dynamic";
 
@@ -15,7 +16,8 @@ export const dynamic = "force-dynamic";
  * from this company's own rows.
  *
  * Counts use `head: true` so Postgres returns the count without transferring
- * any rows; only the small recent-leads list is actually fetched.
+ * any rows; only the small recent-leads/recent-conversations lists are
+ * actually fetched.
  */
 export async function GET(req: NextRequest) {
   try {
@@ -40,6 +42,8 @@ export async function GET(req: NextRequest) {
       appointmentsPending,
       durations,
       recentLeads,
+      recentConversations,
+      toolsCalledSample,
     ] = await Promise.all([
       supabaseAdmin.from("conversations").select("id", { count: "exact", head: true }).eq("company_id", companyId),
       supabaseAdmin.from("conversations").select("id", { count: "exact", head: true }).eq("company_id", companyId).gte("created_at", weekAgo),
@@ -68,7 +72,27 @@ export async function GET(req: NextRequest) {
         .is("deleted_at", null)
         .order("created_at", { ascending: false })
         .limit(5),
+      supabaseAdmin
+        .from("conversations")
+        .select("id, employee_id, status, started_at, ended_at, duration_seconds, summary, sentiment")
+        .eq("company_id", companyId)
+        .order("started_at", { ascending: false })
+        .limit(8),
+      // Bounded sample, same cap as the duration average above — aggregating
+      // in JS over a capped set beats a second round trip for a bar-count
+      // query Postgres has no simpler way to express against a text[] column.
+      supabaseAdmin.from("conversations").select("tools_called").eq("company_id", companyId).not("tools_called", "eq", "{}").limit(500),
     ]);
+
+    const conversationRows = recentConversations.data ?? [];
+    const employeeIds = [...new Set(conversationRows.map((c) => c.employee_id).filter(Boolean))];
+    const employeeNames = new Map<string, string>();
+    if (employeeIds.length > 0) {
+      const { data: employeeRows } = await supabaseAdmin.from("employees").select("id, name").in("id", employeeIds);
+      for (const e of employeeRows ?? []) employeeNames.set(e.id, e.name);
+    }
+
+    const topTopics = computeTopTopics(toolsCalledSample.data ?? []);
 
     const durationValues = (durations.data ?? []).map((d) => Number(d.duration_seconds)).filter((n) => Number.isFinite(n));
     const avgDurationSeconds =
@@ -97,6 +121,19 @@ export async function GET(req: NextRequest) {
         // a measured failure rather than an absence of data.
         leadConversionPercent: totalConversations > 0 ? Math.round((totalLeads / totalConversations) * 1000) / 10 : null,
         recentLeads: recentLeads.data ?? [],
+        recentConversations: conversationRows.map((c) => ({
+          id: c.id,
+          employeeName: employeeNames.get(c.employee_id) ?? "Unknown",
+          status: c.status,
+          startedAt: c.started_at,
+          endedAt: c.ended_at,
+          durationSeconds: c.duration_seconds,
+          summary: c.summary,
+          sentiment: c.sentiment,
+        })),
+        // Empty rather than padded with zero-count topics — the widget shows
+        // "no calls have asked about anything yet" instead of a fake ranking.
+        topTopics,
       },
       200,
       "Dashboard statistics retrieved successfully"

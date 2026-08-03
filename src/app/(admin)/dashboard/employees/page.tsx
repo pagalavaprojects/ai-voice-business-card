@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Package, CheckCircle2, EyeOff, Star, Plus, Loader2, Search, Copy, Pencil, Trash2, Download } from "lucide-react";
+import { Users, CheckCircle2, EyeOff, Mic, Plus, Loader2, Search, Pencil, Trash2, Download, ExternalLink, Link2, User } from "lucide-react";
 import { Card } from "@/shared/ui/card";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
@@ -9,30 +9,30 @@ import { Dialog } from "@/shared/ui/dialog";
 import { useToast } from "@/shared/ui/toast";
 import { useCompany } from "@/features/dashboard/context/CompanyContext";
 import { apiFetch, ApiClientError } from "@/shared/lib/apiClient";
-import { Service } from "@/core/domain/models/types";
-import { ServiceForm, payloadFromValues } from "@/features/dashboard/components/services/ServiceForm";
+import { Employee } from "@/core/domain/models/types";
+import { EmployeeForm, payloadFromValues } from "@/features/dashboard/components/employees/EmployeeForm";
 import { toCsv, downloadCsv } from "@/shared/lib/csv";
 import { StatTile, IconButton, makePublicUrlResolver } from "@/features/dashboard/components/catalog/CatalogFormPrimitives";
 
-interface ServiceStats {
+interface EmployeeStats {
   total: number;
   active: number;
   inactive: number;
-  featured: number;
+  withAgent: number;
   addedLast30Days: number;
 }
 
 interface ListResponse {
-  services: Service[];
+  employees: Employee[];
   total: number;
-  stats: ServiceStats;
+  stats: EmployeeStats;
 }
 
 const PAGE_SIZE = 20;
 
-const publicUrlOf = makePublicUrlResolver("service-images");
+const publicUrlOf = makePublicUrlResolver("employee-avatars");
 
-export default function ServicesPage() {
+export default function EmployeesPage() {
   const { activeCompanyId, loading: companyLoading } = useCompany();
   const { showToast } = useToast();
 
@@ -43,14 +43,14 @@ export default function ServicesPage() {
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [status, setStatus] = useState<"" | "active" | "inactive">("");
-  const [sortBy, setSortBy] = useState<"updated_at" | "name" | "price" | "display_order">("updated_at");
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const [sortBy, setSortBy] = useState<"display_order" | "name" | "designation" | "updated_at">("display_order");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [page, setPage] = useState(0);
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [createOpen, setCreateOpen] = useState(false);
-  const [editing, setEditing] = useState<Service | null>(null);
-  const [deleting, setDeleting] = useState<Service | null>(null);
+  const [editing, setEditing] = useState<Employee | null>(null);
+  const [deleting, setDeleting] = useState<Employee | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -64,13 +64,16 @@ export default function ServicesPage() {
     return () => clearTimeout(t);
   }, [search]);
 
-  const fetchServices = useCallback(async () => {
+  const fetchEmployees = useCallback(async () => {
     if (!activeCompanyId) return;
     setLoading(true);
     setError(null);
     try {
       const params = new URLSearchParams({
         companyId: activeCompanyId,
+        // Opts into the paginated { employees, total, stats } shape; without it
+        // the route returns the bare array its older callers still expect.
+        view: "table",
         limit: String(PAGE_SIZE),
         offset: String(page * PAGE_SIZE),
         sortBy,
@@ -78,17 +81,17 @@ export default function ServicesPage() {
       });
       if (debouncedSearch) params.set("search", debouncedSearch);
       if (status) params.set("status", status);
-      setData(await apiFetch<ListResponse>(`/api/admin/services?${params}`));
+      setData(await apiFetch<ListResponse>(`/api/admin/employees?${params}`));
     } catch (err) {
-      setError(err instanceof ApiClientError ? err.message : "Failed to load services");
+      setError(err instanceof ApiClientError ? err.message : "Failed to load employees");
     } finally {
       setLoading(false);
     }
   }, [activeCompanyId, page, sortBy, sortDir, debouncedSearch, status]);
 
   useEffect(() => {
-    fetchServices();
-  }, [fetchServices]);
+    fetchEmployees();
+  }, [fetchEmployees]);
 
   // Selection is cleared whenever the visible set changes, so a bulk action can
   // never apply to rows the admin can no longer see.
@@ -96,11 +99,11 @@ export default function ServicesPage() {
     setSelected(new Set());
   }, [debouncedSearch, status, page, sortBy, sortDir]);
 
-  const services = useMemo(() => data?.services ?? [], [data]);
-  const allVisibleSelected = services.length > 0 && services.every((p) => selected.has(p.id));
+  const employees = useMemo(() => data?.employees ?? [], [data]);
+  const allVisibleSelected = employees.length > 0 && employees.every((e) => selected.has(e.id));
 
   const toggleAll = () => {
-    setSelected(allVisibleSelected ? new Set() : new Set(services.map((p) => p.id)));
+    setSelected(allVisibleSelected ? new Set() : new Set(employees.map((e) => e.id)));
   };
   const toggleOne = (id: string) => {
     setSelected((prev) => {
@@ -111,17 +114,33 @@ export default function ServicesPage() {
     });
   };
 
+  /** The card lives at /{companyId}/{employeeId} on this same origin, so it is
+   * derivable here — no extra round trip just to show a link. */
+  const cardUrlOf = (employee: Employee) =>
+    typeof window === "undefined" ? "" : `${window.location.origin}/${employee.company_id}/${employee.id}`;
+
+  const copyCardUrl = async (employee: Employee) => {
+    try {
+      await navigator.clipboard.writeText(cardUrlOf(employee));
+      showToast("Card link copied", "success");
+    } catch {
+      // Clipboard access is denied in some browsers/contexts. Say so rather
+      // than showing a success toast for something that did not happen.
+      showToast("Could not copy — your browser blocked clipboard access", "error");
+    }
+  };
+
   const runBulk = async (action: "activate" | "deactivate" | "delete") => {
     if (!activeCompanyId || selected.size === 0) return;
     setBusy(true);
     try {
-      const result = await apiFetch<{ affected: number }>("/api/admin/services/bulk", {
+      const result = await apiFetch<{ affected: number }>("/api/admin/employees/bulk", {
         method: "POST",
         body: JSON.stringify({ company_id: activeCompanyId, action, ids: [...selected] }),
       });
-      showToast(`${result.affected} service${result.affected === 1 ? "" : "s"} ${action}d`, "success");
+      showToast(`${result.affected} employee${result.affected === 1 ? "" : "s"} ${action}d`, "success");
       setSelected(new Set());
-      await fetchServices();
+      await fetchEmployees();
     } catch (err) {
       showToast(err instanceof ApiClientError ? err.message : `Bulk ${action} failed`, "error");
     } finally {
@@ -130,24 +149,23 @@ export default function ServicesPage() {
   };
 
   const exportSelected = () => {
-    const rows = services.filter((p) => selected.has(p.id));
-    const source = rows.length > 0 ? rows : services;
+    const rows = employees.filter((e) => selected.has(e.id));
+    const source = rows.length > 0 ? rows : employees;
     if (source.length === 0) return;
     const csv = toCsv(
-      ["Name", "Category", "Duration", "Price", "Currency", "Status", "Featured", "Updated"],
-      source.map((p) => [
-        p.name,
-        p.category ?? "",
-        p.timeline ?? "",
-        p.price,
-        p.currency,
-        p.is_active ? "Active" : "Inactive",
-        p.is_featured ? "Yes" : "No",
-        new Date(p.updated_at).toISOString().slice(0, 10),
+      ["Name", "Designation", "Email", "Phone", "Status", "Card URL", "Updated"],
+      source.map((e) => [
+        e.name,
+        e.designation,
+        e.email,
+        e.phone,
+        e.is_active ? "Active" : "Inactive",
+        cardUrlOf(e),
+        new Date(e.updated_at).toISOString().slice(0, 10),
       ])
     );
-    downloadCsv(`services-${new Date().toISOString().slice(0, 10)}.csv`, csv);
-    showToast(`Exported ${source.length} service${source.length === 1 ? "" : "s"}`, "success");
+    downloadCsv(`employees-${new Date().toISOString().slice(0, 10)}.csv`, csv);
+    showToast(`Exported ${source.length} employee${source.length === 1 ? "" : "s"}`, "success");
   };
 
   const submitCreate = async (payload: ReturnType<typeof payloadFromValues>) => {
@@ -155,15 +173,15 @@ export default function ServicesPage() {
     setSubmitting(true);
     setFormError(null);
     try {
-      await apiFetch<Service>("/api/admin/services", {
+      await apiFetch<Employee>("/api/admin/employees", {
         method: "POST",
         body: JSON.stringify({ ...payload, company_id: activeCompanyId }),
       });
-      showToast("Service created", "success");
+      showToast("Employee created", "success");
       setCreateOpen(false);
-      await fetchServices();
+      await fetchEmployees();
     } catch (err) {
-      setFormError(err instanceof ApiClientError ? err.message : "Failed to create service");
+      setFormError(err instanceof ApiClientError ? err.message : "Failed to create employee");
     } finally {
       setSubmitting(false);
     }
@@ -174,34 +192,17 @@ export default function ServicesPage() {
     setSubmitting(true);
     setFormError(null);
     try {
-      await apiFetch<Service>(`/api/admin/services/${editing.id}`, {
+      await apiFetch<Employee>(`/api/admin/employees/${editing.id}`, {
         method: "PUT",
         body: JSON.stringify({ ...payload, company_id: activeCompanyId }),
       });
-      showToast("Service updated", "success");
+      showToast("Employee updated", "success");
       setEditing(null);
-      await fetchServices();
+      await fetchEmployees();
     } catch (err) {
-      setFormError(err instanceof ApiClientError ? err.message : "Failed to update service");
+      setFormError(err instanceof ApiClientError ? err.message : "Failed to update employee");
     } finally {
       setSubmitting(false);
-    }
-  };
-
-  const duplicate = async (service: Service) => {
-    if (!activeCompanyId) return;
-    setBusy(true);
-    try {
-      await apiFetch<Service>(`/api/admin/services/${service.id}/duplicate`, {
-        method: "POST",
-        body: JSON.stringify({ company_id: activeCompanyId }),
-      });
-      showToast("Duplicated — the copy is inactive until you publish it", "success");
-      await fetchServices();
-    } catch (err) {
-      showToast(err instanceof ApiClientError ? err.message : "Duplicate failed", "error");
-    } finally {
-      setBusy(false);
     }
   };
 
@@ -209,10 +210,10 @@ export default function ServicesPage() {
     if (!activeCompanyId || !deleting) return;
     setBusy(true);
     try {
-      await apiFetch(`/api/admin/services/${deleting.id}?companyId=${activeCompanyId}`, { method: "DELETE" });
-      showToast("Service deleted", "success");
+      await apiFetch(`/api/admin/employees/${deleting.id}?companyId=${activeCompanyId}`, { method: "DELETE" });
+      showToast("Employee removed", "success");
       setDeleting(null);
-      await fetchServices();
+      await fetchEmployees();
     } catch (err) {
       showToast(err instanceof ApiClientError ? err.message : "Delete failed", "error");
     } finally {
@@ -229,21 +230,21 @@ export default function ServicesPage() {
     <div className="space-y-6 max-w-7xl mx-auto">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-slate-100 tracking-tight">Services</h1>
-          <p className="text-xs text-slate-400">Active services appear on the business card and are available to the AI assistant.</p>
+          <h1 className="text-2xl font-bold text-slate-100 tracking-tight">Employees</h1>
+          <p className="text-xs text-slate-400">Each active employee gets a voice business card. Deactivating one takes their card offline.</p>
         </div>
         <Button variant="default" onClick={() => { setFormError(null); setCreateOpen(true); }} className="flex items-center gap-2 text-xs">
           <Plus className="h-4 w-4" aria-hidden="true" />
-          New service
+          New employee
         </Button>
       </div>
 
       {data && (
         <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
-          <StatTile title="Total" value={data.stats.total} icon={<Package className="h-4 w-4 text-sky-400" />} />
+          <StatTile title="Total" value={data.stats.total} icon={<Users className="h-4 w-4 text-sky-400" />} />
           <StatTile title="Active" value={data.stats.active} icon={<CheckCircle2 className="h-4 w-4 text-emerald-400" />} />
           <StatTile title="Inactive" value={data.stats.inactive} icon={<EyeOff className="h-4 w-4 text-slate-400" />} />
-          <StatTile title="Featured" value={data.stats.featured} icon={<Star className="h-4 w-4 text-amber-400" />} />
+          <StatTile title="With voice agent" value={data.stats.withAgent} icon={<Mic className="h-4 w-4 text-violet-400" />} />
           <StatTile title="Added (30d)" value={data.stats.addedLast30Days} icon={<Plus className="h-4 w-4 text-indigo-400" />} />
         </div>
       )}
@@ -255,8 +256,8 @@ export default function ServicesPage() {
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search name, description, category…"
-              aria-label="Search services"
+              placeholder="Search name, designation, email…"
+              aria-label="Search employees"
               className="dashboard-input pl-9"
             />
           </div>
@@ -272,14 +273,13 @@ export default function ServicesPage() {
               setSortBy(by as typeof sortBy);
               setSortDir(dir as typeof sortDir);
             }}
-            aria-label="Sort services"
+            aria-label="Sort employees"
             className="dashboard-input sm:w-48"
           >
-            <option value="updated_at:desc">Recently updated</option>
-            <option value="name:asc">Name A–Z</option>
-            <option value="price:desc">Price high → low</option>
-            <option value="price:asc">Price low → high</option>
             <option value="display_order:asc">Display order</option>
+            <option value="name:asc">Name A–Z</option>
+            <option value="designation:asc">Designation A–Z</option>
+            <option value="updated_at:desc">Recently updated</option>
           </select>
           <Button variant="glass" onClick={exportSelected} className="text-xs flex items-center gap-2 shrink-0">
             <Download className="h-3.5 w-3.5" aria-hidden="true" />
@@ -293,7 +293,7 @@ export default function ServicesPage() {
             <div className="flex gap-2 ml-auto">
               <Button variant="outline" size="sm" disabled={busy} onClick={() => runBulk("activate")} className="text-xs">Activate</Button>
               <Button variant="outline" size="sm" disabled={busy} onClick={() => runBulk("deactivate")} className="text-xs">Deactivate</Button>
-              <Button variant="outline" size="sm" disabled={busy} onClick={() => runBulk("delete")} className="text-xs text-rose-300">Delete</Button>
+              <Button variant="outline" size="sm" disabled={busy} onClick={() => runBulk("delete")} className="text-xs text-rose-300">Remove</Button>
             </div>
           </div>
         )}
@@ -303,11 +303,11 @@ export default function ServicesPage() {
         {loading ? (
           <div className="flex items-center gap-2 text-sm text-slate-400 py-8 justify-center" role="status" aria-live="polite">
             <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-            Loading services…
+            Loading employees…
           </div>
-        ) : services.length === 0 ? (
+        ) : employees.length === 0 ? (
           <div className="text-center py-10 text-sm text-slate-400">
-            {debouncedSearch || status ? "No services match your filters." : "No services yet. Create your first one — it appears on the business card immediately."}
+            {debouncedSearch || status ? "No employees match your filters." : "No employees yet. Add the first one to publish a voice business card."}
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -315,57 +315,50 @@ export default function ServicesPage() {
               <thead className="text-[10px] uppercase tracking-wider text-slate-400 border-b border-white/[0.08]">
                 <tr>
                   <th scope="col" className="pb-3 pr-3 w-8">
-                    <input type="checkbox" checked={allVisibleSelected} onChange={toggleAll} aria-label="Select all services on this page" />
+                    <input type="checkbox" checked={allVisibleSelected} onChange={toggleAll} aria-label="Select all employees on this page" />
                   </th>
-                  <th scope="col" className="pb-3 font-semibold">Service</th>
-                  <th scope="col" className="pb-3 font-semibold">Category</th>
-                  <th scope="col" className="pb-3 font-semibold">Duration</th>
-                  <th scope="col" className="pb-3 font-semibold text-right">Price</th>
+                  <th scope="col" className="pb-3 font-semibold">Employee</th>
+                  <th scope="col" className="pb-3 font-semibold">Designation</th>
+                  <th scope="col" className="pb-3 font-semibold">Contact</th>
+                  <th scope="col" className="pb-3 font-semibold">Voice</th>
                   <th scope="col" className="pb-3 font-semibold">Status</th>
-                  <th scope="col" className="pb-3 font-semibold">Updated</th>
                   <th scope="col" className="pb-3 font-semibold text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/[0.06]">
-                {services.map((p) => (
-                  <tr key={p.id} className={selected.has(p.id) ? "bg-sky-500/[0.05]" : undefined}>
+                {employees.map((e) => (
+                  <tr key={e.id} className={selected.has(e.id) ? "bg-sky-500/[0.05]" : undefined}>
                     <td className="py-3 pr-3">
-                      <input type="checkbox" checked={selected.has(p.id)} onChange={() => toggleOne(p.id)} aria-label={`Select ${p.name}`} />
+                      <input type="checkbox" checked={selected.has(e.id)} onChange={() => toggleOne(e.id)} aria-label={`Select ${e.name}`} />
                     </td>
                     <td className="py-3">
                       <div className="flex items-center gap-2.5 min-w-0">
-                        {p.image_path ? (
+                        {e.avatar_path ? (
                           /* eslint-disable-next-line @next/next/no-img-element */
-                          <img src={publicUrlOf(p.image_path)} alt="" className="h-9 w-9 rounded-lg object-cover border border-white/[0.08] shrink-0" loading="lazy" />
+                          <img src={publicUrlOf(e.avatar_path)} alt="" className="h-9 w-9 rounded-full object-cover border border-white/[0.08] shrink-0" loading="lazy" />
                         ) : (
-                          <div className="h-9 w-9 rounded-lg bg-white/[0.04] border border-white/[0.08] flex items-center justify-center shrink-0" aria-hidden="true">
-                            <Package className="h-4 w-4 text-slate-600" />
+                          <div className="h-9 w-9 rounded-full bg-white/[0.04] border border-white/[0.08] flex items-center justify-center shrink-0" aria-hidden="true">
+                            <User className="h-4 w-4 text-slate-600" />
                           </div>
                         )}
-                        <div className="min-w-0">
-                          <p className="font-medium text-slate-100 truncate flex items-center gap-1.5">
-                            {p.name}
-                            {p.is_featured && <Star className="h-3 w-3 text-amber-400 shrink-0" aria-label="Featured" />}
-                          </p>
-                          
-                        </div>
+                        <p className="font-medium text-slate-100 truncate">{e.name}</p>
                       </div>
                     </td>
-                    <td className="py-3 text-slate-400">{p.category || "—"}</td>
-                    <td className="py-3 text-slate-400 whitespace-nowrap">{p.timeline || "—"}</td>
-                    <td className="py-3 text-right font-mono text-slate-200 tabular-nums">
-                      {p.currency === "USD" ? "$" : `${p.currency} `}
-                      {p.price}
+                    <td className="py-3 text-slate-400">{e.designation || "—"}</td>
+                    <td className="py-3 text-slate-400">
+                      <span className="block truncate max-w-[14rem]">{e.email}</span>
+                      <span className="block text-slate-500">{e.phone}</span>
                     </td>
+                    <td className="py-3 text-slate-400">{e.voice_id || <span className="text-slate-600">inherited</span>}</td>
                     <td className="py-3">
-                      <Badge variant={p.is_active ? "success" : "outline"}>{p.is_active ? "Active" : "Inactive"}</Badge>
+                      <Badge variant={e.is_active ? "success" : "outline"}>{e.is_active ? "Active" : "Inactive"}</Badge>
                     </td>
-                    <td className="py-3 text-slate-400 whitespace-nowrap">{new Date(p.updated_at).toLocaleDateString()}</td>
                     <td className="py-3">
                       <div className="flex items-center justify-end gap-1">
-                        <IconButton label={`Edit ${p.name}`} onClick={() => { setFormError(null); setEditing(p); }}><Pencil className="h-3.5 w-3.5" /></IconButton>
-                        <IconButton label={`Duplicate ${p.name}`} onClick={() => duplicate(p)} disabled={busy}><Copy className="h-3.5 w-3.5" /></IconButton>
-                        <IconButton label={`Delete ${p.name}`} onClick={() => setDeleting(p)} danger><Trash2 className="h-3.5 w-3.5" /></IconButton>
+                        <IconButton label={`Copy card link for ${e.name}`} onClick={() => copyCardUrl(e)}><Link2 className="h-3.5 w-3.5" /></IconButton>
+                        <IconButton label={`Open ${e.name}'s card`} onClick={() => window.open(cardUrlOf(e), "_blank", "noopener,noreferrer")}><ExternalLink className="h-3.5 w-3.5" /></IconButton>
+                        <IconButton label={`Edit ${e.name}`} onClick={() => { setFormError(null); setEditing(e); }}><Pencil className="h-3.5 w-3.5" /></IconButton>
+                        <IconButton label={`Remove ${e.name}`} onClick={() => setDeleting(e)} danger><Trash2 className="h-3.5 w-3.5" /></IconButton>
                       </div>
                     </td>
                   </tr>
@@ -388,8 +381,8 @@ export default function ServicesPage() {
         )}
       </Card>
 
-      <Dialog open={createOpen} onClose={() => setCreateOpen(false)} title="New service" description="Active services appear on the business card immediately." size="lg">
-        <ServiceForm
+      <Dialog open={createOpen} onClose={() => setCreateOpen(false)} title="New employee" description="An active employee's card goes live as soon as you save." size="lg">
+        <EmployeeForm
           companyId={activeCompanyId}
           initial={null}
           submitting={submitting}
@@ -402,7 +395,7 @@ export default function ServicesPage() {
 
       <Dialog open={Boolean(editing)} onClose={() => setEditing(null)} title={editing ? `Edit ${editing.name}` : ""} size="lg">
         {editing && (
-          <ServiceForm
+          <EmployeeForm
             companyId={activeCompanyId}
             initial={editing}
             submitting={submitting}
@@ -414,16 +407,17 @@ export default function ServicesPage() {
         )}
       </Dialog>
 
-      <Dialog open={Boolean(deleting)} onClose={() => setDeleting(null)} title="Delete service?" size="sm">
+      <Dialog open={Boolean(deleting)} onClose={() => setDeleting(null)} title="Remove employee?" size="sm">
         <div className="space-y-4 text-sm">
           <p className="text-xs text-slate-300">
-            <strong className="text-slate-100">{deleting?.name}</strong> will be removed from the business card and the AI assistant. This is a soft
-            delete — the record is retained and can be restored from the database.
+            <strong className="text-slate-100">{deleting?.name}</strong>&apos;s business card will stop answering and the card link will return
+            &ldquo;not found&rdquo;. This is a soft delete — their conversations, leads and appointments are kept, and the record can be restored from
+            the database.
           </p>
           <div className="flex justify-end gap-2">
             <Button variant="outline" size="sm" onClick={() => setDeleting(null)}>Cancel</Button>
             <Button variant="default" size="sm" disabled={busy} onClick={confirmDelete} className="bg-rose-500/80 hover:bg-rose-500">
-              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : "Delete"}
+              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : "Remove"}
             </Button>
           </div>
         </div>
