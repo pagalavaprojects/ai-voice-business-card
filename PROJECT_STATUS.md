@@ -40,13 +40,13 @@ inward; repositories abstract Supabase behind interfaces.
 
 | Metric | Value |
 |---|---|
-| Commits | 48 |
+| Commits | 49 |
 | Source | 17,227 lines TypeScript |
 | API routes | 45 |
 | Dashboard pages | 10 |
 | Database | 26 tables · 39 indexes · 43 FKs · 26 RLS policies |
 | Migrations | 10, apply cleanly from scratch |
-| Unit/integration tests | **146 passing**, 1 skipped (documented) |
+| Unit/integration tests | **150 passing**, 1 skipped (documented) |
 | Browser tests | **39 passing** across 3 viewports |
 | Accessibility | WCAG 2.1 AA — zero violations |
 | Build | Zero warnings, zero build-time error logs |
@@ -263,6 +263,34 @@ an accessible name.
 12 new unit tests (schema defaults and bounds, free-text duration, slug rules,
 form round-trip without data loss) plus an e2e test that the services surface
 is closed to anonymous callers.
+
+### Incident — deploy ahead of migration *(fixed)*
+The Services release shipped before migrations `20260805`/`20260806` were
+applied to production, and degraded the live card:
+
+- Every public read queries `is_active` / `display_order`, which did not exist
+  yet, so the queries errored and the card showed **zero products and zero
+  services**.
+- The worse consequence was indirect: `PromptAssemblyService` reads through the
+  same repository, so its failure made the assembled system prompt come back
+  **null** — the live voice assistant was running with no knowledge of the
+  company at all. One missing column silently removed the product's core
+  capability, and the `.catch(() => [])` guards on the public route meant it
+  failed quietly rather than loudly.
+
+The public read path now detects Postgres `42703` (undefined_column) and
+retries with the pre-migration query shape. Returning every row matches the
+migration's own default of `is_active = TRUE`, so nothing visible before
+becomes invisible, and nothing that should be hidden after the migration is
+exposed early. The fallback is deliberately narrow — only `42703` triggers it;
+a connection failure still throws, because turning a real outage into a
+silently empty card is exactly the failure mode this incident was made of.
+
+Verified restored in production: services back on the card, system prompt back
+to 4,662 characters, live voice call reaching "Listening", zero console errors.
+
+**Process lesson:** additive migrations must be applied *before* the code that
+reads the new columns, not after. Four are still pending — see §7.
 
 ---
 
