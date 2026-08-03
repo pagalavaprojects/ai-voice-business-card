@@ -1,8 +1,9 @@
 "use client";
 
-import React, { useCallback, useRef, useState } from "react";
-import { ImagePlus, Loader2, Star, X } from "lucide-react";
+import React, { useRef, useState } from "react";
+import { Loader2, Star, X } from "lucide-react";
 import { Button } from "@/shared/ui/button";
+import { Field, ImageDropZone, ImageDropZoneCompact } from "@/features/dashboard/components/catalog/CatalogFormPrimitives";
 import { Product, CreateProductSchema } from "@/core/domain/models/types";
 import { slugify } from "@/shared/lib/slugify";
 
@@ -96,154 +97,6 @@ export function validateValues(v: ProductFormValues): Record<string, string> {
     if (!errors[key]) errors[key] = issue.message;
   }
   return errors;
-}
-
-interface UploadState {
-  progress: number; // 0..100
-  uploading: boolean;
-  error: string | null;
-}
-
-/** XMLHttpRequest rather than fetch purely for upload progress events —
- * fetch still has no standard way to observe request-body progress. */
-function uploadWithProgress(url: string, formData: FormData, onProgress: (pct: number) => void): Promise<{ path: string; url: string }> {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open("POST", url);
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
-    };
-    xhr.onload = () => {
-      try {
-        const json = JSON.parse(xhr.responseText);
-        if (xhr.status >= 200 && xhr.status < 300) resolve(json.data);
-        else reject(new Error(json.message || `Upload failed (${xhr.status})`));
-      } catch {
-        reject(new Error(`Upload failed (${xhr.status})`));
-      }
-    };
-    xhr.onerror = () => reject(new Error("Upload failed — network error"));
-    xhr.send(formData);
-  });
-}
-
-function ImageDropZone({
-  companyId,
-  label,
-  currentPath,
-  publicUrlOf,
-  onUploaded,
-  onRemove,
-}: {
-  companyId: string;
-  label: string;
-  currentPath: string | null;
-  publicUrlOf: (path: string) => string;
-  onUploaded: (path: string) => void;
-  onRemove: () => void;
-}) {
-  const inputRef = useRef<HTMLInputElement>(null);
-  const [state, setState] = useState<UploadState>({ progress: 0, uploading: false, error: null });
-  const [dragOver, setDragOver] = useState(false);
-
-  const handleFile = useCallback(
-    async (file: File) => {
-      setState({ progress: 0, uploading: true, error: null });
-      const formData = new FormData();
-      formData.append("companyId", companyId);
-      formData.append("file", file);
-      try {
-        const result = await uploadWithProgress("/api/admin/products/image", formData, (pct) =>
-          setState((s) => ({ ...s, progress: pct }))
-        );
-        onUploaded(result.path);
-        setState({ progress: 100, uploading: false, error: null });
-      } catch (err) {
-        setState({ progress: 0, uploading: false, error: err instanceof Error ? err.message : "Upload failed" });
-      }
-    },
-    [companyId, onUploaded]
-  );
-
-  return (
-    <div>
-      <span className="block text-[11px] uppercase tracking-wide text-slate-500 mb-1">{label}</span>
-      {currentPath ? (
-        <div className="relative inline-block">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={publicUrlOf(currentPath)} alt="" className="h-20 w-20 rounded-xl object-cover border border-white/[0.1]" />
-          <button
-            type="button"
-            onClick={onRemove}
-            aria-label={`Remove ${label.toLowerCase()}`}
-            className="absolute -top-2 -right-2 h-5 w-5 rounded-full bg-slate-800 border border-white/20 text-slate-300 hover:text-rose-300 flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-sky-500"
-          >
-            <X className="h-3 w-3" aria-hidden="true" />
-          </button>
-        </div>
-      ) : (
-        <div
-          role="button"
-          tabIndex={0}
-          aria-label={`Upload ${label.toLowerCase()} — PNG, JPEG or WebP, up to 5MB`}
-          onClick={() => inputRef.current?.click()}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              e.preventDefault();
-              inputRef.current?.click();
-            }
-          }}
-          onDragOver={(e) => {
-            e.preventDefault();
-            setDragOver(true);
-          }}
-          onDragLeave={() => setDragOver(false)}
-          onDrop={(e) => {
-            e.preventDefault();
-            setDragOver(false);
-            const file = e.dataTransfer.files?.[0];
-            if (file) handleFile(file);
-          }}
-          className={`h-20 w-full max-w-[16rem] rounded-xl border border-dashed flex items-center justify-center gap-2 text-xs cursor-pointer transition-colors focus:outline-none focus:ring-2 focus:ring-sky-500 ${
-            dragOver ? "border-sky-400/60 bg-sky-500/10 text-sky-300" : "border-white/[0.15] text-slate-400 hover:border-white/[0.3]"
-          }`}
-        >
-          {state.uploading ? (
-            <span className="flex items-center gap-2">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-              {state.progress}%
-            </span>
-          ) : (
-            <>
-              <ImagePlus className="h-4 w-4" aria-hidden="true" />
-              Drop image or click
-            </>
-          )}
-        </div>
-      )}
-      {state.uploading && (
-        <div className="mt-1.5 h-1 w-full max-w-[16rem] bg-white/[0.06] rounded-full overflow-hidden" role="progressbar" aria-valuenow={state.progress} aria-valuemin={0} aria-valuemax={100}>
-          <div className="h-full bg-sky-400 transition-all" style={{ width: `${state.progress}%` }} />
-        </div>
-      )}
-      {state.error && (
-        <p role="alert" className="text-[11px] text-rose-300 mt-1">
-          {state.error}
-        </p>
-      )}
-      <input
-        ref={inputRef}
-        type="file"
-        accept="image/png,image/jpeg,image/webp"
-        className="hidden"
-        onChange={(e) => {
-          const file = e.target.files?.[0];
-          if (file) handleFile(file);
-          e.target.value = "";
-        }}
-      />
-    </div>
-  );
 }
 
 export function ProductForm({
@@ -351,6 +204,7 @@ export function ProductForm({
 
       <ImageDropZone
         companyId={companyId}
+        uploadUrl="/api/admin/products/image"
         label="Product image"
         currentPath={values.image_path}
         publicUrlOf={publicUrlOf}
@@ -375,7 +229,11 @@ export function ProductForm({
               </button>
             </div>
           ))}
-          <GalleryAdd companyId={companyId} onUploaded={(path) => set("gallery_paths", [...values.gallery_paths, path])} />
+          <ImageDropZoneCompact
+            companyId={companyId}
+            uploadUrl="/api/admin/products/image"
+            onUploaded={(path) => set("gallery_paths", [...values.gallery_paths, path])}
+          />
         </div>
       </div>
 
@@ -422,76 +280,5 @@ export function ProductForm({
         </Button>
       </div>
     </form>
-  );
-}
-
-function GalleryAdd({ companyId, onUploaded }: { companyId: string; onUploaded: (path: string) => void }) {
-  return (
-    <div className="h-14 w-14">
-      <ImageDropZoneCompact companyId={companyId} onUploaded={onUploaded} />
-    </div>
-  );
-}
-
-/** Small square variant of the drop zone for gallery slots. */
-function ImageDropZoneCompact({ companyId, onUploaded }: { companyId: string; onUploaded: (path: string) => void }) {
-  const inputRef = useRef<HTMLInputElement>(null);
-  const [uploading, setUploading] = useState(false);
-
-  const handleFile = async (file: File) => {
-    setUploading(true);
-    const formData = new FormData();
-    formData.append("companyId", companyId);
-    formData.append("file", file);
-    try {
-      const result = await uploadWithProgress("/api/admin/products/image", formData, () => {});
-      onUploaded(result.path);
-    } catch {
-      // The main drop zone surfaces upload errors verbosely; here a failed
-      // slot simply stays empty and can be retried.
-    } finally {
-      setUploading(false);
-    }
-  };
-
-  return (
-    <>
-      <button
-        type="button"
-        aria-label="Add gallery image"
-        onClick={() => inputRef.current?.click()}
-        className="h-14 w-14 rounded-lg border border-dashed border-white/[0.15] text-slate-500 hover:border-white/[0.3] hover:text-slate-300 flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-sky-500"
-      >
-        {uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <ImagePlus className="h-3.5 w-3.5" aria-hidden="true" />}
-      </button>
-      <input
-        ref={inputRef}
-        type="file"
-        accept="image/png,image/jpeg,image/webp"
-        className="hidden"
-        onChange={(e) => {
-          const file = e.target.files?.[0];
-          if (file) handleFile(file);
-          e.target.value = "";
-        }}
-      />
-    </>
-  );
-}
-
-function Field({ label, hint, error, children }: { label: string; hint?: string; error?: string; children: React.ReactNode }) {
-  return (
-    <label className="block">
-      <span className="block text-[11px] uppercase tracking-wide text-slate-500 mb-1">
-        {label}
-        {hint && <span className="normal-case tracking-normal text-slate-600 ml-2">{hint}</span>}
-      </span>
-      {children}
-      {error && (
-        <span role="alert" className="block text-[11px] text-rose-300 mt-1">
-          {error}
-        </span>
-      )}
-    </label>
   );
 }

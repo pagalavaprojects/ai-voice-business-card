@@ -9,12 +9,12 @@ import { Dialog } from "@/shared/ui/dialog";
 import { useToast } from "@/shared/ui/toast";
 import { useCompany } from "@/features/dashboard/context/CompanyContext";
 import { apiFetch, ApiClientError } from "@/shared/lib/apiClient";
-import { Product } from "@/core/domain/models/types";
-import { ProductForm, payloadFromValues } from "@/features/dashboard/components/products/ProductForm";
+import { Service } from "@/core/domain/models/types";
+import { ServiceForm, payloadFromValues } from "@/features/dashboard/components/services/ServiceForm";
 import { toCsv, downloadCsv } from "@/shared/lib/csv";
 import { StatTile, IconButton, makePublicUrlResolver } from "@/features/dashboard/components/catalog/CatalogFormPrimitives";
 
-interface ProductStats {
+interface ServiceStats {
   total: number;
   active: number;
   inactive: number;
@@ -23,16 +23,16 @@ interface ProductStats {
 }
 
 interface ListResponse {
-  products: Product[];
+  services: Service[];
   total: number;
-  stats: ProductStats;
+  stats: ServiceStats;
 }
 
 const PAGE_SIZE = 20;
 
-const publicUrlOf = makePublicUrlResolver("product-images");
+const publicUrlOf = makePublicUrlResolver("service-images");
 
-export default function ProductsPage() {
+export default function ServicesPage() {
   const { activeCompanyId, loading: companyLoading } = useCompany();
   const { showToast } = useToast();
 
@@ -43,14 +43,14 @@ export default function ProductsPage() {
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [status, setStatus] = useState<"" | "active" | "inactive">("");
-  const [sortBy, setSortBy] = useState<"updated_at" | "name" | "pricing" | "display_order">("updated_at");
+  const [sortBy, setSortBy] = useState<"updated_at" | "name" | "price" | "display_order">("updated_at");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [page, setPage] = useState(0);
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [createOpen, setCreateOpen] = useState(false);
-  const [editing, setEditing] = useState<Product | null>(null);
-  const [deleting, setDeleting] = useState<Product | null>(null);
+  const [editing, setEditing] = useState<Service | null>(null);
+  const [deleting, setDeleting] = useState<Service | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -64,7 +64,7 @@ export default function ProductsPage() {
     return () => clearTimeout(t);
   }, [search]);
 
-  const fetchProducts = useCallback(async () => {
+  const fetchServices = useCallback(async () => {
     if (!activeCompanyId) return;
     setLoading(true);
     setError(null);
@@ -78,17 +78,17 @@ export default function ProductsPage() {
       });
       if (debouncedSearch) params.set("search", debouncedSearch);
       if (status) params.set("status", status);
-      setData(await apiFetch<ListResponse>(`/api/admin/products?${params}`));
+      setData(await apiFetch<ListResponse>(`/api/admin/services?${params}`));
     } catch (err) {
-      setError(err instanceof ApiClientError ? err.message : "Failed to load products");
+      setError(err instanceof ApiClientError ? err.message : "Failed to load services");
     } finally {
       setLoading(false);
     }
   }, [activeCompanyId, page, sortBy, sortDir, debouncedSearch, status]);
 
   useEffect(() => {
-    fetchProducts();
-  }, [fetchProducts]);
+    fetchServices();
+  }, [fetchServices]);
 
   // Selection is cleared whenever the visible set changes, so a bulk action can
   // never apply to rows the admin can no longer see.
@@ -96,11 +96,11 @@ export default function ProductsPage() {
     setSelected(new Set());
   }, [debouncedSearch, status, page, sortBy, sortDir]);
 
-  const products = useMemo(() => data?.products ?? [], [data]);
-  const allVisibleSelected = products.length > 0 && products.every((p) => selected.has(p.id));
+  const services = useMemo(() => data?.services ?? [], [data]);
+  const allVisibleSelected = services.length > 0 && services.every((p) => selected.has(p.id));
 
   const toggleAll = () => {
-    setSelected(allVisibleSelected ? new Set() : new Set(products.map((p) => p.id)));
+    setSelected(allVisibleSelected ? new Set() : new Set(services.map((p) => p.id)));
   };
   const toggleOne = (id: string) => {
     setSelected((prev) => {
@@ -115,13 +115,13 @@ export default function ProductsPage() {
     if (!activeCompanyId || selected.size === 0) return;
     setBusy(true);
     try {
-      const result = await apiFetch<{ affected: number }>("/api/admin/products/bulk", {
+      const result = await apiFetch<{ affected: number }>("/api/admin/services/bulk", {
         method: "POST",
         body: JSON.stringify({ company_id: activeCompanyId, action, ids: [...selected] }),
       });
       showToast(`${result.affected} product${result.affected === 1 ? "" : "s"} ${action}d`, "success");
       setSelected(new Set());
-      await fetchProducts();
+      await fetchServices();
     } catch (err) {
       showToast(err instanceof ApiClientError ? err.message : `Bulk ${action} failed`, "error");
     } finally {
@@ -130,25 +130,24 @@ export default function ProductsPage() {
   };
 
   const exportSelected = () => {
-    const rows = products.filter((p) => selected.has(p.id));
-    const source = rows.length > 0 ? rows : products;
+    const rows = services.filter((p) => selected.has(p.id));
+    const source = rows.length > 0 ? rows : services;
     if (source.length === 0) return;
     const csv = toCsv(
-      ["Name", "SKU", "Category", "Price", "Currency", "Discount %", "Status", "Featured", "Updated"],
+      ["Name", "Category", "Duration", "Price", "Currency", "Status", "Featured", "Updated"],
       source.map((p) => [
         p.name,
-        p.sku ?? "",
         p.category ?? "",
-        p.pricing,
+        p.timeline ?? "",
+        p.price,
         p.currency,
-        p.discount_percent ?? 0,
         p.is_active ? "Active" : "Inactive",
         p.is_featured ? "Yes" : "No",
         new Date(p.updated_at).toISOString().slice(0, 10),
       ])
     );
-    downloadCsv(`products-${new Date().toISOString().slice(0, 10)}.csv`, csv);
-    showToast(`Exported ${source.length} product${source.length === 1 ? "" : "s"}`, "success");
+    downloadCsv(`services-${new Date().toISOString().slice(0, 10)}.csv`, csv);
+    showToast(`Exported ${source.length} service${source.length === 1 ? "" : "s"}`, "success");
   };
 
   const submitCreate = async (payload: ReturnType<typeof payloadFromValues>) => {
@@ -156,15 +155,15 @@ export default function ProductsPage() {
     setSubmitting(true);
     setFormError(null);
     try {
-      await apiFetch<Product>("/api/admin/products", {
+      await apiFetch<Service>("/api/admin/services", {
         method: "POST",
         body: JSON.stringify({ ...payload, company_id: activeCompanyId }),
       });
-      showToast("Product created", "success");
+      showToast("Service created", "success");
       setCreateOpen(false);
-      await fetchProducts();
+      await fetchServices();
     } catch (err) {
-      setFormError(err instanceof ApiClientError ? err.message : "Failed to create product");
+      setFormError(err instanceof ApiClientError ? err.message : "Failed to create service");
     } finally {
       setSubmitting(false);
     }
@@ -175,30 +174,30 @@ export default function ProductsPage() {
     setSubmitting(true);
     setFormError(null);
     try {
-      await apiFetch<Product>(`/api/admin/products/${editing.id}`, {
+      await apiFetch<Service>(`/api/admin/services/${editing.id}`, {
         method: "PUT",
         body: JSON.stringify({ ...payload, company_id: activeCompanyId }),
       });
-      showToast("Product updated", "success");
+      showToast("Service updated", "success");
       setEditing(null);
-      await fetchProducts();
+      await fetchServices();
     } catch (err) {
-      setFormError(err instanceof ApiClientError ? err.message : "Failed to update product");
+      setFormError(err instanceof ApiClientError ? err.message : "Failed to update service");
     } finally {
       setSubmitting(false);
     }
   };
 
-  const duplicate = async (product: Product) => {
+  const duplicate = async (service: Service) => {
     if (!activeCompanyId) return;
     setBusy(true);
     try {
-      await apiFetch<Product>(`/api/admin/products/${product.id}/duplicate`, {
+      await apiFetch<Service>(`/api/admin/services/${service.id}/duplicate`, {
         method: "POST",
         body: JSON.stringify({ company_id: activeCompanyId }),
       });
       showToast("Duplicated — the copy is inactive until you publish it", "success");
-      await fetchProducts();
+      await fetchServices();
     } catch (err) {
       showToast(err instanceof ApiClientError ? err.message : "Duplicate failed", "error");
     } finally {
@@ -210,10 +209,10 @@ export default function ProductsPage() {
     if (!activeCompanyId || !deleting) return;
     setBusy(true);
     try {
-      await apiFetch(`/api/admin/products/${deleting.id}?companyId=${activeCompanyId}`, { method: "DELETE" });
-      showToast("Product deleted", "success");
+      await apiFetch(`/api/admin/services/${deleting.id}?companyId=${activeCompanyId}`, { method: "DELETE" });
+      showToast("Service deleted", "success");
       setDeleting(null);
-      await fetchProducts();
+      await fetchServices();
     } catch (err) {
       showToast(err instanceof ApiClientError ? err.message : "Delete failed", "error");
     } finally {
@@ -230,12 +229,12 @@ export default function ProductsPage() {
     <div className="space-y-6 max-w-7xl mx-auto">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-slate-100 tracking-tight">Products</h1>
-          <p className="text-xs text-slate-400">Active products appear on the business card and are available to the AI assistant.</p>
+          <h1 className="text-2xl font-bold text-slate-100 tracking-tight">Services</h1>
+          <p className="text-xs text-slate-400">Active services appear on the business card and are available to the AI assistant.</p>
         </div>
         <Button variant="default" onClick={() => { setFormError(null); setCreateOpen(true); }} className="flex items-center gap-2 text-xs">
           <Plus className="h-4 w-4" aria-hidden="true" />
-          New product
+          New service
         </Button>
       </div>
 
@@ -256,8 +255,8 @@ export default function ProductsPage() {
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search name, SKU, category…"
-              aria-label="Search products"
+              placeholder="Search name, description, category…"
+              aria-label="Search services"
               className="dashboard-input pl-9"
             />
           </div>
@@ -273,13 +272,13 @@ export default function ProductsPage() {
               setSortBy(by as typeof sortBy);
               setSortDir(dir as typeof sortDir);
             }}
-            aria-label="Sort products"
+            aria-label="Sort services"
             className="dashboard-input sm:w-48"
           >
             <option value="updated_at:desc">Recently updated</option>
             <option value="name:asc">Name A–Z</option>
-            <option value="pricing:desc">Price high → low</option>
-            <option value="pricing:asc">Price low → high</option>
+            <option value="price:desc">Price high → low</option>
+            <option value="price:asc">Price low → high</option>
             <option value="display_order:asc">Display order</option>
           </select>
           <Button variant="glass" onClick={exportSelected} className="text-xs flex items-center gap-2 shrink-0">
@@ -304,11 +303,11 @@ export default function ProductsPage() {
         {loading ? (
           <div className="flex items-center gap-2 text-sm text-slate-400 py-8 justify-center" role="status" aria-live="polite">
             <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-            Loading products…
+            Loading services…
           </div>
-        ) : products.length === 0 ? (
+        ) : services.length === 0 ? (
           <div className="text-center py-10 text-sm text-slate-400">
-            {debouncedSearch || status ? "No products match your filters." : "No products yet. Create your first one — it appears on the business card immediately."}
+            {debouncedSearch || status ? "No services match your filters." : "No services yet. Create your first one — it appears on the business card immediately."}
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -316,10 +315,11 @@ export default function ProductsPage() {
               <thead className="text-[10px] uppercase tracking-wider text-slate-400 border-b border-white/[0.08]">
                 <tr>
                   <th scope="col" className="pb-3 pr-3 w-8">
-                    <input type="checkbox" checked={allVisibleSelected} onChange={toggleAll} aria-label="Select all products on this page" />
+                    <input type="checkbox" checked={allVisibleSelected} onChange={toggleAll} aria-label="Select all services on this page" />
                   </th>
-                  <th scope="col" className="pb-3 font-semibold">Product</th>
+                  <th scope="col" className="pb-3 font-semibold">Service</th>
                   <th scope="col" className="pb-3 font-semibold">Category</th>
+                  <th scope="col" className="pb-3 font-semibold">Duration</th>
                   <th scope="col" className="pb-3 font-semibold text-right">Price</th>
                   <th scope="col" className="pb-3 font-semibold">Status</th>
                   <th scope="col" className="pb-3 font-semibold">Updated</th>
@@ -327,7 +327,7 @@ export default function ProductsPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/[0.06]">
-                {products.map((p) => (
+                {services.map((p) => (
                   <tr key={p.id} className={selected.has(p.id) ? "bg-sky-500/[0.05]" : undefined}>
                     <td className="py-3 pr-3">
                       <input type="checkbox" checked={selected.has(p.id)} onChange={() => toggleOne(p.id)} aria-label={`Select ${p.name}`} />
@@ -347,14 +347,15 @@ export default function ProductsPage() {
                             {p.name}
                             {p.is_featured && <Star className="h-3 w-3 text-amber-400 shrink-0" aria-label="Featured" />}
                           </p>
-                          {p.sku && <p className="text-[10px] text-slate-500 font-mono">{p.sku}</p>}
+                          
                         </div>
                       </div>
                     </td>
                     <td className="py-3 text-slate-400">{p.category || "—"}</td>
+                    <td className="py-3 text-slate-400 whitespace-nowrap">{p.timeline || "—"}</td>
                     <td className="py-3 text-right font-mono text-slate-200 tabular-nums">
                       {p.currency === "USD" ? "$" : `${p.currency} `}
-                      {p.pricing}
+                      {p.price}
                     </td>
                     <td className="py-3">
                       <Badge variant={p.is_active ? "success" : "outline"}>{p.is_active ? "Active" : "Inactive"}</Badge>
@@ -387,8 +388,8 @@ export default function ProductsPage() {
         )}
       </Card>
 
-      <Dialog open={createOpen} onClose={() => setCreateOpen(false)} title="New product" description="Active products appear on the business card immediately." size="lg">
-        <ProductForm
+      <Dialog open={createOpen} onClose={() => setCreateOpen(false)} title="New service" description="Active services appear on the business card immediately." size="lg">
+        <ServiceForm
           companyId={activeCompanyId}
           initial={null}
           submitting={submitting}
@@ -401,7 +402,7 @@ export default function ProductsPage() {
 
       <Dialog open={Boolean(editing)} onClose={() => setEditing(null)} title={editing ? `Edit ${editing.name}` : ""} size="lg">
         {editing && (
-          <ProductForm
+          <ServiceForm
             companyId={activeCompanyId}
             initial={editing}
             submitting={submitting}
@@ -413,7 +414,7 @@ export default function ProductsPage() {
         )}
       </Dialog>
 
-      <Dialog open={Boolean(deleting)} onClose={() => setDeleting(null)} title="Delete product?" size="sm">
+      <Dialog open={Boolean(deleting)} onClose={() => setDeleting(null)} title="Delete service?" size="sm">
         <div className="space-y-4 text-sm">
           <p className="text-xs text-slate-300">
             <strong className="text-slate-100">{deleting?.name}</strong> will be removed from the business card and the AI assistant. This is a soft

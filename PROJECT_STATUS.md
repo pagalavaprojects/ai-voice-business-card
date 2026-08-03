@@ -8,7 +8,7 @@
 | **Repository** | https://github.com/pagalavaprojects/ai-voice-business-card |
 | **Demo card** | [`/33333333…/44444444…`](https://ai-voice-business-card.vercel.app/33333333-3333-3333-3333-333333333333/44444444-4444-4444-4444-444444444444) |
 | **Last updated** | 2026-08-02 |
-| **Completion** | **~90%** — production-deployed; analytics + products live, integrations pending credentials |
+| **Completion** | **~92%** — production-deployed; analytics, products + services live, integrations pending credentials |
 
 > This file is refreshed after every completed module. If it looks stale
 > against the repo, trust the repo and raise it.
@@ -40,14 +40,14 @@ inward; repositories abstract Supabase behind interfaces.
 
 | Metric | Value |
 |---|---|
-| Commits | 46 |
-| Source | 15,840 lines TypeScript |
-| API routes | 40 |
-| Dashboard pages | 9 |
-| Database | 26 tables · 37 indexes · 43 FKs · 26 RLS policies |
-| Migrations | 9, apply cleanly from scratch |
-| Unit/integration tests | **134 passing**, 1 skipped (documented) |
-| Browser tests | **30 passing** across 3 viewports |
+| Commits | 48 |
+| Source | 17,227 lines TypeScript |
+| API routes | 45 |
+| Dashboard pages | 10 |
+| Database | 26 tables · 39 indexes · 43 FKs · 26 RLS policies |
+| Migrations | 10, apply cleanly from scratch |
+| Unit/integration tests | **146 passing**, 1 skipped (documented) |
+| Browser tests | **39 passing** across 3 viewports |
 | Accessibility | WCAG 2.1 AA — zero violations |
 | Build | Zero warnings, zero build-time error logs |
 | Code hygiene | 0 TODOs · 0 `any` · 0 `@ts-ignore` |
@@ -219,6 +219,51 @@ managers edit the catalog, only OWNER/ADMIN delete.
 17 new unit tests (schema bounds, slug rules, CSV quoting, form mapping) plus
 an e2e test that the products surface is closed to anonymous callers.
 
+### Phase 8 — Services management module *(current)*
+Full CRUD at `/dashboard/services`, matching the Products module.
+
+**Built on shared primitives rather than copied.** The Products UI was 964
+lines; duplicating it would have produced ~950 more that drift apart the first
+time one module fixes a bug the other keeps. Extracted
+`CatalogFormPrimitives` (field chrome, drag-and-drop upload with progress,
+stat tiles, row actions, public-URL resolver) and a shared
+`handleCatalogImageUpload`; both modules now sit on them. ProductForm shrank
+497 → 284 lines with no behaviour change and all 17 of its tests still green.
+What stayed separate is what genuinely differs: schemas, repositories, routes
+and column sets.
+
+Decisions worth recording:
+
+- **Duration reuses the existing `timeline` column.** `services.timeline`
+  already held "2–6 weeks to first automation live" for every seeded row and
+  was already read by the card, prompt assembly and the `search_services`
+  voice tool. A new `duration` column would have split one concept across two
+  fields and stranded every existing value in the old one. It stays free text
+  because real engagements are quoted as ranges, which a numeric field cannot
+  express without implying precision that isn't there.
+- **SEO fields were not added.** Services have no individual pages — the card
+  is a single client-rendered view — so meta title/description would have had
+  nowhere to render. Columns nothing reads are the same dead scaffolding as
+  the `rag_chunks` and `workflows` tables already flagged in the audit.
+- `services` needed a `currency` column, which products already had; added so
+  the card renders service pricing the same way.
+- Same active-only public read path, per-company slug uniqueness, bulk
+  operations scoped by `company_id`, and inactive duplicates as Products.
+
+**Bug found and fixed:** an axe scan of the catalog form reported a critical
+WCAG 4.1.2 failure — the visually-hidden `<input type="file">` inside the
+image drop zone was still in the accessibility tree with no label, so a screen
+reader announced an unlabelled file control. Fixed in the shared primitive,
+which repaired Products and Services at once. Admin forms had never been
+axe-scanned before because the dashboard is auth-gated and the existing scans
+only cover public pages; `e2e/catalog-forms.spec.ts` now guards the same class
+of problem on the public surface, asserting every interactive control carries
+an accessible name.
+
+12 new unit tests (schema defaults and bounds, free-text duration, slug rules,
+form round-trip without data loss) plus an e2e test that the services surface
+is closed to anonymous callers.
+
 ---
 
 ## 5. Recurring theme
@@ -246,7 +291,7 @@ Each is now either genuinely working or **failing honestly and loudly**.
 | Database | 90% | Indexed, constrained; 2 orphan tables remain |
 | Voice pipeline | 90% | Live and verified; latency unmeasured |
 | Public business card | 95% | Redesigned, WCAG AA, 320–1440px |
-| Admin dashboard | 86% | 9 pages real incl. analytics + products; no live monitoring |
+| Admin dashboard | 90% | 10 pages real incl. analytics, products, services; no live monitoring |
 | Analytics | 75% | 15 real metrics; 4 need instrumentation that doesn't exist |
 | Knowledge base / RAG | 85% | Complete — inert until `OPENAI_API_KEY` is set |
 | Booking | 70% | Code correct; needs Cal.com credentials |
@@ -254,7 +299,7 @@ Each is now either genuinely working or **failing honestly and loudly**.
 | Testing | 88% | 117 unit + 27 browser; no load testing |
 | Observability | 80% | Config complete; stack never run |
 | Deployment | 95% | Live on Vercel, HTTPS, auto-deploy from GitHub |
-| **Overall** | **~90%** | |
+| **Overall** | **~92%** | |
 
 ---
 
@@ -265,9 +310,10 @@ Each is now either genuinely working or **failing honestly and loudly**.
 **Two migrations to apply** in the Supabase SQL Editor — `ALTER TYPE` and
 `CREATE INDEX` cannot go through the JS client:
 
-Three migrations are pending: `20260803` (appointment status), `20260804`
-(hot-path indexes) and `20260805` (products catalog columns). Until `20260805`
-applies, the Products page returns an error about a missing `category` column.
+Four migrations are pending: `20260803` (appointment status), `20260804`
+(hot-path indexes), `20260805` (products catalog) and `20260806` (services
+catalog). Until the last two apply, the Products and Services pages return an
+error about a missing `category` column.
 
 ```sql
 ALTER TYPE appointment_status ADD VALUE IF NOT EXISTS 'REQUESTED';
@@ -300,8 +346,7 @@ reported by `/api/health`:
 
 1. ~~Analytics dashboard~~ — **done** (Phase 6).
 2. ~~Products CRUD~~ — **done** (Phase 7).
-3. **Services CRUD** — *next*. Same standard as Products; the `services`
-   table needs the equivalent catalog columns.
+3. ~~Services CRUD~~ — **done** (Phase 8).
 4. **Employee CRUD** — create, invite, deactivate, voice + knowledge
    assignment. Blocks self-serve onboarding today.
 5. **Company settings** — logo, brand colours, social links, business hours,

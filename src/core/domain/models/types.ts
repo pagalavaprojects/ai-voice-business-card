@@ -116,9 +116,23 @@ export interface Service extends BaseEntity {
   name: string;
   description: string;
   deliverables: string[];
+  /** Human-readable duration, e.g. "2-6 weeks". Predates the catalog columns
+   * and is what the public card and voice tool already read, so it serves as
+   * the module's Duration field rather than a second column. */
   timeline: string;
   price: number;
   optional_addons?: Array<{ name: string; price: number }> | null;
+  currency: string;
+  slug?: string | null;
+  short_description?: string | null;
+  category?: string | null;
+  image_path?: string | null;
+  cta_label?: string | null;
+  cta_url?: string | null;
+  display_order: number;
+  is_featured: boolean;
+  is_active: boolean;
+  deleted_at?: string | null;
 }
 
 export interface FAQ extends BaseEntity {
@@ -376,6 +390,31 @@ export const CreateProductSchema = z.object({
 /** Everything editable except tenancy; company_id travels separately for the
  * authorization check and is never updatable. */
 export const UpdateProductSchema = CreateProductSchema.omit({ company_id: true }).partial();
+
+export const CreateServiceSchema = z.object({
+  company_id: z.string().uuid(),
+  name: z.string().min(2).max(255),
+  description: z.string().min(5),
+  // Deliverables is the services equivalent of a product's features list.
+  deliverables: z.array(z.string().min(1)).default([]),
+  /** Duration. Free text rather than a number + unit because real engagements
+   * are quoted as ranges ("2-6 weeks", "one afternoon"), which a numeric field
+   * cannot express without lying about precision. */
+  timeline: z.string().max(100).default(""),
+  price: z.number().nonnegative(),
+  currency: z.string().min(3).max(10).default("USD"),
+  slug: SlugSchema.optional().nullable(),
+  short_description: z.string().max(280).optional().nullable(),
+  category: z.string().max(80).optional().nullable(),
+  image_path: z.string().optional().nullable(),
+  cta_label: z.string().max(60).optional().nullable(),
+  cta_url: z.string().url().optional().nullable(),
+  display_order: z.number().int().min(0).default(0),
+  is_featured: z.boolean().default(false),
+  is_active: z.boolean().default(true),
+});
+
+export const UpdateServiceSchema = CreateServiceSchema.omit({ company_id: true }).partial();
 
 export const CreateFAQSchema = z.object({
   company_id: z.string().uuid(),

@@ -81,6 +81,21 @@ test.describe("Public pages (real browser, no live infrastructure required)", ()
     ).toBe(401);
   });
 
+  test("the services admin surface is closed to anonymous visitors", async ({ page, request }) => {
+    // Services drive what the public card shows and what the AI pitches, so an
+    // unauthenticated caller must be able to neither read nor mutate them.
+    await page.goto("/dashboard/services");
+    await expect(page).toHaveURL(/\/login/);
+
+    const companyId = "33333333-3333-3333-3333-333333333333";
+    expect((await request.get(`/api/admin/services?companyId=${companyId}`)).status()).toBe(401);
+    expect(
+      (await request.post("/api/admin/services/bulk", {
+        data: { company_id: companyId, action: "delete", ids: ["11111111-1111-1111-1111-111111111111"] },
+      })).status()
+    ).toBe(401);
+  });
+
   test("login page renders a real form with accessible labels", async ({ page }) => {
     await page.goto("/login");
     await expect(page.getByRole("button", { name: /log in|sign in/i })).toBeVisible();

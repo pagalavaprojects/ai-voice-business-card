@@ -33,8 +33,18 @@ export class SupabaseKnowledgeRepository implements IKnowledgeRepository {
     return (data as Product[]) || [];
   }
 
+  // Active-only, matching getProductsByCompany: this is the public read path,
+  // so deactivating a service removes it from the card, the assembled prompt
+  // and the search_services voice tool at once.
   async getServicesByCompany(companyId: string): Promise<Service[]> {
-    const { data, error } = await supabaseAdmin.from("services").select().eq("company_id", companyId).is("deleted_at", null);
+    const { data, error } = await supabaseAdmin
+      .from("services")
+      .select()
+      .eq("company_id", companyId)
+      .eq("is_active", true)
+      .is("deleted_at", null)
+      .order("display_order", { ascending: true })
+      .order("created_at", { ascending: true });
     if (error) throw new Error(`getServicesByCompany failed: ${error.message}`);
     return (data as Service[]) || [];
   }

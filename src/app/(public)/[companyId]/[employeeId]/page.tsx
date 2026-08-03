@@ -25,7 +25,17 @@ interface PublicCardData {
     avatarUrl: string | null;
   };
   branding?: { primaryColor: string | null; secondaryColor: string | null };
-  services?: Array<{ name: string; description: string; deliverables?: string[]; timeline?: string }>;
+  services?: Array<{
+    name: string;
+    description: string;
+    deliverables?: string[];
+    timeline?: string;
+    price?: number;
+    currency?: string;
+    imageUrl?: string | null;
+    featured?: boolean;
+    cta?: { label: string; url: string } | null;
+  }>;
   products?: Array<{
     name: string;
     description: string;
@@ -311,8 +321,33 @@ export default function VoiceBusinessCardPage() {
             </h2>
             <ul className="space-y-4">
               {card.services.map((s) => (
-                <li key={s.name}>
-                  <p className="text-sm font-bold text-slate-100">{s.name}</p>
+                <li key={s.name} className="flex gap-3">
+                  {s.imageUrl && (
+                    /* eslint-disable-next-line @next/next/no-img-element */
+                    <img
+                      src={s.imageUrl}
+                      alt=""
+                      className="h-14 w-14 rounded-xl object-cover border border-white/[0.08] shrink-0"
+                      loading="lazy"
+                    />
+                  )}
+                  <div className="min-w-0 flex-1">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <p className="text-sm font-bold text-slate-100">
+                      {s.name}
+                      {s.featured && (
+                        <span className="ml-2 text-[9px] uppercase tracking-wide text-amber-300 bg-amber-400/10 border border-amber-400/25 rounded-full px-1.5 py-0.5 align-middle">
+                          Featured
+                        </span>
+                      )}
+                    </p>
+                    {typeof s.price === "number" && s.price > 0 && (
+                      <span className="text-xs font-mono text-sky-400 whitespace-nowrap">
+                        {s.currency === "USD" ? "$" : `${s.currency ?? ""} `}
+                        {s.price}
+                      </span>
+                    )}
+                  </div>
                   <p className="text-xs text-slate-300 leading-relaxed mt-1">{s.description}</p>
                   {s.timeline && <p className="text-[11px] text-sky-400 mt-1.5 font-medium">{s.timeline}</p>}
                   {s.deliverables && s.deliverables.length > 0 && (
@@ -324,6 +359,17 @@ export default function VoiceBusinessCardPage() {
                       ))}
                     </ul>
                   )}
+                  {s.cta && (
+                    <a
+                      href={s.cta.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-block mt-2 text-[11px] font-semibold text-sky-300 hover:text-sky-200 underline underline-offset-2 focus:outline-none focus:ring-2 focus:ring-sky-500 rounded"
+                    >
+                      {s.cta.label} &rarr;
+                    </a>
+                  )}
+                  </div>
                 </li>
               ))}
             </ul>

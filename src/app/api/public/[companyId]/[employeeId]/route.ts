@@ -152,11 +152,19 @@ export async function GET(req: NextRequest, { params }: { params: { companyId: s
         primaryColor: branding?.primary_color ?? null,
         secondaryColor: branding?.secondary_color ?? null,
       },
+      // Already active-only and display-ordered from the repository, same as
+      // products. Short description preferred on the card when present — the
+      // full description is what the AI uses in conversation.
       services: services.map((s) => ({
         name: s.name,
-        description: s.description,
+        description: s.short_description?.trim() || s.description,
         deliverables: s.deliverables,
         timeline: s.timeline,
+        price: s.price,
+        currency: s.currency,
+        imageUrl: s.image_path ? storage.getPublicUrl("service-images", s.image_path) : null,
+        featured: s.is_featured,
+        cta: s.cta_label && s.cta_url ? { label: s.cta_label, url: s.cta_url } : null,
       })),
       // Already active-only and display-ordered from the repository. The
       // short description is preferred on the card when present — the full
