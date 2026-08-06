@@ -224,12 +224,16 @@ async function seedPagalava() {
       // the model or system prompt engage — the AI-receptionist-style
       // welcome requested for this specific card, deliberately longer and
       // more complete than the short opening line used elsewhere in this
-      // codebase. firstMessageInterruptionsEnabled (useVapiSession.ts / the
-      // webhook route) lets a visitor talk over it and skip straight to
-      // their question, so the length is a welcome a visitor can opt out
-      // of mid-sentence, not a forced wait.
+      // codebase. Plays to completion, uninterrupted (firstMessageInterrup
+      // tionsEnabled: false, mic force-muted — see useVapiSession.ts), like
+      // a professional receptionist's fixed announcement, roughly 60-70s at
+      // this length. Each bullet below is its own terminated sentence
+      // (rather than a bare noun phrase) specifically so the TTS engine
+      // renders a clear pause between services instead of running the list
+      // together — the same reason every \n\n break above is between
+      // complete sentences, not mid-thought.
       first_message:
-        "வணக்கம்.\n\nPagalava Data Analytics Private Limited சார்பாக எங்களுடைய சேவைகளை உங்களுக்கு தற்பொழுது அறிமுகப்படுத்துகிறோம்.\n\nஇது செயற்கை நுண்ணறிவு மூலம் இயங்கும் எங்களுடைய Smart AI Business Card ஆகும்.\n\nஇந்த AI Business Card-ஐ தங்களுக்கு தேவையான எந்த நேரத்திலும் பயன்படுத்திக்கொள்ளலாம்.\n\nPagalava Data Analytics என்பது ஒரு Women-led Deep Tech Startup நிறுவனம்.\n\nநடுத்தர நிறுவனங்களுக்கு தேவையான செயற்கை நுண்ணறிவு தீர்வுகளை Technology as a Service (TaaS) முறையில் வழங்குகிறோம்.\n\nஎங்களுடைய முக்கிய சேவைகள்:\n\n• Customer Experience Analytics\n\n• Predictive Business Intelligence\n\n• Marketing Performance Optimization\n\n• Operations & Bottleneck Analysis\n\n• Fraud Detection & Risk Management\n\nஇந்த AI Business Card-ஐ உங்கள் வாடிக்கையாளர்கள் அல்லது புதிய Leads-களின் மொபைலில் Tap செய்தவுடன், உங்கள் தொடர்பு விவரங்கள் உடனடியாக அவர்களின் Contact List-இல் சேமிக்கப்படும்.\n\nஅதன்பிறகு, இந்த AI Assistant உங்கள் நிறுவனத்தை அவர்களுக்கு விளக்கி கூறும்.\n\nஅவர்கள் கேட்கும் கேள்விகளுக்கு உடனடியாக பதிலளிக்கும்.\n\nதேவையானால் உங்கள் WhatsApp, Email அல்லது Booking வழியாக உங்களை நேரடியாக தொடர்பு கொள்ளவும் உதவும்.\n\nஇப்போது உங்களுக்கு என்ன உதவி செய்யலாம்?",
+        "வணக்கம்.\n\nPagalava Data Analytics Private Limited சார்பாக எங்களுடைய சேவைகளை உங்களுக்கு தற்பொழுது அறிமுகப்படுத்துகிறோம்.\n\nஇது செயற்கை நுண்ணறிவு மூலம் இயங்கும் எங்களுடைய Smart AI Business Card ஆகும்.\n\nஇந்த AI Business Card-ஐ தங்களுக்கு தேவையான எந்த நேரத்திலும் பயன்படுத்திக்கொள்ளலாம்.\n\nPagalava Data Analytics என்பது ஒரு Women-led Deep Tech Startup நிறுவனம்.\n\nநடுத்தர நிறுவனங்களுக்கு தேவையான செயற்கை நுண்ணறிவு தீர்வுகளை Technology as a Service (TaaS) முறையில் வழங்குகிறோம்.\n\nஎங்களுடைய முக்கிய சேவைகள்:\n\n• Customer Experience Analytics.\n\n• Predictive Business Intelligence.\n\n• Marketing Performance Optimization.\n\n• Operations & Bottleneck Analysis.\n\n• Fraud Detection & Risk Management.\n\nஇந்த AI Business Card-ஐ உங்கள் வாடிக்கையாளர்கள் அல்லது புதிய Leads-களின் மொபைலில் Tap செய்தவுடன், உங்கள் தொடர்பு விவரங்கள் உடனடியாக அவர்களின் Contact List-இல் சேமிக்கப்படும்.\n\nஅதன்பிறகு, இந்த AI Assistant உங்கள் நிறுவனத்தை அவர்களுக்கு விளக்கி கூறும்.\n\nஅவர்கள் கேட்கும் கேள்விகளுக்கு உடனடியாக பதிலளிக்கும்.\n\nதேவையானால் உங்கள் WhatsApp, Email அல்லது Booking வழியாக உங்களை நேரடியாக தொடர்பு கொள்ளவும் உதவும்.\n\nஇப்போது உங்களுக்கு என்ன உதவி செய்யலாம்?",
       // Tags the language of first_message above — see AIAgent.welcome_
       // message_language. Swapping to another language later is a data
       // edit (this value + the text), never a code change.

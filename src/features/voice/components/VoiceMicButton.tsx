@@ -15,9 +15,14 @@ interface VoiceMicButtonProps {
    * than a wrapping div (which squares off into a pill against the button's
    * rectangular layout box). */
   ringActive?: boolean;
+  /** True while the scripted opening is playing — the mic is force-muted at
+   * the SDK level for this whole window (see useVapiSession.ts), so the
+   * button itself is inert too rather than looking tappable and doing
+   * nothing useful. */
+  disabled?: boolean;
 }
 
-export const VoiceMicButton: React.FC<VoiceMicButtonProps> = ({ state, isMuted, onClick, ringActive }) => {
+export const VoiceMicButton: React.FC<VoiceMicButtonProps> = ({ state, isMuted, onClick, ringActive, disabled }) => {
   return (
     <div className="relative flex items-center justify-center py-6">
       {/* Pulsing Concentric Outer Rings for Listening/Speaking State */}
@@ -42,11 +47,15 @@ export const VoiceMicButton: React.FC<VoiceMicButtonProps> = ({ state, isMuted, 
 
       {/* Main Touch Button */}
       <motion.button
-        whileHover={{ scale: 1.05 }}
-        whileTap={{ scale: 0.95 }}
-        onClick={onClick}
+        whileHover={disabled ? undefined : { scale: 1.05 }}
+        whileTap={disabled ? undefined : { scale: 0.95 }}
+        onClick={disabled ? undefined : onClick}
+        disabled={disabled}
+        aria-disabled={disabled || undefined}
         aria-label={
-          state === "idle"
+          disabled
+            ? "Playing introduction — please wait"
+            : state === "idle"
             ? "Start voice conversation with AI Twin"
             : state === "connecting"
             ? "Connecting to AI Twin, please wait"
@@ -57,6 +66,8 @@ export const VoiceMicButton: React.FC<VoiceMicButtonProps> = ({ state, isMuted, 
             : "AI Twin is processing your message"
         }
         className={`relative z-10 flex h-28 w-28 items-center justify-center rounded-full shadow-2xl backdrop-blur-xl transition-all duration-300 ${
+          disabled ? "cursor-not-allowed opacity-60" : ""
+        } ${
           state === "idle"
             ? "bg-slate-800/80 border border-white/20 text-slate-100 shadow-sky-500/10 hover:border-sky-400/50"
             : state === "connecting" || state === "thinking"
@@ -66,7 +77,9 @@ export const VoiceMicButton: React.FC<VoiceMicButtonProps> = ({ state, isMuted, 
             : "bg-sky-500 text-white shadow-sky-500/50"
         }`}
       >
-        {state === "connecting" || state === "thinking" ? (
+        {disabled ? (
+          <MicOff className="h-10 w-10 text-sky-300/70" />
+        ) : state === "connecting" || state === "thinking" ? (
           <Loader2 className="h-10 w-10 animate-spin text-sky-400" />
         ) : isMuted ? (
           <MicOff className="h-10 w-10 text-rose-400" />

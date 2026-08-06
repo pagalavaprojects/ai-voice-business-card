@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Mail, Phone, Globe, MapPin, Clock, Calendar, Download, QrCode, MessageCircle, Linkedin, Link2, X, Loader2 } from "lucide-react";
+import { Mail, Phone, Globe, Calendar, Download, QrCode, MessageCircle, Linkedin, Link2, X, Loader2 } from "lucide-react";
 import { useVapiSession } from "@/features/voice/hooks/useVapiSession";
 import { VoiceMicButton } from "@/features/voice/components/VoiceMicButton";
 import { TranscriptViewer } from "@/features/voice/components/TranscriptViewer";
@@ -130,7 +130,6 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
   });
 
   const isCallActive = voiceState !== "idle";
-  const companyName = card?.company.name;
 
   // Auto-start the moment the card is ready, so the introduction plays
   // without the visitor having to find and tap the microphone button.
@@ -224,20 +223,25 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
   // "Introducing {Company}…", everything spoken after that reads as the
   // generic "Speaking" — matching how a human receptionist's rehearsed
   // opening line reads differently from the rest of the conversation.
+  // The full state chain, in order: Loading… (card not fetched yet) →
+  // Preparing Voice… (connecting) → Playing Introduction… (the scripted
+  // opening, isPlayingIntro) → Listening… → Thinking… → Speaking… (any
+  // later reply). "Available now" is a distinct resting state for when
+  // there is no active call at all — none of the six above apply then.
   const statusLabel = useMemo(() => {
     if (voiceState === "idle") return "Available now";
-    if (voiceState === "connecting") return "Connecting…";
-    if (voiceState === "speaking") return isPlayingIntro ? `Introducing ${companyName ?? "us"}…` : "Speaking";
+    if (voiceState === "connecting") return "Preparing Voice…";
+    if (voiceState === "speaking") return isPlayingIntro ? "Playing Introduction…" : "Speaking…";
     if (voiceState === "thinking") return "Thinking…";
-    return "Listening";
-  }, [voiceState, isPlayingIntro, companyName]);
+    return "Listening…";
+  }, [voiceState, isPlayingIntro]);
 
   if (cardLoading) {
     return (
       <main className="min-h-screen bg-[#070b12] flex items-center justify-center p-4">
         <div role="status" aria-live="polite" className="flex flex-col items-center gap-3">
           <div className="h-8 w-8 rounded-full border-2 border-sky-400/30 border-t-sky-400 animate-spin" />
-          <p className="text-xs text-slate-400">Loading business card…</p>
+          <p className="text-xs text-slate-400">Loading…</p>
         </div>
       </main>
     );
@@ -352,21 +356,6 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
             <Badge variant={isCallActive ? "default" : "success"} aria-live="polite" aria-atomic="true">
               ● {statusLabel}
             </Badge>
-
-            <div className="flex flex-wrap justify-center gap-2 pt-1">
-              {employee.officeAddress && (
-                <span className="inline-flex items-center gap-1.5 text-[11px] text-slate-300 bg-white/[0.05] border border-white/[0.08] rounded-full px-3 py-1">
-                  <MapPin className="h-3 w-3 text-sky-400" aria-hidden="true" />
-                  {employee.officeAddress}
-                </span>
-              )}
-              {employee.workingHours && (
-                <span className="inline-flex items-center gap-1.5 text-[11px] text-slate-300 bg-white/[0.05] border border-white/[0.08] rounded-full px-3 py-1">
-                  <Clock className="h-3 w-3 text-sky-400" aria-hidden="true" />
-                  {employee.workingHours}
-                </span>
-              )}
-            </div>
           </div>
 
           {/* ---------- Voice ---------- */}
@@ -387,29 +376,39 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
               isMuted={isMuted}
               onClick={isCallActive ? endCall : startCall}
               ringActive={hasAutoStartFailed}
+              // The mic is force-muted at the SDK level for the whole
+              // scripted opening (see useVapiSession.ts) — disabling the
+              // button too means there is no control on screen that looks
+              // interactive but does nothing, or that could end the intro
+              // early by racing the End Call action against it.
+              disabled={isPlayingIntro}
             />
 
             <p className="text-sm text-slate-200 text-center font-semibold mt-4">
               {isPlayingIntro
-                ? "Playing welcome introduction…"
+                ? "Playing Introduction…"
                 : voiceState === "connecting"
-                  ? "Connecting…"
+                  ? "Preparing Voice…"
                   : isCallActive
-                    ? "Speak naturally — I'm listening"
+                    ? "Tap to Speak"
                     : hasAutoStartFailed
                       ? "Tap to begin"
                       : `Talk with ${employee.name.split(" ")[0]}'s AI`}
             </p>
             <p className="text-xs text-slate-400 text-center mt-1 max-w-xs">
               {isPlayingIntro
-                ? "Feel free to jump in — talking now skips straight to your question."
+                ? "Please wait for the introduction to finish — the microphone opens automatically right after."
                 : voiceState === "connecting"
                   ? "Setting up a secure voice connection…"
-                  : isCallActive
-                    ? "Responses stream in real time. Tap the microphone to end."
-                    : hasAutoStartFailed
-                      ? "Your browser needs a tap before it will turn on the microphone."
-                      : "Ask anything about what we do. Your browser will ask for microphone access."}
+                  : voiceState === "thinking"
+                    ? "Working on your answer…"
+                    : voiceState === "speaking"
+                      ? "Responses stream in real time."
+                      : voiceState === "listening"
+                        ? "Speak naturally — I'm listening. Tap the microphone to end."
+                        : hasAutoStartFailed
+                          ? "Your browser needs a tap before it will turn on the microphone."
+                          : "Ask anything about what we do. Your browser will ask for microphone access."}
             </p>
 
             {error && (
@@ -423,9 +422,15 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
 
             {isCallActive && (
               <div className="flex gap-2 mt-4">
-                <Button variant="outline" size="sm" onClick={toggleMute} className="text-xs">
-                  {isMuted ? "Unmute" : "Mute"}
-                </Button>
+                {/* Hidden, not just disabled, during the intro: the mic is
+                    system-muted for that whole window (see
+                    useVapiSession.ts), and a visible "Unmute" control would
+                    invite a tap that fights it. */}
+                {!isPlayingIntro && (
+                  <Button variant="outline" size="sm" onClick={toggleMute} className="text-xs">
+                    {isMuted ? "Unmute" : "Mute"}
+                  </Button>
+                )}
                 <Button variant="outline" size="sm" onClick={endCall} className="text-xs">
                   End call
                 </Button>

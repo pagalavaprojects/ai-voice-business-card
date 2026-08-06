@@ -10,12 +10,14 @@ import { join } from "node:path";
  * fails the build if the seeded greeting ever drifts from what was actually
  * authored and approved.
  *
- * This is intentionally a full Tamil AI-receptionist introduction rather
- * than the short single-sentence opener used earlier in this project — a
- * deliberate content decision (see the seed script's own comment), made
- * viable by firstMessageInterruptionsEnabled: a visitor who doesn't want to
- * wait for the whole thing can just start talking and skip straight to
- * their question.
+ * This is intentionally a full Tamil AI-receptionist introduction (~60-70s
+ * spoken) rather than the short single-sentence opener used earlier in this
+ * project — a deliberate content decision (see the seed script's own
+ * comment). It now plays to completion, uninterrupted, like a professional
+ * receptionist's fixed announcement: firstMessageInterruptionsEnabled is
+ * false and the visitor's mic is force-muted for its duration (see
+ * useVapiSession.ts), a deliberate reversal of an earlier version of this
+ * feature that let a visitor talk over it.
  */
 describe("scripted voice greeting", () => {
   const REQUIRED_OPENING = "வணக்கம்.";

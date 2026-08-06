@@ -5,6 +5,7 @@ import Vapi from "@vapi-ai/web";
 import { VoiceState } from "../components/VoiceMicButton";
 import { MessageItem } from "../components/TranscriptViewer";
 import { DEFAULT_VOICE_ID, OpenAIVoiceId } from "@/shared/lib/voice";
+import { installVapiLoudnessEnhancement } from "../lib/audioEnhancement";
 
 // Deliberately generic and tenant-neutral. This is a shared hook serving
 // every company's card, so naming one specific founder/company here would
@@ -101,6 +102,31 @@ export function useVapiSession({
   // already asked to end it. When that happens this flag tells call-start to
   // tear the now-real session down immediately instead of surfacing it.
   const userEndedCallRef = useRef(false);
+  // True from the moment a live call connects until the intro's approximated
+  // "finished speaking" timer fires. The mic is force-muted at the SDK level
+  // for this whole window (see call-start below) so the visitor's speech is
+  // never captured, transcribed, or able to interrupt the scripted opening —
+  // a stronger guarantee than firstMessageInterruptionsEnabled alone, which
+  // only stops Vapi from cutting the greeting short but doesn't stop the mic
+  // from listening in the background.
+  const introGateActiveRef = useRef(false);
+  // Exactly one automatic reconnect per call lifecycle, reset whenever a
+  // fresh call is (auto- or manually) started. Without a cap, a genuinely
+  // dead connection would retry forever.
+  const reconnectAttemptedRef = useRef(false);
+  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  // startCall is redeclared every render (it closes over the card's fields),
+  // so the error handler registered once inside the init effect below reads
+  // its latest version through this ref rather than closing over a stale one.
+  const startCallRef = useRef<() => void>(() => {});
+  const mountedRef = useRef(true);
+
+  const clearReconnectTimeout = useCallback(() => {
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
+    }
+  }, []);
 
   const clearSpeakingTimeout = useCallback(() => {
     if (speakingTimeoutRef.current) {
@@ -148,6 +174,11 @@ export function useVapiSession({
     try {
       const vapi = new Vapi(publicKey);
       vapiRef.current = vapi;
+      // Reroutes Vapi's own <audio> element(s) through a gain/compressor/
+      // limiter chain — see audioEnhancement.ts. Independent of call
+      // lifecycle (watches the DOM directly), so it's installed once here
+      // rather than re-installed per call.
+      const uninstallLoudnessEnhancement = installVapiLoudnessEnhancement();
 
       vapi.on("call-start", () => {
         // A call reaching call-start after the visitor already pressed End
@@ -164,35 +195,58 @@ export function useVapiSession({
           }
           return;
         }
+        // Force the mic off at the SDK level for the whole scripted opening —
+        // this, not just firstMessageInterruptionsEnabled below, is what
+        // actually satisfies "no accidental microphone activation, no
+        // speech recognition during intro": a muted local track sends no
+        // audio for Vapi's ASR to act on in the first place. This is the
+        // earliest point `this.call` reliably exists (confirmed against the
+        // SDK source — the same reason the userEndedCallRef guard above
+        // works), so it's the earliest point setMuted can actually take
+        // effect; the alternative, Daily's own `startAudioOff` factory
+        // option, is accepted by this SDK version's types but never actually
+        // forwarded to Daily's call object — verified dead, not used.
+        introGateActiveRef.current = true;
+        try {
+          vapi.setMuted(true);
+        } catch (err) {
+          console.warn("Vapi setMuted(true) exception at call-start:", err);
+        }
         setVoiceState("listening");
         setError(null);
         startTimer();
         // Fresh call: the intro has not played yet in this session.
         hasHadFirstAssistantSpeechRef.current = false;
         setIsPlayingIntro(false);
+        // A call that reaches call-start has genuinely connected — this,
+        // not startCall() being merely invoked, is what earns a fresh
+        // reconnect budget. Resetting it in startCall() instead would let a
+        // reconnect attempt that itself fails immediately re-arm its own
+        // retry, looping forever on a persistently bad connection.
+        reconnectAttemptedRef.current = false;
       });
 
       vapi.on("call-end", () => {
+        introGateActiveRef.current = false;
         setVoiceState("idle");
         setIsPlayingIntro(false);
         clearSpeakingTimeout();
+        clearReconnectTimeout();
         stopTimer();
       });
 
       vapi.on("speech-start", () => {
+        // During the scripted opening this should never fire from the
+        // visitor at all — the mic is force-muted above — but if it
+        // somehow does (a race, or a future SDK change), the correct
+        // behavior per the no-barge-in requirement is to ignore it
+        // entirely, not treat it as an interruption.
+        if (introGateActiveRef.current) return;
         setVoiceState("listening");
-        // A visitor talking over the greeting is exactly the "user
-        // interrupted" case — firstMessageInterruptionsEnabled (below) makes
-        // Vapi itself stop the greeting's audio; this makes sure the UI's
-        // "Introducing…" label drops the instant that happens, rather than
-        // lingering until the 3s timer below would otherwise have cleared it.
-        // The pending speaking->listening timer is now stale too — the
-        // visitor's own speech already moved the state on.
-        setIsPlayingIntro(false);
-        clearSpeakingTimeout();
       });
 
       vapi.on("speech-end", () => {
+        if (introGateActiveRef.current) return;
         setVoiceState("thinking");
       });
 
@@ -219,7 +273,18 @@ export function useVapiSession({
             speakingTimeoutRef.current = setTimeout(() => {
               speakingTimeoutRef.current = null;
               setVoiceState("listening");
-              if (isIntro) setIsPlayingIntro(false);
+              if (isIntro) {
+                setIsPlayingIntro(false);
+                // The scripted opening has finished — open the mic and let
+                // the visitor speak. This is the one and only point the
+                // intro's mic suppression is lifted.
+                introGateActiveRef.current = false;
+                try {
+                  vapi.setMuted(false);
+                } catch (err) {
+                  console.warn("Vapi setMuted(false) exception at intro-end:", err);
+                }
+              }
             }, 3000);
           }
         }
@@ -228,24 +293,54 @@ export function useVapiSession({
       vapi.on("error", (e: Error) => {
         console.error("Vapi WebRTC Error:", e);
         setError(e.message || "Voice connection error");
+        introGateActiveRef.current = false;
         setVoiceState("idle");
         clearSpeakingTimeout();
         stopTimer();
+
+        // One bounded automatic reconnect for a call that dropped
+        // unexpectedly — not for a call the visitor deliberately ended
+        // (userEndedCallRef), and never more than once per call lifecycle
+        // (reconnectAttemptedRef, reset in startCall). A component that has
+        // since unmounted must not reconnect into a session nothing is
+        // listening to.
+        if (!userEndedCallRef.current && !reconnectAttemptedRef.current && mountedRef.current) {
+          reconnectAttemptedRef.current = true;
+          clearReconnectTimeout();
+          reconnectTimeoutRef.current = setTimeout(() => {
+            reconnectTimeoutRef.current = null;
+            if (mountedRef.current && !userEndedCallRef.current) startCallRef.current();
+          }, 1500);
+        }
       });
 
       return () => {
         vapi.stop();
+        uninstallLoudnessEnhancement();
         clearSpeakingTimeout();
         clearDemoTimeouts();
+        clearReconnectTimeout();
         stopTimer();
       };
     } catch (err: unknown) {
       console.warn("Vapi SDK setup warning:", err);
       isDemoModeRef.current = true;
     }
-  }, [vapiPublicKey, isDemoMode, startTimer, stopTimer, clearSpeakingTimeout, clearDemoTimeouts]);
+  }, [vapiPublicKey, isDemoMode, startTimer, stopTimer, clearSpeakingTimeout, clearDemoTimeouts, clearReconnectTimeout]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const startCall = useCallback(async () => {
+    // Only one active session at a time — guards against a double-invoke
+    // (a rapid double-tap, or the auto-start effect racing a manual tap
+    // before its own guard ref has committed).
+    if (voiceState !== "idle") return;
+
     setError(null);
 
     // If using Demo Mode (Local Testing without live Vapi keys)
@@ -287,10 +382,15 @@ export function useVapiSession({
 
       const assistantConfig = {
         firstMessage: firstMessage || DEFAULT_FIRST_MESSAGE,
-        // Default is false: without this, a visitor talking over the
-        // scripted opening would have their speech ignored until the
-        // greeting finished playing in full.
-        firstMessageInterruptionsEnabled: true,
+        // Explicitly false (Vapi's own default): the scripted opening must
+        // play to completion, uninterrupted, like a professional
+        // receptionist's fixed announcement — a deliberate reversal of an
+        // earlier version of this feature that let a visitor talk over the
+        // greeting. The mic is also force-muted client-side for the same
+        // window (see call-start in the init effect above) as the stronger,
+        // primary guarantee; this flag is the backstop in case any audio
+        // still reaches Vapi despite that.
+        firstMessageInterruptionsEnabled: false,
         model: {
           provider: "openai",
           model: "gpt-4o-mini",
@@ -325,16 +425,30 @@ export function useVapiSession({
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : "Failed to start live voice call";
       setError(errorMessage);
+      introGateActiveRef.current = false;
       setVoiceState("idle");
       stopTimer();
     }
-  }, [startTimer, stopTimer, firstMessage, systemPrompt, tools, serverUrl, voiceId, voiceProvider, voiceModel, clearDemoTimeouts]);
+  }, [voiceState, startTimer, stopTimer, firstMessage, systemPrompt, tools, serverUrl, voiceId, voiceProvider, voiceModel, clearDemoTimeouts]);
+
+  // Always call the latest startCall from the stable error handler
+  // registered once inside the init effect (see reconnect logic above).
+  useEffect(() => {
+    startCallRef.current = () => {
+      void startCall();
+    };
+  }, [startCall]);
 
   const endCall = useCallback(() => {
     // Marks this session as user-ended so a call still "connecting" (whose
     // stop() below is a no-op — see userEndedCallRef's declaration) is torn
     // down the moment it actually reaches call-start instead of resuming.
+    // Also cancels any pending automatic reconnect — a deliberate hang-up
+    // must never be silently redialed.
     userEndedCallRef.current = true;
+    reconnectAttemptedRef.current = true;
+    clearReconnectTimeout();
+    introGateActiveRef.current = false;
     clearDemoTimeouts();
     clearSpeakingTimeout();
     if (vapiRef.current && !isDemoModeRef.current) {
@@ -347,9 +461,15 @@ export function useVapiSession({
     setVoiceState("idle");
     setIsPlayingIntro(false);
     stopTimer();
-  }, [stopTimer, clearDemoTimeouts, clearSpeakingTimeout]);
+  }, [stopTimer, clearDemoTimeouts, clearSpeakingTimeout, clearReconnectTimeout]);
 
   const toggleMute = useCallback(() => {
+    // The mic is force-muted for the scripted opening (see call-start
+    // above); a manual toggle during that window would fight it and leave
+    // isMuted out of sync with the SDK's actual state, so it's ignored
+    // rather than allowed to race. The UI hides the mute control during the
+    // intro for the same reason.
+    if (introGateActiveRef.current) return;
     setIsMuted((prev) => {
       const nextMute = !prev;
       if (vapiRef.current && !isDemoModeRef.current) {

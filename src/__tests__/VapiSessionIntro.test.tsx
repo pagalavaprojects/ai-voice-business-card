@@ -4,17 +4,21 @@
 import { renderHook, act } from "@testing-library/react";
 
 /**
- * Regression coverage for the scripted-welcome feature: a visitor must be
- * able to interrupt the opening line and skip straight to their question,
- * and the UI must know when the very first assistant utterance (the
- * greeting) is playing versus any later reply, so it can say
- * "Introducing {Company}…" for exactly that one utterance.
+ * Regression coverage for the scripted-welcome feature. As of the
+ * "professional AI receptionist" revision, the opening line must play to
+ * completion, uninterrupted — the opposite of an earlier version of this
+ * feature that let a visitor talk over it — and the UI must know when the
+ * very first assistant utterance (the greeting) is playing versus any later
+ * reply, so it can say "Introducing {Company}…" for exactly that one
+ * utterance.
  */
 type Handler = (...args: unknown[]) => void;
 
 interface FakeVapiInstance {
   handlers: Record<string, Handler[]>;
   started: unknown[];
+  muteCalls: boolean[];
+  stopCalls: number;
   emit(event: string, ...args: unknown[]): void;
 }
 
@@ -27,6 +31,8 @@ jest.mock("@vapi-ai/web", () => {
   class FakeVapi implements FakeVapiInstance {
     handlers: Record<string, Handler[]> = {};
     started: unknown[] = [];
+    muteCalls: boolean[] = [];
+    stopCalls = 0;
 
     constructor() {
       instances.push(this);
@@ -46,8 +52,12 @@ jest.mock("@vapi-ai/web", () => {
       return null;
     }
 
-    async stop() {}
-    setMuted() {}
+    async stop() {
+      this.stopCalls += 1;
+    }
+    setMuted(mute: boolean) {
+      this.muteCalls.push(mute);
+    }
   }
 
   return { __esModule: true, default: FakeVapi, __instances: instances };
@@ -73,7 +83,7 @@ describe("useVapiSession — scripted intro tracking", () => {
     jest.useRealTimers();
   });
 
-  it("enables firstMessageInterruptionsEnabled so a visitor can talk over the greeting", async () => {
+  it("disables firstMessageInterruptionsEnabled so the scripted opening cannot be barged in on", async () => {
     const { result } = renderHook(() =>
       useVapiSession({ companyId: "c1", employeeId: "e1", vapiPublicKey: REAL_KEY, firstMessage: "வணக்கம்." })
     );
@@ -83,7 +93,7 @@ describe("useVapiSession — scripted intro tracking", () => {
     });
 
     const vapi = fakeVapiInstances[0];
-    expect(vapi.started[0]).toMatchObject({ firstMessageInterruptionsEnabled: true });
+    expect(vapi.started[0]).toMatchObject({ firstMessageInterruptionsEnabled: false });
   });
 
   it("defaults to OpenAI when no voiceProvider is passed — zero regression for existing calls", async () => {
@@ -157,7 +167,7 @@ describe("useVapiSession — scripted intro tracking", () => {
     expect(result.current.isPlayingIntro).toBe(false);
   });
 
-  it("drops isPlayingIntro immediately when the visitor interrupts, rather than waiting out the timer", async () => {
+  it("ignores speech-start during the intro instead of treating it as an interruption", async () => {
     const { result } = renderHook(() => useVapiSession({ companyId: "c1", employeeId: "e1", vapiPublicKey: REAL_KEY }));
     const vapi = fakeVapiInstances[0];
 
@@ -165,9 +175,103 @@ describe("useVapiSession — scripted intro tracking", () => {
     act(() => vapi.emit("message", assistantMessage("வணக்கம்.")));
     expect(result.current.isPlayingIntro).toBe(true);
 
-    // The visitor starts talking over the greeting.
+    // Even if audio somehow reached Vapi's ASR during the intro (the mic is
+    // force-muted, so this shouldn't happen in practice), speech-start must
+    // not cut the greeting short.
     act(() => vapi.emit("speech-start"));
+    expect(result.current.isPlayingIntro).toBe(true);
+    expect(result.current.voiceState).toBe("speaking");
+
+    // Only the intro's own completion timer ends it.
+    act(() => jest.advanceTimersByTime(3000));
     expect(result.current.isPlayingIntro).toBe(false);
+  });
+
+  it("force-mutes the mic at call-start and unmutes only once the intro finishes", async () => {
+    const { result } = renderHook(() => useVapiSession({ companyId: "c1", employeeId: "e1", vapiPublicKey: REAL_KEY }));
+    const vapi = fakeVapiInstances[0];
+
+    act(() => vapi.emit("call-start"));
+    expect(vapi.muteCalls).toEqual([true]);
+
+    act(() => vapi.emit("message", assistantMessage("வணக்கம்.")));
+    expect(vapi.muteCalls).toEqual([true]); // still muted mid-intro
+
+    act(() => jest.advanceTimersByTime(3000));
+    expect(vapi.muteCalls).toEqual([true, false]); // unmuted once the intro completes
+  });
+
+  it("does not re-mute for a later reply, only for the intro", async () => {
+    const { result } = renderHook(() => useVapiSession({ companyId: "c1", employeeId: "e1", vapiPublicKey: REAL_KEY }));
+    const vapi = fakeVapiInstances[0];
+
+    act(() => vapi.emit("call-start"));
+    act(() => vapi.emit("message", assistantMessage("வணக்கம்.")));
+    act(() => jest.advanceTimersByTime(3000));
+    expect(vapi.muteCalls).toEqual([true, false]);
+
+    act(() => vapi.emit("message", assistantMessage("We help mid-sized companies with AI.")));
+    act(() => jest.advanceTimersByTime(3000));
+    expect(vapi.muteCalls).toEqual([true, false]); // unchanged — no further mute/unmute calls
+    void result;
+  });
+
+  it("refuses to start a second session while one is already active", async () => {
+    const { result } = renderHook(() => useVapiSession({ companyId: "c1", employeeId: "e1", vapiPublicKey: REAL_KEY }));
+
+    await act(async () => {
+      await result.current.startCall();
+    });
+    await act(async () => {
+      await result.current.startCall();
+    });
+
+    expect(fakeVapiInstances[0].started.length).toBe(1);
+  });
+
+  it("attempts exactly one automatic reconnect after an unexpected drop", async () => {
+    const { result } = renderHook(() => useVapiSession({ companyId: "c1", employeeId: "e1", vapiPublicKey: REAL_KEY }));
+
+    await act(async () => {
+      await result.current.startCall();
+    });
+    const vapi = fakeVapiInstances[0];
+    expect(vapi.started.length).toBe(1);
+
+    act(() => vapi.emit("error", new Error("WebRTC connection lost")));
+    expect(result.current.voiceState).toBe("idle");
+
+    await act(async () => {
+      jest.advanceTimersByTime(1500);
+      await Promise.resolve();
+    });
+    expect(vapi.started.length).toBe(2);
+
+    // A second drop must not trigger a second reconnect for the same session.
+    act(() => vapi.emit("error", new Error("WebRTC connection lost again")));
+    await act(async () => {
+      jest.advanceTimersByTime(1500);
+      await Promise.resolve();
+    });
+    expect(vapi.started.length).toBe(2);
+  });
+
+  it("never reconnects a call the visitor deliberately ended", async () => {
+    const { result } = renderHook(() => useVapiSession({ companyId: "c1", employeeId: "e1", vapiPublicKey: REAL_KEY }));
+
+    await act(async () => {
+      await result.current.startCall();
+    });
+    const vapi = fakeVapiInstances[0];
+
+    act(() => result.current.endCall());
+    act(() => vapi.emit("error", new Error("connection torn down by stop()")));
+
+    await act(async () => {
+      jest.advanceTimersByTime(1500);
+      await Promise.resolve();
+    });
+    expect(vapi.started.length).toBe(1);
   });
 
   it("plays the intro again on a fresh call-start, so a refresh or new session is unaffected", async () => {
