@@ -8,7 +8,7 @@
 | **Repository** | https://github.com/pagalavaprojects/ai-voice-business-card |
 | **Demo card** | [`/33333333…/44444444…`](https://ai-voice-business-card.vercel.app/33333333-3333-3333-3333-333333333333/44444444-4444-4444-4444-444444444444) |
 | **Last updated** | 2026-08-06 |
-| **Completion** | **~96%** — production-deployed; short public URLs, founder photo/logo, HD voice, and a scripted interruptible Tamil welcome all built and live this session; blocked only on the pending migrations |
+| **Completion** | **~97%** — production-deployed; short public URLs, founder photo/logo, HD voice, a scripted interruptible Tamil welcome, auto-play-on-load voice, and 9 adversarial-review bugs (voice-session race conditions, UI copy, a broken demo link) all built, tested and live this session; blocked only on the pending migrations |
 
 > This file is refreshed after every completed module. If it looks stale
 > against the repo, trust the repo and raise it.
@@ -40,13 +40,13 @@ inward; repositories abstract Supabase behind interfaces.
 
 | Metric | Value |
 |---|---|
-| Commits | 56 |
+| Commits | 59 |
 | Source | ~20,600 lines TypeScript |
 | API routes | 48 |
 | Dashboard pages | 14 |
 | Database | 26 tables · 39 indexes · 43 FKs · 26 RLS policies |
 | Migrations | 13 total, **7 pending in production** (see §7) |
-| Unit/integration tests | **227 passing**, 1 skipped (documented) |
+| Unit/integration tests | **242 passing**, 1 skipped (documented) |
 | Browser tests | **42 passing** across 3 viewports |
 | Accessibility | WCAG 2.1 AA — zero violations |
 | Build | Zero warnings, zero build-time error logs |
@@ -493,6 +493,63 @@ to 4,662 characters, live voice call reaching "Listening", zero console errors.
 **Process lesson:** additive migrations must be applied *before* the code that
 reads the new columns, not after. Four are still pending — see §7.
 
+### Phase 10b — Bug-fix pass: adversarial review + a broken demo link *(current)*
+
+Not new scope — hardening what Phase 10 shipped, prompted by two screenshots
+showing `/c/srinivasan` 404ing and the card showing initials instead of a
+photo. Root-caused both directly against production (not assumed): the
+`employees.slug`/`avatar_path` columns from migrations `20260807`/`20260808`
+genuinely do not exist in the live database yet — confirmed with a direct
+`SELECT *` that stops at `vapi_agent_id`, and a raw Postgres `42703` error
+querying `slug` explicitly. `npm run verify:migrations` only proves the SQL
+applies to a throwaway in-memory sandbox; it was never evidence the live
+database had run it. The founder photo (2.00 MB PNG) was resized and
+recompressed to an 800×1144, 135 KB JPEG, ready to upload the moment the
+migration lands.
+
+The logo-alignment symptom, unlike the two above, **was** a real front-end
+bug: the uploaded mark (light background, dark wordmark — the normal way
+brand logos are made) was painted directly onto the dark card. Fixed with a
+centered white "chip" container behind the logo — respects any tenant's
+source artwork instead of requiring a pre-edited transparent asset per logo.
+
+A background adversarial-review workflow (3 independent finders by dimension,
+then a separate verify pass that tried to refute each one by reading the
+actual code/SDK source) caught 9 real bugs in the auto-start/voice-provider
+work this same phase added, since fixed:
+
+- Two uncancelled timers (`useVapiSession`'s "assistant finished speaking"
+  approximation, and demo mode's chained timeouts) that could resurrect a
+  call's UI after it had already ended.
+- `endCall()` during "connecting" didn't actually cancel the call — Vapi's
+  `stop()` is a documented no-op before `call-start` fires, so a delayed
+  connection could silently reconnect a call the visitor already ended.
+  Verified against the installed `@vapi-ai/web` SDK source.
+- UI copy had no "connecting…" branch, so it claimed "I'm listening" while
+  the WebRTC handshake was still in flight.
+- The "tap to begin" ring rendered as a pill (wrapped in a non-square div)
+  instead of a circle — moved into `VoiceMicButton` itself.
+- `resolveVoiceProviderConfig`'s ElevenLabs override had no log line.
+- The auto-start guard was a bare boolean, not keyed by card identity — would
+  have silently skipped auto-start if this component were ever reused across
+  two different cards without a remount.
+- `not-found.tsx`'s "Talk to our demo AI" CTA pointed at `/`, not a real card.
+
+Fixing that last one surfaced a **separate, pre-existing bug**: the "real
+demo card" it should point to, `/demo-company/demo-employee`, has literal
+placeholder strings for IDs. Since `employees.id`/`companies.id` are `uuid`
+columns, that lookup has always thrown a Postgres type error (not a clean
+"not found"), which the public API turns into a 503 — so the landing page's
+own "Get Started" CTA (three places) and the sitemap entry have been silently
+broken in production this whole time. Repointed `DEMO_COMPANY_ID`/
+`DEMO_EMPLOYEE_ID` at the actual seeded UUIDs (`scripts/seed-pagalava.ts`),
+confirmed live with a 200.
+
+All gates re-run and green after every fix: `tsc`, `next lint`, 242 unit
+tests, `next build`, 42 Playwright e2e tests. Two commits, 18 files, deployed
+and verified live. Full write-up in the session's engineering report
+(rendered as an artifact for this conversation).
+
 ---
 
 ## 5. Recurring theme
@@ -577,11 +634,14 @@ out — **not before**:
   the catalog fallback which exists purely for the migration window.
 
 **Data already queued, waiting on the migration:** the founder's slug
-(`srinivasan`, so `/c/srinivasan` goes live) and avatar photo were both
-prepared this session — the upload/assignment script ran, detected the
-columns don't exist yet, and skipped cleanly rather than failing loudly. Say
-the word once the migration is confirmed applied and both go live with a
-one-line re-run, no further discussion needed.
+(`srinivasan`, so `/c/srinivasan` goes live) and avatar photo are both
+prepared — the photo is resized/recompressed (800×1144, 135 KB JPEG) and
+sitting ready in this session's scratch directory. Confirmed directly against
+production (not assumed) that `employees.slug`/`avatar_path` genuinely don't
+exist yet: a `SELECT *` on the seeded employee row stops at `vapi_agent_id`,
+and querying `slug` explicitly returns Postgres `42703` (undefined_column).
+Say the word once `supabase/PENDING_MIGRATIONS.sql` is applied and both go
+live within a minute, no further discussion needed.
 
 **Credentials still placeholder** — each disables one capability and is
 reported by `/api/health`:
