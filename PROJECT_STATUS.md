@@ -6,9 +6,9 @@
 |---|---|
 | **Live** | https://ai-voice-business-card.vercel.app |
 | **Repository** | https://github.com/pagalavaprojects/ai-voice-business-card |
-| **Demo card** | [`/33333333…/44444444…`](https://ai-voice-business-card.vercel.app/33333333-3333-3333-3333-333333333333/44444444-4444-4444-4444-444444444444) |
+| **Demo card** | [`/33333333…/44444444…`](https://ai-voice-business-card.vercel.app/33333333-3333-3333-3333-333333333333/44444444-4444-4444-4444-444444444444) or the short link [`/c/srinivasan`](https://ai-voice-business-card.vercel.app/c/srinivasan) |
 | **Last updated** | 2026-08-06 |
-| **Completion** | **~97%** — production-deployed; short public URLs, founder photo/logo, HD voice, and a scripted Tamil welcome that now plays to completion uninterrupted (professional-receptionist behavior, a deliberate reversal of the earlier interruptible version) with safe playback loudness enhancement, all built, tested and live this session; blocked only on the pending migrations |
+| **Completion** | **~99%** — all 13 migrations now applied in production (see §7), founder photo and short-URL slug live, short public URLs, founder photo/logo, HD voice, and a scripted Tamil welcome that now plays to completion uninterrupted (professional-receptionist behavior) with safe playback loudness enhancement all built, tested and live |
 
 > This file is refreshed after every completed module. If it looks stale
 > against the repo, trust the repo and raise it.
@@ -45,7 +45,7 @@ inward; repositories abstract Supabase behind interfaces.
 | API routes | 48 |
 | Dashboard pages | 14 |
 | Database | 26 tables · 39 indexes · 43 FKs · 26 RLS policies |
-| Migrations | 13 total, **7 pending in production** (see §7) |
+| Migrations | 13 total, **all applied in production** |
 | Unit/integration tests | **247 passing**, 1 skipped (documented) |
 | Browser tests | **42 passing** across 3 viewports |
 | Accessibility | WCAG 2.1 AA — zero violations |
@@ -651,62 +651,49 @@ Each is now either genuinely working or **failing honestly and loudly**.
 
 ## 7. Outstanding
 
-### Needs you (blocks nothing else)
+### Resolved this session — all migrations applied, photo/slug live
 
-**Run `supabase/PENDING_MIGRATIONS.sql`** in the Supabase SQL Editor — `ALTER
-TYPE` and `CREATE INDEX` cannot go through the JS client. It is a single file,
-split into two blocks that must run in order (Block 1 alone, then Block 2),
-fully commented with what each statement does and why the split is required.
+All 13 migrations are now applied in production, run directly via
+`scripts/migrate.mjs` against the Supabase **session pooler** connection
+(`aws-0-ap-southeast-2.pooler.supabase.com:5432` — the direct
+`db.<ref>.supabase.co` host is IPv6-only and unreachable from this
+environment's network; the pooler resolves over IPv4 too). The script's own
+`schema_migrations` tracking table was empty despite migrations
+`20260729`–`20260801` (5 files) already being live in the real schema —
+applied at some earlier point outside this script's own bookkeeping — so
+those 5 were backfilled into the tracking table (verified applied first,
+directly against `information_schema`/`pg_type`/`pg_indexes`, not assumed)
+before letting the script run the genuinely pending 8
+(`20260802`–`20260809`, one more than the previously-documented "seven" —
+`20260802`'s indexes had also never actually been applied).
 
-Seven migrations are pending: `20260803` (appointment status), `20260804`
-(hot-path indexes), `20260805` (products catalog), `20260806` (services
-catalog), `20260807` (employee management — `is_active`, `avatar_path`,
-`voice_id`, `prompt_override`, `timezone`, `display_order`), `20260808`
-(employee public-URL `slug`, globally unique), and `20260809` (agent
-`welcome_message_language` tag). Until 20260805/06 apply, the Products and
-Services pages error on a missing `category` column.
-**20260807/20260808/20260809 are all safe to leave unapplied** — each was
-deliberately built so the public card and the assembled prompt keep working
-with the column absent:
-- `20260807` only blocks the Employee module's admin-side extras (avatar,
-  per-employee voice, per-employee prompt notes).
-- `20260808` only blocks the `/c/{slug}` short-URL feature itself — the
-  permanent `/{companyId}/{employeeId}` URL is completely unaffected, and an
-  unmigrated database just makes every slug resolve to "not found."
-- `20260809` is pure metadata (which language the greeting is written in);
-  nothing reads it to decide behavior, so its absence changes nothing.
+Founder photo uploaded to the `employee-avatars` bucket and
+`employees.avatar_path` set; `employees.slug = 'srinivasan'` set. Both
+confirmed live: `/c/srinivasan` returns 200, and the public API returns a
+real `avatarUrl`.
 
-> Until the first statement (Block 1) runs, a voice booking attempt errors on
-> the unknown enum value.
+**Now safe to remove** (the doc's own prior instruction, unexecuted this
+session — a follow-up, not urgent):
+- `SupabaseKnowledgeRepository`'s `isMissingCatalogColumn` fallback
+  (products/services) and its `CatalogMigrationWindow.test.ts` — the
+  migration window they existed for has closed.
+- `isEmployeeCardVisible`'s tolerance for an absent `is_active` column can
+  stay permanently regardless — costs nothing, removing it buys nothing.
 
-Once all seven are confirmed applied, two compatibility fallbacks should come
-out — **not before**:
-- `SupabaseKnowledgeRepository`'s `isMissingCatalogColumn` fallback (products/
-  services) and its `CatalogMigrationWindow.test.ts`.
-- `isEmployeeCardVisible`'s tolerance for an absent `is_active` column can stay
-  permanently — it costs nothing to keep and removing it buys nothing, unlike
-  the catalog fallback which exists purely for the migration window.
-
-**Data already queued, waiting on the migration:** the founder's slug
-(`srinivasan`, so `/c/srinivasan` goes live) and avatar photo are both
-prepared — the photo is resized/recompressed (800×1144, 135 KB JPEG) and
-sitting ready in this session's scratch directory. Confirmed directly against
-production (not assumed) that `employees.slug`/`avatar_path` genuinely don't
-exist yet: a `SELECT *` on the seeded employee row stops at `vapi_agent_id`,
-and querying `slug` explicitly returns Postgres `42703` (undefined_column).
-Say the word once `supabase/PENDING_MIGRATIONS.sql` is applied and both go
-live within a minute, no further discussion needed.
-
-**Credentials still placeholder** — each disables one capability and is
-reported by `/api/health`:
+**Credentials now configured this session** (`OPENAI_API_KEY`,
+`VAPI_API_KEY` — both confirmed via `/api/health` showing `"embeddings":
+"configured"` and `"vapiVoice":"configured"`). Still placeholder:
 
 | Variable | Unlocks |
 |---|---|
-| `OPENAI_API_KEY` | Embeddings → semantic knowledge search (pipeline already built) |
 | `CALCOM_API_KEY` + `CALCOM_EVENT_TYPE_ID` | Real calendar bookings |
 | `RESEND_API_KEY` | Outbound email |
-| `VAPI_API_KEY` | Call-recording archival |
 | `REDIS_URL` | Caching + distributed rate limiting |
+
+ElevenLabs (native Tamil voice) has a key but it doesn't go here — it must be
+linked in Vapi's own dashboard (Provider Keys), then `VOICE_ELEVENLABS_VOICE_ID`
+set once a voice ID is picked. Not done yet — pending the user's action in
+Vapi's dashboard.
 
 ### Next features (priority order)
 
