@@ -8,7 +8,7 @@
 | **Repository** | https://github.com/pagalavaprojects/ai-voice-business-card |
 | **Demo card** | [`/33333333…/44444444…`](https://ai-voice-business-card.vercel.app/33333333-3333-3333-3333-333333333333/44444444-4444-4444-4444-444444444444) |
 | **Last updated** | 2026-08-06 |
-| **Completion** | **~97%** — production-deployed; short public URLs, founder photo/logo, HD voice, a scripted interruptible Tamil welcome, auto-play-on-load voice, and 9 adversarial-review bugs (voice-session race conditions, UI copy, a broken demo link) all built, tested and live this session; blocked only on the pending migrations |
+| **Completion** | **~97%** — production-deployed; short public URLs, founder photo/logo, HD voice, and a scripted Tamil welcome that now plays to completion uninterrupted (professional-receptionist behavior, a deliberate reversal of the earlier interruptible version) with safe playback loudness enhancement, all built, tested and live this session; blocked only on the pending migrations |
 
 > This file is refreshed after every completed module. If it looks stale
 > against the repo, trust the repo and raise it.
@@ -40,13 +40,13 @@ inward; repositories abstract Supabase behind interfaces.
 
 | Metric | Value |
 |---|---|
-| Commits | 59 |
-| Source | ~20,600 lines TypeScript |
+| Commits | 61 |
+| Source | ~20,900 lines TypeScript |
 | API routes | 48 |
 | Dashboard pages | 14 |
 | Database | 26 tables · 39 indexes · 43 FKs · 26 RLS policies |
 | Migrations | 13 total, **7 pending in production** (see §7) |
-| Unit/integration tests | **242 passing**, 1 skipped (documented) |
+| Unit/integration tests | **247 passing**, 1 skipped (documented) |
 | Browser tests | **42 passing** across 3 viewports |
 | Accessibility | WCAG 2.1 AA — zero violations |
 | Build | Zero warnings, zero build-time error logs |
@@ -493,7 +493,7 @@ to 4,662 characters, live voice call reaching "Listening", zero console errors.
 **Process lesson:** additive migrations must be applied *before* the code that
 reads the new columns, not after. Four are still pending — see §7.
 
-### Phase 10b — Bug-fix pass: adversarial review + a broken demo link *(current)*
+### Phase 10b — Bug-fix pass: adversarial review + a broken demo link
 
 Not new scope — hardening what Phase 10 shipped, prompted by two screenshots
 showing `/c/srinivasan` 404ing and the card showing initials instead of a
@@ -549,6 +549,60 @@ All gates re-run and green after every fix: `tsc`, `next lint`, 242 unit
 tests, `next build`, 42 Playwright e2e tests. Two commits, 18 files, deployed
 and verified live. Full write-up in the session's engineering report
 (rendered as an artifact for this conversation).
+
+### Phase 11 — Voice-only pass: no-barge-in receptionist behavior, loudness, reconnect *(current)*
+
+Voice-experience-only scope (explicitly not a redesign; backend/auth/
+dashboard/bookings/analytics/lead-capture untouched). Deliberately reverses
+Phase 10's own interruptible-greeting behavior: client feedback wanted the
+scripted Tamil opening to play to completion like a professional
+receptionist's fixed announcement, not something a visitor talks over.
+
+- **No barge-in.** `firstMessageInterruptionsEnabled: false` (both the
+  browser and webhook call paths) plus a stronger client-side guarantee:
+  the mic is force-muted at the SDK level (`vapi.setMuted(true)`) the
+  instant a call connects, unmuted only once the intro's own completion
+  timer fires. Verified against the installed `@vapi-ai/web` source that
+  Daily's `startAudioOff` factory option — the theoretically "correct" way
+  to start a call already-muted — is accepted by this SDK version's types
+  but never actually forwarded to Daily's call object; it's dead, so this
+  uses the reliable alternative instead.
+- **Safe playback loudness** (client feedback: "the voice is too low").
+  Vapi's SDK has no volume/gain API at all — it mounts a bare `<audio>`
+  element straight to `document.body`. New `audioEnhancement.ts` intercepts
+  it via `MutationObserver` and reroutes it through a Web Audio gain →
+  compressor → makeup-gain → limiter chain — the same shape broadcast/
+  podcast loudness mastering uses — raising perceived loudness without
+  clipping.
+- **Reliability.** `startCall()` now refuses to start a second session while
+  one is active. Exactly one automatic reconnect per successfully-connected
+  session on an unexpected drop (never for a deliberate hang-up); the retry
+  budget only re-arms on a genuine `call-start`, not on every `startCall()`
+  invocation — an earlier draft of this logic would have looped forever
+  retrying a persistently-bad connection, caught and fixed before shipping.
+- **State copy** now follows the exact requested chain (Loading… / Preparing
+  Voice… / Playing Introduction… / Listening… / Thinking… / Speaking…), and
+  fixes a real pre-existing bug where the "thinking" state fell through to
+  "I'm listening" text.
+- **Removed** the office-address/working-hours profile chips; the identity
+  block re-centers on its own via the existing flex layout.
+- **Tamil script**: added terminal punctuation to each service bullet so
+  the TTS engine renders a clearer pause between them — punctuation only,
+  no wording changes. Genuine native-Tamil-accent pronunciation still
+  requires enabling the ElevenLabs override built in Phase 10b (an
+  unset-by-default env var) — no TTS engine swap was made this phase.
+- **Task split**: the Vapi-alternatives comparison (10 platforms, latency/
+  quality/Tamil-support/pricing/etc.) was handed to Gemini via a written
+  prompt rather than researched in-session, since it's a pure research task
+  needing no codebase access — result pending the user running it.
+
+242→247 unit tests (6 new: forced mute/unmute ordering, no-re-mute on later
+replies, single-session guard, bounded reconnect, no-reconnect-on-user-end).
+All gates green. One commit, 8 files (7 modified, 1 new). Deployed and
+spot-verified live (chips gone, layout re-centered, API healthy). Live-call
+verification (real mic, real WebRTC) was not performed in this environment —
+no audio hardware / non-interactive session — left for the user's own
+hands-on test.
 
 ---
 
