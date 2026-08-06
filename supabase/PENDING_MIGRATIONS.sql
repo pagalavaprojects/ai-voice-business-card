@@ -9,7 +9,7 @@
 -- very likely work — but splitting removes the question entirely for the cost
 -- of one extra paste.
 --
--- All five are purely additive: no foreign keys, no triggers, no data
+-- All seven are purely additive: no foreign keys, no triggers, no data
 -- migration, no policy changes. Every existing row stays valid and visible
 -- (is_active defaults TRUE).
 --
@@ -31,7 +31,7 @@ ALTER TYPE appointment_status ADD VALUE IF NOT EXISTS 'REQUESTED';
 
 
 -- ════════════════════════════════════════════════════════════════════════════
--- BLOCK 2 — run after Block 1 succeeds   (migrations 20260804–20260807)
+-- BLOCK 2 — run after Block 1 succeeds   (migrations 20260804–20260809)
 -- ════════════════════════════════════════════════════════════════════════════
 
 -- ---- 20260804: hot-path indexes -------------------------------------------
@@ -131,6 +131,27 @@ CREATE INDEX IF NOT EXISTS idx_employees_company_active
 CREATE UNIQUE INDEX IF NOT EXISTS idx_employees_company_user
     ON employees(company_id, user_id)
     WHERE user_id IS NOT NULL AND deleted_at IS NULL;
+
+
+-- ---- 20260808: employee public URL slug -------------------------------------
+-- Short, printable card links (/c/{slug}). Global namespace, not per-company —
+-- unlike the product/service slugs above, two different companies cannot both
+-- claim /c/founder. Absence is treated as "no short link set", never an
+-- error: the permanent /{companyId}/{employeeId} URL is unaffected either way.
+ALTER TABLE employees
+    ADD COLUMN IF NOT EXISTS slug VARCHAR(80);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_employees_slug_global
+    ON employees(slug)
+    WHERE slug IS NOT NULL AND deleted_at IS NULL;
+
+
+-- ---- 20260809: agent welcome-message language tag ---------------------------
+-- Purely descriptive metadata — nothing reads this column to decide behavior,
+-- it only lets an admin (or a future language picker) know what language
+-- ai_agents.first_message is currently written in.
+ALTER TABLE ai_agents
+    ADD COLUMN IF NOT EXISTS welcome_message_language VARCHAR(10) DEFAULT 'en' NOT NULL;
 
 -- ============================================================================
 -- Expected result: "Success. No rows returned" for each block.
