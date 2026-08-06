@@ -10,9 +10,14 @@ interface VoiceMicButtonProps {
   state: VoiceState;
   isMuted?: boolean;
   onClick: () => void;
+  /** True when autoplay was blocked and the visitor needs to tap to start —
+   * draws an attention ring sized to match the button's own circle, rather
+   * than a wrapping div (which squares off into a pill against the button's
+   * rectangular layout box). */
+  ringActive?: boolean;
 }
 
-export const VoiceMicButton: React.FC<VoiceMicButtonProps> = ({ state, isMuted, onClick }) => {
+export const VoiceMicButton: React.FC<VoiceMicButtonProps> = ({ state, isMuted, onClick, ringActive }) => {
   return (
     <div className="relative flex items-center justify-center py-6">
       {/* Pulsing Concentric Outer Rings for Listening/Speaking State */}
@@ -29,6 +34,10 @@ export const VoiceMicButton: React.FC<VoiceMicButtonProps> = ({ state, isMuted, 
             transition={{ duration: 2.5, repeat: Infinity, ease: "easeInOut", delay: 0.2 }}
           />
         </>
+      )}
+
+      {ringActive && (
+        <div className="absolute h-32 w-32 rounded-full motion-safe:animate-pulse ring-4 ring-sky-400/40" />
       )}
 
       {/* Main Touch Button */}

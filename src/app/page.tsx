@@ -1,15 +1,13 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Bot, Mic, Users, Calendar, Shield, ArrowRight, Zap } from "lucide-react";
+import { DEMO_COMPANY_ID, DEMO_EMPLOYEE_ID } from "@/shared/lib/demoCard";
 
 export const metadata: Metadata = {
   title: "AI Voice Business Card — Enterprise AI Employee Platform",
   description:
     "Replace static business cards with autonomous AI voice employees that qualify leads, book meetings, and grow your pipeline 24/7.",
 };
-
-const DEMO_COMPANY_ID = "demo-company";
-const DEMO_EMPLOYEE_ID = "demo-employee";
 
 const features = [
   {

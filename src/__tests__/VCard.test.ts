@@ -76,4 +76,65 @@ describe("vCard generation", () => {
       expect(card).not.toContain("item1.");
     });
   });
+
+  describe("embedded photo and logo", () => {
+    // 100 base64 chars is well past the 75-octet fold limit, so this alone
+    // exercises the folding path without needing a real image fixture.
+    const SHORT_PHOTO = "data:image/jpeg;base64," + "A".repeat(100);
+
+    it("emits a PHOTO property with the encoding and type from the data URI", () => {
+      const card = generateVCard({ ...CONTACT, photoDataUri: SHORT_PHOTO });
+      expect(card).toContain("PHOTO;ENCODING=b;TYPE=JPEG:");
+    });
+
+    it("emits LOGO as a distinct property from PHOTO, so an address book that reads both shows the right image for each", () => {
+      const card = generateVCard({ ...CONTACT, photoDataUri: SHORT_PHOTO, logoDataUri: SHORT_PHOTO });
+      expect(card).toContain("PHOTO;ENCODING=b;TYPE=JPEG:");
+      expect(card).toContain("LOGO;ENCODING=b;TYPE=JPEG:");
+    });
+
+    it("folds a long base64 line at 75 octets per RFC 6350, continuation lines starting with a single space", () => {
+      const card = generateVCard({ ...CONTACT, photoDataUri: SHORT_PHOTO });
+      const allLines = card.split("\r\n");
+      const startIndex = allLines.findIndex((l) => l.startsWith("PHOTO;ENCODING=b;TYPE=JPEG:"));
+      expect(startIndex).toBeGreaterThanOrEqual(0);
+
+      // Walk forward while lines are continuations (start with a space) —
+      // that run is the folded PHOTO property, nothing more.
+      const propertyLines = [allLines[startIndex]];
+      let i = startIndex + 1;
+      while (i < allLines.length && allLines[i].startsWith(" ")) {
+        propertyLines.push(allLines[i]);
+        i += 1;
+      }
+
+      expect(propertyLines.length).toBeGreaterThan(1); // actually folded, not one long line
+      for (const line of propertyLines.slice(1)) {
+        expect(line.startsWith(" ")).toBe(true);
+      }
+      for (const line of propertyLines) {
+        expect(line.length).toBeLessThanOrEqual(75);
+      }
+      // Rejoining and stripping the fold markers reproduces the original,
+      // unfolded content exactly — folding must be lossless.
+      const rejoined = propertyLines[0] + propertyLines.slice(1).map((l) => l.slice(1)).join("");
+      expect(rejoined).toBe(`PHOTO;ENCODING=b;TYPE=JPEG:${SHORT_PHOTO.split(",")[1]}`);
+    });
+
+    it("omits PHOTO and LOGO entirely when no image is available, rather than emitting an empty property", () => {
+      const card = generateVCard(CONTACT);
+      expect(card).not.toContain("PHOTO");
+      expect(card).not.toContain("LOGO");
+    });
+
+    it("normalizes a jpg subtype to the vCard-standard JPEG token", () => {
+      const card = generateVCard({ ...CONTACT, photoDataUri: "data:image/jpg;base64,AAAA" });
+      expect(card).toContain("TYPE=JPEG:");
+    });
+
+    it("ignores a malformed data URI rather than emitting a broken property", () => {
+      const card = generateVCard({ ...CONTACT, photoDataUri: "not-a-data-uri" });
+      expect(card).not.toContain("PHOTO");
+    });
+  });
 });

@@ -1,6 +1,6 @@
 import { CreateEmployeeSchema, UpdateEmployeeSchema, Employee } from "@/core/domain/models/types";
 import { validateValues, payloadFromValues, valuesFromEmployee } from "@/features/dashboard/components/employees/EmployeeForm";
-import { resolveCallVoiceId } from "@/shared/lib/voice";
+import { resolveCallVoiceId, resolveVoiceProviderConfig } from "@/shared/lib/voice";
 import { isEmployeeCardVisible } from "@/shared/lib/employeeVisibility";
 import { hasPermission } from "@/shared/lib/rbac";
 
@@ -96,6 +96,56 @@ describe("employee voice resolution", () => {
   it("keeps the more specific level in charge when several are set", () => {
     expect(resolveCallVoiceId("shimmer", "onyx", "echo")).toBe("shimmer");
     expect(resolveCallVoiceId(null, "onyx", "echo")).toBe("onyx");
+  });
+});
+
+describe("resolveVoiceProviderConfig — platform-wide ElevenLabs override", () => {
+  const ORIGINAL_ENV = process.env;
+
+  beforeEach(() => {
+    process.env = { ...ORIGINAL_ENV };
+    delete process.env.VOICE_ELEVENLABS_VOICE_ID;
+    delete process.env.VOICE_ELEVENLABS_MODEL;
+  });
+
+  afterAll(() => {
+    process.env = ORIGINAL_ENV;
+  });
+
+  it("defaults to the existing OpenAI path when unconfigured — zero regression", () => {
+    expect(resolveVoiceProviderConfig("shimmer", null, null)).toEqual({
+      provider: "openai",
+      voiceId: "shimmer",
+      model: "tts-1-hd",
+    });
+  });
+
+  it("switches every call to ElevenLabs once a voice id is configured, regardless of per-tenant OpenAI preferences", () => {
+    process.env.VOICE_ELEVENLABS_VOICE_ID = "tamil-voice-id-abc123";
+
+    // Even a company that picked "shimmer" moves to the platform override —
+    // this is deliberately global, not per-tenant.
+    expect(resolveVoiceProviderConfig("shimmer", null, null)).toEqual({
+      provider: "11labs",
+      voiceId: "tamil-voice-id-abc123",
+      model: "eleven_multilingual_v2",
+    });
+  });
+
+  it("defaults the ElevenLabs model to eleven_multilingual_v2 — the only model with Tamil support", () => {
+    process.env.VOICE_ELEVENLABS_VOICE_ID = "tamil-voice-id-abc123";
+    expect(resolveVoiceProviderConfig().model).toBe("eleven_multilingual_v2");
+  });
+
+  it("honors an explicit model override when one is configured", () => {
+    process.env.VOICE_ELEVENLABS_VOICE_ID = "tamil-voice-id-abc123";
+    process.env.VOICE_ELEVENLABS_MODEL = "eleven_turbo_v2_5";
+    expect(resolveVoiceProviderConfig().model).toBe("eleven_turbo_v2_5");
+  });
+
+  it("treats a blank/whitespace-only voice id as unconfigured, not a broken ElevenLabs call", () => {
+    process.env.VOICE_ELEVENLABS_VOICE_ID = "   ";
+    expect(resolveVoiceProviderConfig().provider).toBe("openai");
   });
 });
 

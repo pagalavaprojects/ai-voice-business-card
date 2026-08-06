@@ -6,7 +6,7 @@ import { withSpan, httpRequestDuration, voiceCallsTotal } from "@/core/infrastru
 import { promptAssemblyService, toolRegistry, agentRepo, settingsRepo } from "@/core/infrastructure/bootstrap/assistantRuntime";
 import { Logger } from "@/shared/lib/logger";
 import { supabaseAdmin } from "@/shared/lib/supabase";
-import { resolveCallVoiceId } from "@/shared/lib/voice";
+import { resolveVoiceProviderConfig } from "@/shared/lib/voice";
 import { SupabaseKnowledgeRepository } from "@/core/infrastructure/database/supabase/SupabaseKnowledgeRepository";
 import { verifyWebhookToken } from "@/shared/lib/webhookToken";
 
@@ -111,6 +111,11 @@ async function handleVapiMessage(req: NextRequest, message: VapiMessage): Promis
       settingsRepo.getSettings(companyId).catch(() => null),
     ]);
     const firstMessage = agent?.first_message?.trim() || "Hello! Thank you for scanning my business card. How can I help you today?";
+    const voiceConfig = resolveVoiceProviderConfig(
+      employee?.voice_id,
+      agent?.voice_model_id,
+      (settings?.voice_settings as Record<string, unknown> | undefined)?.default_voice_model as string | undefined
+    );
 
     return NextResponse.json({
       assistant: {
@@ -125,20 +130,15 @@ async function handleVapiMessage(req: NextRequest, message: VapiMessage): Promis
           messages: [{ role: "system", content: systemPrompt }],
           tools,
         },
-        voice: {
-          provider: "openai",
-          voiceId: resolveCallVoiceId(
-            employee?.voice_id,
-            agent?.voice_model_id,
-            (settings?.voice_settings as Record<string, unknown> | undefined)?.default_voice_model as string | undefined
-          ),
-          // See useVapiSession.ts — the browser call path — for why: no
-          // output-volume control exists anywhere in the stack, but the HD
-          // synthesis model is a real, unconditional clarity improvement.
-          // Kept identical between both call paths so a phone call and a
-          // browser call never sound different from each other.
-          model: "tts-1-hd",
-        },
+        // See resolveVoiceProviderConfig in shared/lib/voice.ts — no
+        // output-volume control exists anywhere in the stack (verified
+        // against the SDK's own types), so the real lever is provider/model
+        // choice. Kept identical to the browser call path so a phone call
+        // and a browser call never sound different from each other.
+        voice:
+          voiceConfig.provider === "11labs"
+            ? { provider: "11labs" as const, voiceId: voiceConfig.voiceId, model: voiceConfig.model as "eleven_multilingual_v2" }
+            : { provider: "openai" as const, voiceId: voiceConfig.voiceId, model: "tts-1-hd" as const },
       },
     });
   }

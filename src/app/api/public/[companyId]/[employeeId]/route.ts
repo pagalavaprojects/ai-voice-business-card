@@ -4,7 +4,7 @@ import { promptAssemblyService, toolRegistry, agentRepo } from "@/core/infrastru
 import { SupabaseSettingsRepository } from "@/core/infrastructure/database/supabase/SupabaseSettingsRepository";
 import { SupabaseStorageAdapter } from "@/core/infrastructure/storage/SupabaseStorageAdapter";
 import { Logger } from "@/shared/lib/logger";
-import { resolveCallVoiceId } from "@/shared/lib/voice";
+import { resolveVoiceProviderConfig } from "@/shared/lib/voice";
 import { resolvePublicBaseUrl } from "@/shared/lib/publicUrl";
 import { createWebhookToken } from "@/shared/lib/webhookToken";
 import { isEmployeeCardVisible } from "@/shared/lib/employeeVisibility";
@@ -140,6 +140,12 @@ export async function GET(req: NextRequest, { params }: { params: { companyId: s
       );
     }
 
+    const voiceConfig = resolveVoiceProviderConfig(
+      employee.voice_id,
+      agent?.voice_model_id,
+      (settings?.voice_settings as Record<string, unknown> | undefined)?.default_voice_model as string | undefined
+    );
+
     return NextResponse.json({
       company: {
         name: company.name,
@@ -211,11 +217,9 @@ export async function GET(req: NextRequest, { params }: { params: { companyId: s
       tools: serverUrl ? toolRegistry.getAllToolDefinitions() : [],
       toolsEnabled: Boolean(serverUrl),
       serverUrl,
-      voiceId: resolveCallVoiceId(
-        employee.voice_id,
-        agent?.voice_model_id,
-        (settings?.voice_settings as Record<string, unknown> | undefined)?.default_voice_model as string | undefined
-      ),
+      voiceId: voiceConfig.voiceId,
+      voiceProvider: voiceConfig.provider,
+      voiceModel: voiceConfig.model,
     });
   } catch (err) {
     // Supabase unreachable/unconfigured (e.g. placeholder credentials) is

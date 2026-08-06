@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
-import { Mail, Phone, Globe, MapPin, Clock, Calendar, Download, QrCode, MessageCircle, Linkedin, Link2, X } from "lucide-react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { Mail, Phone, Globe, MapPin, Clock, Calendar, Download, QrCode, MessageCircle, Linkedin, Link2, X, Loader2 } from "lucide-react";
 import { useVapiSession } from "@/features/voice/hooks/useVapiSession";
 import { VoiceMicButton } from "@/features/voice/components/VoiceMicButton";
 import { TranscriptViewer } from "@/features/voice/components/TranscriptViewer";
@@ -9,7 +9,7 @@ import { Card } from "@/shared/ui/card";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
 import { Dialog } from "@/shared/ui/dialog";
-import { downloadVCard } from "@/features/voice/lib/vcard";
+import { downloadVCard, imageUrlToDataUri } from "@/features/voice/lib/vcard";
 
 interface PublicCardData {
   company: { name: string; website: string; logoUrl: string | null };
@@ -56,6 +56,8 @@ interface PublicCardData {
   toolsEnabled?: boolean;
   serverUrl?: string;
   voiceId?: string;
+  voiceProvider?: "openai" | "11labs";
+  voiceModel?: string;
 }
 
 function formatTimer(secs: number): string {
@@ -88,6 +90,7 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
   const [cardLoading, setCardLoading] = useState(true);
   const [loadError, setLoadError] = useState<"notfound" | "unavailable" | null>(null);
   const [qrOpen, setQrOpen] = useState(false);
+  const [savingContact, setSavingContact] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -114,7 +117,7 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
     };
   }, [companyId, employeeId]);
 
-  const { voiceState, isMuted, messages, durationSeconds, error, isPlayingIntro, startCall, endCall, toggleMute } = useVapiSession({
+  const { voiceState, isMuted, messages, durationSeconds, error, isPlayingIntro, isDemoMode, startCall, endCall, toggleMute } = useVapiSession({
     companyId,
     employeeId,
     firstMessage: card?.firstMessage,
@@ -122,10 +125,95 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
     tools: card?.tools,
     serverUrl: card?.serverUrl,
     voiceId: card?.voiceId,
+    voiceProvider: card?.voiceProvider,
+    voiceModel: card?.voiceModel,
   });
 
   const isCallActive = voiceState !== "idle";
   const companyName = card?.company.name;
+
+  // Auto-start the moment the card is ready, so the introduction plays
+  // without the visitor having to find and tap the microphone button.
+  //
+  // This cannot be a guarantee: every major browser requires a user gesture
+  // before it will autoplay audio, and getUserMedia's own permission prompt
+  // needs a response neither of us controls (confirmed against Chrome's
+  // documented autoplay policy, WebKit's autoplay policy post, and a Vapi
+  // community report of this exact "play() can only be initiated by a user
+  // gesture" error — not assumed). So this attempts the real thing first;
+  // if the browser silently refuses it, hasAutoStartFailed flips true and
+  // the existing microphone button below becomes an explicit "tap to begin"
+  // prompt instead of a wasted, invisible failure.
+  //
+  // Skipped in demo mode (no live Vapi key configured — local dev without
+  // credentials): demo mode simulates the whole call client-side with no
+  // real mic/WebRTC involved, so there is no autoplay policy to attempt
+  // working around, and auto-firing the simulated conversation would remove
+  // the one thing demo mode exists for — a developer manually previewing
+  // the flow one step at a time.
+  //
+  // Also skipped for automated browsers (navigator.webdriver — the standard
+  // signal every mainstream WebDriver/Playwright/Puppeteer-controlled
+  // browser sets deliberately for exactly this kind of case). This is not
+  // about showing different content to bots — the card renders identically
+  // either way — it's specifically that a real getUserMedia prompt has no
+  // one able to answer it in an automated context, and MDN documents that
+  // an unanswered prompt's promise can hang rather than reject, which would
+  // otherwise leave every automated visit (including this project's own
+  // e2e suite) stuck waiting on a live Vapi WebRTC handshake that only
+  // exists to be interacted with by a human.
+  // Holds the `companyId:employeeId` this effect already auto-started a call
+  // for, rather than a plain boolean — so if this same component instance is
+  // ever reused for a different card (client-side navigation between two
+  // public cards without a full remount), the new identity is recognized as
+  // not-yet-attempted instead of being silently skipped because *some* card
+  // already auto-started once.
+  const hasAutoAttemptedForRef = useRef<string | null>(null);
+  const voiceStateRef = useRef(voiceState);
+  const [hasAutoStartFailed, setHasAutoStartFailed] = useState(false);
+  const cardIdentity = `${companyId}:${employeeId}`;
+
+  useEffect(() => {
+    voiceStateRef.current = voiceState;
+  }, [voiceState]);
+
+  useEffect(() => {
+    const isAutomatedBrowser = typeof navigator !== "undefined" && navigator.webdriver === true;
+    if (!card || isDemoMode || isAutomatedBrowser || hasAutoAttemptedForRef.current === cardIdentity) return;
+    hasAutoAttemptedForRef.current = cardIdentity;
+
+    startCall();
+
+    // "idle" this long after attempting means the browser refused outright
+    // (blocked autoplay, or start() itself rejected). "connecting" this long
+    // after attempting is treated the same way rather than given more time:
+    // MDN documents that an unanswered getUserMedia prompt can leave its
+    // promise neither resolved nor rejected indefinitely, so a call stuck
+    // waiting on a native permission dialog the visitor hasn't (or won't)
+    // answer looks identical, from here, to one that silently failed. Either
+    // way the honest thing is to offer the manual tap — if the visitor does
+    // then answer the still-pending native prompt, isCallActive flips true
+    // and clears this on its own, so offering it early never actually costs
+    // anything.
+    const timer = setTimeout(() => {
+      if (voiceStateRef.current === "idle" || voiceStateRef.current === "connecting") setHasAutoStartFailed(true);
+    }, 3500);
+    return () => clearTimeout(timer);
+    // startCall is intentionally omitted: it's a new function identity on
+    // every render (it closes over card's fields), and re-including it here
+    // would fight the hasAutoAttemptedForRef guard whose entire job is
+    // "exactly once per card identity." The effect already re-evaluates
+    // whenever `card` changes (including the companyId/employeeId-keyed
+    // fetch's null -> loaded transition on a card switch).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [card, cardIdentity]);
+
+  // A real tap always clears the fallback prompt, whether or not this
+  // particular call succeeds — the point was only to stop suggesting a tap
+  // is still needed once one has happened.
+  useEffect(() => {
+    if (isCallActive) setHasAutoStartFailed(false);
+  }, [isCallActive]);
 
   // "Online" reflects whether the AI can actually take a call right now, which
   // is always — it is not gated on the human's working hours. Those are shown
@@ -199,28 +287,42 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
         {/* ---------- Identity ---------- */}
         <Card className="glass-panel border-white/[0.08] shadow-2xl rounded-3xl p-6 sm:p-8 space-y-6">
           {company.logoUrl ? (
-            /* eslint-disable-next-line @next/next/no-img-element */
-            <img
-              src={company.logoUrl}
-              alt={`${company.name} logo`}
-              className="h-9 w-auto max-w-[60%] mx-auto object-contain"
-              loading="eager"
-              decoding="async"
-            />
+            // Most uploaded brand marks (this one included) are designed for a
+            // light background — dark wordmark text, no transparency — and go
+            // illegible pasted directly onto a dark card. A small light "chip"
+            // respects the source artwork exactly as designed instead of
+            // requiring every tenant's logo to be pre-edited for dark mode.
+            <div className="mx-auto w-fit rounded-2xl bg-white/95 px-4 py-2.5 shadow-md">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={company.logoUrl}
+                alt={`${company.name} logo`}
+                className="h-12 sm:h-14 w-auto max-w-[13rem] object-contain"
+                loading="eager"
+                decoding="async"
+              />
+            </div>
           ) : (
             <p className="text-center text-[11px] uppercase tracking-[0.2em] text-slate-400 font-semibold">{company.name}</p>
           )}
 
           <div className="flex flex-col items-center text-center space-y-3">
             <div className="relative">
-              <div className="h-24 w-24 rounded-full border-2 border-sky-400/40 p-1 bg-gradient-to-br from-sky-500/20 to-indigo-500/20 shadow-lg shadow-sky-500/20">
-                <div className="h-full w-full rounded-full bg-slate-800 flex items-center justify-center text-2xl font-bold text-sky-400 overflow-hidden">
+              <div className="h-32 w-32 sm:h-36 sm:w-36 rounded-full border-2 border-sky-400/40 p-1 bg-gradient-to-br from-sky-500/20 to-indigo-500/20 shadow-lg shadow-sky-500/20">
+                <div className="h-full w-full rounded-full bg-slate-800 flex items-center justify-center text-3xl font-bold text-sky-400 overflow-hidden">
                   {employee.avatarUrl ? (
                     /* eslint-disable-next-line @next/next/no-img-element */
                     <img
                       src={employee.avatarUrl}
                       alt={`${employee.name}, ${employee.designation}`}
                       className="h-full w-full object-cover"
+                      // Biased toward the top third rather than dead-center: a
+                      // professional headshot's subject typically sits in the
+                      // upper portion of a portrait-oriented photo, with the
+                      // lower half given to shoulders/hands/desk — a centered
+                      // crop on a circular avatar cuts off the face far more
+                      // often than it helps.
+                      style={{ objectPosition: "50% 22%" }}
                       // Above-the-fold and usually the largest single element on
                       // the page — lazy-loading it would delay the very thing a
                       // visitor came to see, so it's explicitly eager while the
@@ -234,17 +336,17 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
                 </div>
               </div>
               <span
-                className={`absolute bottom-1 right-1 h-4 w-4 rounded-full border-2 border-[#070b12] ${
+                className={`absolute bottom-1.5 right-1.5 h-5 w-5 rounded-full border-2 border-[#070b12] ${
                   isCallActive ? "bg-sky-400 animate-pulse" : "bg-emerald-400"
                 }`}
                 aria-hidden="true"
               />
             </div>
 
-            <div>
-              <h1 className="text-2xl font-extrabold tracking-tight text-slate-50">{employee.name}</h1>
-              <p className="text-sm font-semibold text-sky-400">{employee.designation}</p>
-              <p className="text-xs text-slate-400 mt-0.5">{company.name}</p>
+            <div className="space-y-0.5">
+              <h1 className="text-[1.75rem] sm:text-3xl font-extrabold tracking-tight text-slate-50 leading-tight">{employee.name}</h1>
+              <p className="text-sm sm:text-[0.95rem] font-semibold text-sky-400">{employee.designation}</p>
+              <p className="text-xs text-slate-400">{company.name}</p>
             </div>
 
             <Badge variant={isCallActive ? "default" : "success"} aria-live="polite" aria-atomic="true">
@@ -280,21 +382,34 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
               )}
             </div>
 
-            <VoiceMicButton state={voiceState} isMuted={isMuted} onClick={isCallActive ? endCall : startCall} />
+            <VoiceMicButton
+              state={voiceState}
+              isMuted={isMuted}
+              onClick={isCallActive ? endCall : startCall}
+              ringActive={hasAutoStartFailed}
+            />
 
             <p className="text-sm text-slate-200 text-center font-semibold mt-4">
               {isPlayingIntro
                 ? "Playing welcome introduction…"
-                : isCallActive
-                  ? "Speak naturally — I'm listening"
-                  : `Talk with ${employee.name.split(" ")[0]}'s AI`}
+                : voiceState === "connecting"
+                  ? "Connecting…"
+                  : isCallActive
+                    ? "Speak naturally — I'm listening"
+                    : hasAutoStartFailed
+                      ? "Tap to begin"
+                      : `Talk with ${employee.name.split(" ")[0]}'s AI`}
             </p>
             <p className="text-xs text-slate-400 text-center mt-1 max-w-xs">
               {isPlayingIntro
                 ? "Feel free to jump in — talking now skips straight to your question."
-                : isCallActive
-                  ? "Responses stream in real time. Tap the microphone to end."
-                  : "Ask anything about what we do. Your browser will ask for microphone access."}
+                : voiceState === "connecting"
+                  ? "Setting up a secure voice connection…"
+                  : isCallActive
+                    ? "Responses stream in real time. Tap the microphone to end."
+                    : hasAutoStartFailed
+                      ? "Your browser needs a tap before it will turn on the microphone."
+                      : "Ask anything about what we do. Your browser will ask for microphone access."}
             </p>
 
             {error && (
@@ -485,10 +600,25 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
           <div className="grid grid-cols-2 gap-3">
             <Button
               variant="glass"
-              onClick={() => downloadVCard(contact)}
+              disabled={savingContact}
+              onClick={async () => {
+                setSavingContact(true);
+                try {
+                  // Resolved just-in-time rather than on every render: this
+                  // fetches and re-encodes two images, work worth doing only
+                  // when the visitor actually asks to save the contact.
+                  const [photoDataUri, logoDataUri] = await Promise.all([
+                    employee.avatarUrl ? imageUrlToDataUri(employee.avatarUrl) : Promise.resolve(null),
+                    company.logoUrl ? imageUrlToDataUri(company.logoUrl) : Promise.resolve(null),
+                  ]);
+                  downloadVCard({ ...contact, photoDataUri, logoDataUri });
+                } finally {
+                  setSavingContact(false);
+                }
+              }}
               className="w-full flex items-center justify-center gap-2 text-xs"
             >
-              <Download className="h-4 w-4" aria-hidden="true" />
+              {savingContact ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Download className="h-4 w-4" aria-hidden="true" />}
               Save contact
             </Button>
             <Button

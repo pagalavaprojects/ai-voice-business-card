@@ -86,6 +86,49 @@ describe("useVapiSession — scripted intro tracking", () => {
     expect(vapi.started[0]).toMatchObject({ firstMessageInterruptionsEnabled: true });
   });
 
+  it("defaults to OpenAI when no voiceProvider is passed — zero regression for existing calls", async () => {
+    const { result } = renderHook(() => useVapiSession({ companyId: "c1", employeeId: "e1", vapiPublicKey: REAL_KEY, voiceId: "shimmer" }));
+
+    await act(async () => {
+      await result.current.startCall();
+    });
+
+    const vapi = fakeVapiInstances[0];
+    expect(vapi.started[0]).toMatchObject({ voice: { provider: "openai", voiceId: "shimmer", model: "tts-1-hd" } });
+  });
+
+  it("reports isDemoMode when no real key is configured, so callers can skip auto-start in demo mode", () => {
+    const { result } = renderHook(() => useVapiSession({ companyId: "c1", employeeId: "e1", vapiPublicKey: "demo-vapi-key" }));
+    expect(result.current.isDemoMode).toBe(true);
+  });
+
+  it("reports isDemoMode false for a real key, so auto-start is not skipped in production", () => {
+    const { result } = renderHook(() => useVapiSession({ companyId: "c1", employeeId: "e1", vapiPublicKey: REAL_KEY }));
+    expect(result.current.isDemoMode).toBe(false);
+  });
+
+  it("switches to ElevenLabs when the server-resolved voiceProvider says so", async () => {
+    const { result } = renderHook(() =>
+      useVapiSession({
+        companyId: "c1",
+        employeeId: "e1",
+        vapiPublicKey: REAL_KEY,
+        voiceId: "tamil-voice-id-abc123",
+        voiceProvider: "11labs",
+        voiceModel: "eleven_multilingual_v2",
+      })
+    );
+
+    await act(async () => {
+      await result.current.startCall();
+    });
+
+    const vapi = fakeVapiInstances[0];
+    expect(vapi.started[0]).toMatchObject({
+      voice: { provider: "11labs", voiceId: "tamil-voice-id-abc123", model: "eleven_multilingual_v2" },
+    });
+  });
+
   it("marks isPlayingIntro true for the first assistant utterance, then false once it finishes", async () => {
     const { result } = renderHook(() => useVapiSession({ companyId: "c1", employeeId: "e1", vapiPublicKey: REAL_KEY }));
     const vapi = fakeVapiInstances[0];
