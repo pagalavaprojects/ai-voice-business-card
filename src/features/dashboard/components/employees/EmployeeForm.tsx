@@ -24,6 +24,9 @@ export type EmployeeFormValues = {
   social_links: string;
   display_order: string;
   is_active: boolean;
+  /** Short public URL — /c/{slug}. Blank means the card is only reachable at
+   * its long /{companyId}/{employeeId} URL. */
+  slug: string;
 };
 
 export function valuesFromEmployee(e: Employee | null): EmployeeFormValues {
@@ -43,6 +46,7 @@ export function valuesFromEmployee(e: Employee | null): EmployeeFormValues {
       .join("\n"),
     display_order: e ? String(e.display_order ?? 0) : "0",
     is_active: e?.is_active ?? true,
+    slug: e?.slug ?? "",
   };
 }
 
@@ -82,6 +86,9 @@ export function payloadFromValues(v: EmployeeFormValues) {
     social_links: Object.keys(links).length > 0 ? links : null,
     display_order: Number(v.display_order) || 0,
     is_active: v.is_active,
+    // Lowercased so "Srinivasan" and "srinivasan" don't fail the schema's
+    // lowercase-only rule just because of how someone typed it.
+    slug: v.slug.trim().toLowerCase() || null,
   };
 }
 
@@ -218,6 +225,25 @@ export function EmployeeForm({
         onUploaded={(path) => set("avatar_path", path)}
         onRemove={() => set("avatar_path", null)}
       />
+
+      <Field
+        label="Public link"
+        hint="short, memorable, safe to print — blank keeps only the long link working"
+        error={errors.slug}
+      >
+        <div className="flex items-center gap-0 rounded-xl border border-white/[0.12] bg-white/[0.03] focus-within:ring-2 focus-within:ring-sky-500 overflow-hidden">
+          <span className="pl-3 pr-1.5 text-xs text-slate-500 font-mono whitespace-nowrap">
+            {typeof window !== "undefined" ? window.location.origin : ""}/c/
+          </span>
+          <input
+            id="employee-slug"
+            value={values.slug}
+            onChange={(e) => set("slug", e.target.value)}
+            placeholder="srinivasan"
+            className="flex-1 min-w-0 bg-transparent border-0 py-2 pr-3 text-xs text-slate-100 placeholder:text-slate-600 focus:outline-none font-mono"
+          />
+        </div>
+      </Field>
 
       <div className="grid sm:grid-cols-2 gap-4">
         <Field label="Voice" hint="blank inherits the agent's" error={errors.voice_id}>

@@ -22,7 +22,7 @@ interface QueryLog {
 
 /** Minimal PostgREST-shaped builder: records which filters were applied and
  * resolves with whatever the scenario dictates. */
-function makeBuilder(log: QueryLog, result: { data: unknown[] | null; error: unknown }) {
+function makeBuilder(log: QueryLog, result: { data: unknown; error: unknown }) {
   const builder = {
     select: () => builder,
     eq: (col: string) => {
@@ -38,12 +38,15 @@ function makeBuilder(log: QueryLog, result: { data: unknown[] | null; error: unk
       return builder;
     },
     textSearch: () => builder,
+    maybeSingle: () => Promise.resolve(result),
     then: (resolve: (v: unknown) => void) => resolve(result),
   };
   return builder;
 }
 
-const state: { calls: QueryLog[]; results: Array<{ data: unknown[] | null; error: unknown }> } = { calls: [], results: [] };
+// `data` covers both list-shaped results (products/services) and the single
+// object `.maybeSingle()` resolves to (employee slug lookup).
+const state: { calls: QueryLog[]; results: Array<{ data: unknown; error: unknown }> } = { calls: [], results: [] };
 
 jest.mock("@/shared/lib/supabase", () => ({
   supabaseAdmin: {
@@ -101,5 +104,39 @@ describe("catalog reads during the deploy-before-migrate window", () => {
     expect(state.calls).toHaveLength(1);
     expect(state.calls[0].filters).toContain("is_active");
     expect(state.calls[0].filters).toContain("order:display_order");
+  });
+});
+
+/**
+ * Same window, same principle, for the short public-URL slug (migration
+ * 20260808): a card printed on a business card must not start 404ing just
+ * because /c/{slug} looked up a column that isn't there yet. Unlike the
+ * catalog fallback above, there is no legacy query to fall back to — the
+ * feature is simply unavailable pre-migration, which getEmployeeBySlug
+ * expresses as returning null rather than throwing.
+ */
+describe("employee slug lookup during the deploy-before-migrate window", () => {
+  beforeEach(() => {
+    state.calls = [];
+    state.results = [];
+  });
+
+  it("returns null (not found), not an error, when the slug column does not exist yet", async () => {
+    state.results = [{ data: null, error: { code: "42703", message: "column employees.slug does not exist" } }];
+
+    await expect(new SupabaseKnowledgeRepository().getEmployeeBySlug("srinivasan")).resolves.toBeNull();
+  });
+
+  it("resolves the employee once the migration has applied and the slug is set", async () => {
+    state.results = [{ data: { id: "e1", slug: "srinivasan" }, error: null }];
+
+    const employee = await new SupabaseKnowledgeRepository().getEmployeeBySlug("srinivasan");
+    expect(employee).toEqual({ id: "e1", slug: "srinivasan" });
+  });
+
+  it("still throws on a genuine database failure", async () => {
+    state.results = [{ data: null, error: { code: "08006", message: "connection failure" } }];
+
+    await expect(new SupabaseKnowledgeRepository().getEmployeeBySlug("srinivasan")).rejects.toThrow(/connection failure/);
   });
 });

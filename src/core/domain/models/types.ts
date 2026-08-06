@@ -94,6 +94,12 @@ export interface Employee extends BaseEntity {
   prompt_override?: string | null;
   timezone?: string | null;
   display_order: number;
+  /** Short public URL slug, e.g. "srinivasan" for /c/srinivasan. Globally
+   * unique across every tenant — unlike product/service slugs, which are only
+   * unique per company, this one lives in a single flat public namespace, so
+   * two companies cannot both claim /c/founder. NULL means the card is only
+   * reachable at its long-form /{companyId}/{employeeId} URL. */
+  slug?: string | null;
   deleted_at?: string | null;
 }
 
@@ -367,8 +373,10 @@ export const CreateAppointmentSchema = z.object({
 
 // Slug rule: URL-safe, lowercase, hyphen-separated. Enforced here rather than
 // only normalised in the UI so an API caller can't create "My Product!" as a
-// slug and break card URLs later.
-const SlugSchema = z
+// slug and break card URLs later. Exported because the Employee module's
+// public-URL slug (a GLOBAL namespace, unlike the per-company product/service
+// slugs below) reuses the identical rule rather than drifting a second regex.
+export const SlugSchema = z
   .string()
   .min(2)
   .max(160)
@@ -456,6 +464,10 @@ export const CreateEmployeeSchema = z.object({
   timezone: z.string().max(64).optional().nullable(),
   display_order: z.number().int().min(0).default(0),
   is_active: z.boolean().default(true),
+  /** Short public URL slug (see Employee.slug) — capped well below the
+   * product/service max since this one is meant to be memorable and printable,
+   * not a long descriptive handle. */
+  slug: SlugSchema.max(80).optional().nullable(),
 });
 
 /** Everything editable except tenancy; company_id travels separately for the

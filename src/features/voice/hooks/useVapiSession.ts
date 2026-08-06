@@ -177,6 +177,17 @@ export function useVapiSession({
         voice: {
           provider: "openai" as const,
           voiceId: voiceId || DEFAULT_VOICE_ID,
+          // The Vapi Web SDK has no output-volume/gain control at all — its
+          // only mic-side lever is increaseMicLevel(), which adjusts what the
+          // visitor's microphone sends, not what the assistant is heard at.
+          // Playback loudness is the listener's own device volume. The one
+          // real lever OpenAI's TTS exposes for perceived quality is the
+          // synthesis model itself: "tts-1" (the implicit default) is tuned
+          // for low latency, "tts-1-hd" for fidelity. A voice business card
+          // is not latency-sensitive the way a phone IVR is, so trading a
+          // small amount of latency for materially clearer, more present
+          // audio is a straightforward improvement with no quality downside.
+          model: "tts-1-hd" as const,
         },
         // Routes tool-calls and the end-of-call report back to our
         // webhook for this specific company/employee during the call.

@@ -114,10 +114,13 @@ export default function EmployeesPage() {
     });
   };
 
-  /** The card lives at /{companyId}/{employeeId} on this same origin, so it is
-   * derivable here — no extra round trip just to show a link. */
+  /** The short /c/{slug} link when one is set (what should actually get
+   * shared/printed), otherwise the permanent /{companyId}/{employeeId} URL —
+   * both derivable client-side on this same origin, no extra round trip. */
   const cardUrlOf = (employee: Employee) =>
-    typeof window === "undefined" ? "" : `${window.location.origin}/${employee.company_id}/${employee.id}`;
+    typeof window === "undefined"
+      ? ""
+      : `${window.location.origin}${employee.slug ? `/c/${employee.slug}` : `/${employee.company_id}/${employee.id}`}`;
 
   const copyCardUrl = async (employee: Employee) => {
     try {

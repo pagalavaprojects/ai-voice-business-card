@@ -128,6 +128,12 @@ async function handleVapiMessage(req: NextRequest, message: VapiMessage): Promis
             agent?.voice_model_id,
             (settings?.voice_settings as Record<string, unknown> | undefined)?.default_voice_model as string | undefined
           ),
+          // See useVapiSession.ts — the browser call path — for why: no
+          // output-volume control exists anywhere in the stack, but the HD
+          // synthesis model is a real, unconditional clarity improvement.
+          // Kept identical between both call paths so a phone call and a
+          // browser call never sound different from each other.
+          model: "tts-1-hd",
         },
       },
     });

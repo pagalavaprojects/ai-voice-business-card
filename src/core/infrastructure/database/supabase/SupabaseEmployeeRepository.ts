@@ -102,7 +102,16 @@ export class SupabaseEmployeeRepository implements IEmployeeRepository {
 
   async createEmployee(data: z.infer<typeof CreateEmployeeSchema>): Promise<Employee> {
     const { data: employee, error } = await supabaseAdmin.from("employees").insert(data).select().single();
-    if (error) throw new Error(`createEmployee failed: ${error.message}`);
+    if (error) {
+      // Surface the slug conflict specifically: "duplicate key" alone gives an
+      // admin nothing to act on. The slug lives in a GLOBAL namespace (see
+      // migration 20260808), so this can trigger even against another
+      // company's employee, not just their own.
+      if (error.code === "23505" && error.message.includes("idx_employees_slug_global")) {
+        throw new Error("That short link is already taken. Choose a different one.");
+      }
+      throw new Error(`createEmployee failed: ${error.message}`);
+    }
     return employee as Employee;
   }
 
@@ -114,7 +123,12 @@ export class SupabaseEmployeeRepository implements IEmployeeRepository {
       .is("deleted_at", null)
       .select()
       .single();
-    if (error) throw new Error(`updateEmployee failed: ${error.message}`);
+    if (error) {
+      if (error.code === "23505" && error.message.includes("idx_employees_slug_global")) {
+        throw new Error("That short link is already taken. Choose a different one.");
+      }
+      throw new Error(`updateEmployee failed: ${error.message}`);
+    }
     return employee as Employee;
   }
 

@@ -34,6 +34,19 @@ export class SupabaseKnowledgeRepository implements IKnowledgeRepository {
     return (data as Employee) || null;
   }
 
+  // Powers /c/{slug}. A missing `slug` column (migration 20260808 not yet
+  // applied) is treated the same as "no such slug" — the short-URL route
+  // simply isn't available yet, which is a fundamentally different situation
+  // from a real database error and must not throw one.
+  async getEmployeeBySlug(slug: string): Promise<Employee | null> {
+    const { data, error } = await supabaseAdmin.from("employees").select().eq("slug", slug).is("deleted_at", null).maybeSingle();
+    if (error) {
+      if (isMissingCatalogColumn(error)) return null;
+      throw new Error(`getEmployeeBySlug failed: ${error.message}`);
+    }
+    return (data as Employee) || null;
+  }
+
   // This repository is the PUBLIC read path — the card, prompt assembly and
   // voice tools all come through here. It filters to active products so a
   // deactivated product disappears from every visitor-facing surface at once;

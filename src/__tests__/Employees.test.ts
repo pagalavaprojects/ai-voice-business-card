@@ -52,6 +52,20 @@ describe("CreateEmployeeSchema", () => {
     // allowing it here would let an employee edit grant someone else access.
     expect("user_id" in UpdateEmployeeSchema.shape).toBe(false);
   });
+
+  describe("public URL slug", () => {
+    it("accepts a lowercase hyphenated slug and rejects anything that would break /c/{slug}", () => {
+      expect(CreateEmployeeSchema.safeParse({ ...validEmployee, slug: "srinivasan" }).success).toBe(true);
+      expect(CreateEmployeeSchema.safeParse({ ...validEmployee, slug: "sri-k" }).success).toBe(true);
+      for (const bad of ["Srinivasan", "sri k", "sri_k", "-leading", "trailing-", "sri!"]) {
+        expect(CreateEmployeeSchema.safeParse({ ...validEmployee, slug: bad }).success).toBe(false);
+      }
+    });
+
+    it("null keeps the card reachable only at its long-form URL, and stays valid", () => {
+      expect(CreateEmployeeSchema.safeParse({ ...validEmployee, slug: null }).success).toBe(true);
+    });
+  });
 });
 
 describe("employee voice resolution", () => {
@@ -160,6 +174,17 @@ describe("EmployeeForm value mapping", () => {
     expect(validateValues({ ...base, voice_id: "" })).toEqual({});
   });
 
+  it("lowercases the slug so typing a capitalised name doesn't fail validation", () => {
+    const payload = payloadFromValues({ ...base, slug: "Srinivasan" });
+    expect(payload.slug).toBe("srinivasan");
+    expect(validateValues({ ...base, slug: "Srinivasan" })).toEqual({});
+  });
+
+  it("sends a blank slug as null, keeping the card reachable only at its long URL", () => {
+    expect(payloadFromValues({ ...base, slug: "" }).slug).toBeNull();
+    expect(validateValues({ ...base, slug: "" })).toEqual({});
+  });
+
   it("surfaces the same errors the API would return", () => {
     const errors = validateValues({ ...base, name: "X", email: "nope" });
     expect(errors.name).toBeDefined();
@@ -187,6 +212,7 @@ describe("EmployeeForm value mapping", () => {
       prompt_override: "Mention that I cover APAC.",
       display_order: 3,
       is_active: false,
+      slug: "srinivasan",
       created_at: "2026-01-01T00:00:00Z",
       updated_at: "2026-01-01T00:00:00Z",
     };
@@ -199,5 +225,6 @@ describe("EmployeeForm value mapping", () => {
     expect(payload.prompt_override).toBe("Mention that I cover APAC.");
     expect(payload.display_order).toBe(3);
     expect(payload.is_active).toBe(false);
+    expect(payload.slug).toBe("srinivasan");
   });
 });

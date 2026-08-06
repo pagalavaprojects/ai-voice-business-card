@@ -34,11 +34,14 @@ function toWhatsappUrl(phone: string | null | undefined): string | null {
 }
 
 /** QR encoding this card's own URL, so it can be shown on a screen for
- * someone else to scan. Returns null on failure — a missing QR should hide
- * one optional action, never fail the whole card request. */
-async function renderCardQr(origin: string, companyId: string, employeeId: string): Promise<string | null> {
+ * someone else to scan. Prefers the short /c/{slug} path when one is set —
+ * it's what the card is meant to be printed and shared as — falling back to
+ * the permanent long-form URL otherwise. Returns null on failure — a missing
+ * QR should hide one optional action, never fail the whole card request. */
+async function renderCardQr(origin: string, companyId: string, employeeId: string, slug: string | null | undefined): Promise<string | null> {
   try {
-    const target = `${resolvePublicBaseUrl(origin) ?? origin}/${companyId}/${employeeId}`;
+    const base = resolvePublicBaseUrl(origin) ?? origin;
+    const target = slug ? `${base}/c/${slug}` : `${base}/${companyId}/${employeeId}`;
     return await QRCode.toString(target, {
       type: "svg",
       margin: 1,
@@ -199,7 +202,7 @@ export async function GET(req: NextRequest, { params }: { params: { companyId: s
       // Rendered server-side into an inline SVG so the QR library never
       // reaches the client bundle — the card is the first thing a visitor
       // loads, often on mobile data, and this keeps it off the critical path.
-      qrSvg: await renderCardQr(req.nextUrl.origin, companyId, employeeId),
+      qrSvg: await renderCardQr(req.nextUrl.origin, companyId, employeeId, employee.slug),
       // Derived, not stored: a wa.me link needs the number stripped to digits.
       whatsappUrl: toWhatsappUrl(employee.phone),
       bookingUrl,

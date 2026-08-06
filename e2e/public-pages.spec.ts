@@ -57,6 +57,14 @@ test.describe("Public pages (real browser, no live infrastructure required)", ()
     expect(await page.locator("body").innerText()).not.toMatch(/Sarah Connor|Acme Autonomous/i);
   });
 
+  test("an unknown short link (/c/{slug}) 404s instead of crashing or faking an identity", async ({ page }) => {
+    // Unlike the long-form UUID route, this one resolves server-side via
+    // notFound() — a real HTTP 404, not a 200 with a client-rendered message.
+    const response = await page.goto("/c/this-slug-does-not-exist-anywhere");
+    expect(response?.status()).toBe(404);
+    await expect(page.getByText(/not found/i)).toBeVisible();
+  });
+
   test("unauthenticated visitors are redirected away from the admin dashboard", async ({ page }) => {
     // This is the real end-to-end proof, in an actual browser following a
     // real redirect, of the Phase 2 fix to the fail-open auth bypass the

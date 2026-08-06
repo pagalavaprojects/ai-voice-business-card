@@ -126,6 +126,20 @@ code, kbd, samp, pre {
   animation: animate-in-from-right 0.3s ease-out;
 }
 
+/* Public business card entrance — gated behind motion-safe: in the markup,
+   so prefers-reduced-motion visitors get the finished layout with no
+   animation at all rather than a reduced version of it. */
+@keyframes card-rise {
+  from {
+    transform: translateY(10px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
 /* =====================================================
    Selection Color
    ===================================================== */
