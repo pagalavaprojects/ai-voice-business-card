@@ -16,6 +16,7 @@ export interface CreateAgentInput {
   voice_model_id: string;
   personality_prompt: string;
   first_message?: string | null;
+  welcome_message_language?: string | null;
   capabilities?: string[];
   tools?: string[];
   prompt_template_id?: string | null;

@@ -115,6 +115,10 @@ async function handleVapiMessage(req: NextRequest, message: VapiMessage): Promis
     return NextResponse.json({
       assistant: {
         firstMessage,
+        // See useVapiSession.ts (the browser call path) — kept identical here
+        // so a phone call reacts to a caller talking over the greeting the
+        // same way a browser call does.
+        firstMessageInterruptionsEnabled: true,
         model: {
           provider: "openai",
           model: "gpt-4o-mini",

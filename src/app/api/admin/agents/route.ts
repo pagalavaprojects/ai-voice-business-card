@@ -23,7 +23,18 @@ const CreateAgentSchema = z.object({
   avatar_url: z.string().url().optional().nullable(),
   voice_model_id: z.string().min(1),
   personality_prompt: z.string().min(10),
-  first_message: z.string().min(1).max(500).optional().nullable(),
+  // Vapi speaks this verbatim before the model runs — capped generously
+  // rather than tightly, since a real scripted introduction (company
+  // positioning, a short services list) legitimately runs longer than a
+  // one-line greeting.
+  first_message: z.string().min(1).max(2000).optional().nullable(),
+  // Loose BCP-47-ish tag ("en", "ta", "hi", "en-US") rather than a closed
+  // enum — a fixed list would need a code change every time a new language
+  // is added, defeating the point of making this configurable by data.
+  welcome_message_language: z
+    .string()
+    .regex(/^[a-z]{2,3}(-[A-Za-z]{2,8})?$/, "Use a language tag like en, ta, or hi")
+    .optional(),
   capabilities: z.array(z.string()).optional(),
   tools: z.array(z.enum(KNOWN_TOOL_NAMES)).optional(),
   prompt_template_id: z.string().uuid().optional().nullable(),

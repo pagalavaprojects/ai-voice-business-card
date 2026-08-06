@@ -15,6 +15,16 @@ import { KNOWN_TOOL_NAMES } from "@/core/application/tools/ToolRegistry";
 
 const DEPARTMENTS: AgentDepartment[] = ["SALES", "TECHNICAL_SUPPORT", "RECRUITER", "CUSTOMER_SUCCESS", "SUPERVISOR"];
 
+// A starting set, not a closed list — welcome_message_language accepts any
+// BCP-47-ish tag, so this exists only to save typing for the common cases.
+// Adding a language the greeting is actually written in is a data change
+// (this array + the script itself), never a code change.
+const WELCOME_LANGUAGES: Array<{ code: string; label: string }> = [
+  { code: "en", label: "English" },
+  { code: "ta", label: "Tamil" },
+  { code: "hi", label: "Hindi" },
+];
+
 interface AgentReadiness {
   ready: boolean;
   checks: Array<{ label: string; passed: boolean; detail: string }>;
@@ -159,6 +169,7 @@ function CreateAgentDialog({
   const [voiceModelId, setVoiceModelId] = useState("vapi-default");
   const [personalityPrompt, setPersonalityPrompt] = useState("");
   const [firstMessage, setFirstMessage] = useState("");
+  const [welcomeLanguage, setWelcomeLanguage] = useState("en");
   const [submitting, setSubmitting] = useState(false);
 
   const reset = () => {
@@ -167,6 +178,7 @@ function CreateAgentDialog({
     setVoiceModelId("vapi-default");
     setPersonalityPrompt("");
     setFirstMessage("");
+    setWelcomeLanguage("en");
   };
 
   const submit = async () => {
@@ -185,6 +197,7 @@ function CreateAgentDialog({
           voice_model_id: voiceModelId,
           personality_prompt: personalityPrompt,
           first_message: firstMessage.trim() || undefined,
+          welcome_message_language: welcomeLanguage.trim() || undefined,
         }),
       });
       onCreated(agent);
@@ -227,11 +240,12 @@ function CreateAgentDialog({
           <textarea
             value={firstMessage}
             onChange={(e) => setFirstMessage(e.target.value)}
-            rows={3}
+            rows={6}
             className="dashboard-input"
             placeholder="Hi! I'm... Thank you for scanning my AI business card…"
           />
         </Field>
+        <WelcomeLanguageField value={welcomeLanguage} onChange={setWelcomeLanguage} />
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="outline" size="sm" onClick={onClose}>
             Cancel
@@ -262,6 +276,7 @@ function EditAgentDialog({
   const [tools, setTools] = useState<string[]>([]);
   const [assignedKnowledge, setAssignedKnowledge] = useState<string[]>([]);
   const [firstMessage, setFirstMessage] = useState("");
+  const [welcomeLanguage, setWelcomeLanguage] = useState("en");
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [readiness, setReadiness] = useState<AgentReadiness | null>(null);
@@ -270,6 +285,7 @@ function EditAgentDialog({
     if (!agent) return;
     setTools(agent.tools || []);
     setFirstMessage(agent.first_message || "");
+    setWelcomeLanguage(agent.welcome_message_language || "en");
     setReadiness(null);
     apiFetch<{ knowledgeDocumentIds: string[] }>(`/api/admin/agents/${agent.id}?companyId=${companyId}`)
       .then((data) => setAssignedKnowledge(data.knowledgeDocumentIds))
@@ -295,6 +311,7 @@ function EditAgentDialog({
           tools,
           knowledge_document_ids: assignedKnowledge,
           first_message: firstMessage.trim() || null,
+          welcome_message_language: welcomeLanguage.trim() || undefined,
         }),
       });
       onUpdated(updated);
@@ -350,11 +367,12 @@ function EditAgentDialog({
           <textarea
             value={firstMessage}
             onChange={(e) => setFirstMessage(e.target.value)}
-            rows={3}
+            rows={6}
             className="dashboard-input"
             placeholder="Hi! I'm... Thank you for scanning my AI business card…"
           />
         </Field>
+        <WelcomeLanguageField value={welcomeLanguage} onChange={setWelcomeLanguage} />
 
         <div>
           <div className="text-slate-500 uppercase tracking-wide text-[10px] mb-2">Tool Assignment</div>
@@ -423,5 +441,40 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       <span className="block text-[11px] uppercase tracking-wide text-slate-500 mb-1">{label}</span>
       {children}
     </label>
+  );
+}
+
+/** What language the first-message textarea above it is written in. A
+ * preset list for the common cases plus free text for anything else — the
+ * validation (a loose BCP-47-ish tag) accepts any of them, so a language not
+ * in WELCOME_LANGUAGES yet is still just typing, not a code change. */
+function WelcomeLanguageField({ value, onChange }: { value: string; onChange: (code: string) => void }) {
+  const isPreset = WELCOME_LANGUAGES.some((l) => l.code === value);
+  return (
+    <Field label="Greeting language">
+      <div className="flex items-center gap-2">
+        <select
+          value={isPreset ? value : "other"}
+          onChange={(e) => onChange(e.target.value === "other" ? "" : e.target.value)}
+          className="dashboard-input"
+        >
+          {WELCOME_LANGUAGES.map((l) => (
+            <option key={l.code} value={l.code}>
+              {l.label}
+            </option>
+          ))}
+          <option value="other">Other…</option>
+        </select>
+        {!isPreset && (
+          <input
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder="e.g. te"
+            aria-label="Custom language tag"
+            className="dashboard-input w-24"
+          />
+        )}
+      </div>
+    </Field>
   );
 }

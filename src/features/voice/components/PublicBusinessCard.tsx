@@ -114,7 +114,7 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
     };
   }, [companyId, employeeId]);
 
-  const { voiceState, isMuted, messages, durationSeconds, error, startCall, endCall, toggleMute } = useVapiSession({
+  const { voiceState, isMuted, messages, durationSeconds, error, isPlayingIntro, startCall, endCall, toggleMute } = useVapiSession({
     companyId,
     employeeId,
     firstMessage: card?.firstMessage,
@@ -125,17 +125,24 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
   });
 
   const isCallActive = voiceState !== "idle";
+  const companyName = card?.company.name;
 
   // "Online" reflects whether the AI can actually take a call right now, which
   // is always — it is not gated on the human's working hours. Those are shown
   // separately so a visitor knows when a human follow-up is likely.
+  //
+  // The "speaking" case has two forms: the scripted opening (isPlayingIntro,
+  // set for exactly the call's first assistant utterance) reads as
+  // "Introducing {Company}…", everything spoken after that reads as the
+  // generic "Speaking" — matching how a human receptionist's rehearsed
+  // opening line reads differently from the rest of the conversation.
   const statusLabel = useMemo(() => {
     if (voiceState === "idle") return "Available now";
     if (voiceState === "connecting") return "Connecting…";
-    if (voiceState === "speaking") return "Speaking";
+    if (voiceState === "speaking") return isPlayingIntro ? `Introducing ${companyName ?? "us"}…` : "Speaking";
     if (voiceState === "thinking") return "Thinking…";
     return "Listening";
-  }, [voiceState]);
+  }, [voiceState, isPlayingIntro, companyName]);
 
   if (cardLoading) {
     return (
@@ -276,12 +283,18 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
             <VoiceMicButton state={voiceState} isMuted={isMuted} onClick={isCallActive ? endCall : startCall} />
 
             <p className="text-sm text-slate-200 text-center font-semibold mt-4">
-              {isCallActive ? "Speak naturally — I'm listening" : `Talk with ${employee.name.split(" ")[0]}'s AI`}
+              {isPlayingIntro
+                ? "Playing welcome introduction…"
+                : isCallActive
+                  ? "Speak naturally — I'm listening"
+                  : `Talk with ${employee.name.split(" ")[0]}'s AI`}
             </p>
             <p className="text-xs text-slate-400 text-center mt-1 max-w-xs">
-              {isCallActive
-                ? "Responses stream in real time. Tap the microphone to end."
-                : "Ask anything about what we do. Your browser will ask for microphone access."}
+              {isPlayingIntro
+                ? "Feel free to jump in — talking now skips straight to your question."
+                : isCallActive
+                  ? "Responses stream in real time. Tap the microphone to end."
+                  : "Ask anything about what we do. Your browser will ask for microphone access."}
             </p>
 
             {error && (

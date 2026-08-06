@@ -220,14 +220,20 @@ async function seedPagalava() {
       voice_model_id: "nova",
       personality_prompt:
         "Professional, warm, and consultative voice assistant representing Pagalava Data Analytics' founder.",
-      // Kept deliberately short (~48 words, ~19s at natural speaking pace)
-      // — this is spoken verbatim by Vapi before the model or system
-      // prompt engage, so it's the one place length can't be fixed by
-      // prompting. Everything past "how can I help" (services, pricing,
-      // ideal-client framing) now lives in the sales module and FAQs,
-      // surfaced only when the conversation actually calls for it.
+      // A full scripted Tamil introduction, spoken verbatim by Vapi before
+      // the model or system prompt engage — the AI-receptionist-style
+      // welcome requested for this specific card, deliberately longer and
+      // more complete than the short opening line used elsewhere in this
+      // codebase. firstMessageInterruptionsEnabled (useVapiSession.ts / the
+      // webhook route) lets a visitor talk over it and skip straight to
+      // their question, so the length is a welcome a visitor can opt out
+      // of mid-sentence, not a forced wait.
       first_message:
-        "Hi. I'm Srinivasan Kandasamy from Pagalava Data Analytics. Thank you for scanning my AI business card. We help mid-sized companies adopt Artificial Intelligence without needing to build or hire an expensive in-house AI team. Think of us as your plug-and-play AI department. How can I help you today?",
+        "வணக்கம்.\n\nPagalava Data Analytics Private Limited சார்பாக எங்களுடைய சேவைகளை உங்களுக்கு தற்பொழுது அறிமுகப்படுத்துகிறோம்.\n\nஇது செயற்கை நுண்ணறிவு மூலம் இயங்கும் எங்களுடைய Smart AI Business Card ஆகும்.\n\nஇந்த AI Business Card-ஐ தங்களுக்கு தேவையான எந்த நேரத்திலும் பயன்படுத்திக்கொள்ளலாம்.\n\nPagalava Data Analytics என்பது ஒரு Women-led Deep Tech Startup நிறுவனம்.\n\nநடுத்தர நிறுவனங்களுக்கு தேவையான செயற்கை நுண்ணறிவு தீர்வுகளை Technology as a Service (TaaS) முறையில் வழங்குகிறோம்.\n\nஎங்களுடைய முக்கிய சேவைகள்:\n\n• Customer Experience Analytics\n\n• Predictive Business Intelligence\n\n• Marketing Performance Optimization\n\n• Operations & Bottleneck Analysis\n\n• Fraud Detection & Risk Management\n\nஇந்த AI Business Card-ஐ உங்கள் வாடிக்கையாளர்கள் அல்லது புதிய Leads-களின் மொபைலில் Tap செய்தவுடன், உங்கள் தொடர்பு விவரங்கள் உடனடியாக அவர்களின் Contact List-இல் சேமிக்கப்படும்.\n\nஅதன்பிறகு, இந்த AI Assistant உங்கள் நிறுவனத்தை அவர்களுக்கு விளக்கி கூறும்.\n\nஅவர்கள் கேட்கும் கேள்விகளுக்கு உடனடியாக பதிலளிக்கும்.\n\nதேவையானால் உங்கள் WhatsApp, Email அல்லது Booking வழியாக உங்களை நேரடியாக தொடர்பு கொள்ளவும் உதவும்.\n\nஇப்போது உங்களுக்கு என்ன உதவி செய்யலாம்?",
+      // Tags the language of first_message above — see AIAgent.welcome_
+      // message_language. Swapping to another language later is a data
+      // edit (this value + the text), never a code change.
+      welcome_message_language: "ta",
       capabilities: ["lead_qualification", "appointment_booking", "product_qna"],
       escalation_threshold: 0.7,
       is_active: true,

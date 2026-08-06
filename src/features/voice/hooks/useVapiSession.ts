@@ -48,10 +48,19 @@ export function useVapiSession({
   const [messages, setMessages] = useState<MessageItem[]>([]);
   const [durationSeconds, setDurationSeconds] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  // True only while the call's very first assistant utterance (the scripted
+  // first_message) is being spoken — lets the UI say "Introducing…" instead
+  // of the generic "Speaking" label for just that opening line, then never
+  // again for the rest of the same call.
+  const [isPlayingIntro, setIsPlayingIntro] = useState(false);
 
   const vapiRef = useRef<Vapi | null>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const isDemoModeRef = useRef<boolean>(false);
+  // Flips true the moment the first assistant utterance is seen, and stays
+  // true for the rest of THIS call — reset on every fresh call-start, so a
+  // page refresh or a new session correctly plays the intro again.
+  const hasHadFirstAssistantSpeechRef = useRef<boolean>(false);
 
   const stopTimer = useCallback(() => {
     if (timerRef.current) {
@@ -89,15 +98,25 @@ export function useVapiSession({
         setVoiceState("listening");
         setError(null);
         startTimer();
+        // Fresh call: the intro has not played yet in this session.
+        hasHadFirstAssistantSpeechRef.current = false;
+        setIsPlayingIntro(false);
       });
 
       vapi.on("call-end", () => {
         setVoiceState("idle");
+        setIsPlayingIntro(false);
         stopTimer();
       });
 
       vapi.on("speech-start", () => {
         setVoiceState("listening");
+        // A visitor talking over the greeting is exactly the "user
+        // interrupted" case — firstMessageInterruptionsEnabled (below) makes
+        // Vapi itself stop the greeting's audio; this makes sure the UI's
+        // "Introducing…" label drops the instant that happens, rather than
+        // lingering until the 3s timer below would otherwise have cleared it.
+        setIsPlayingIntro(false);
       });
 
       vapi.on("speech-end", () => {
@@ -109,8 +128,19 @@ export function useVapiSession({
           const role = message.role === "user" ? "user" : "assistant";
           setMessages((prev) => [...prev, { role, content: message.transcript as string }]);
           if (role === "assistant") {
+            const isIntro = !hasHadFirstAssistantSpeechRef.current;
+            hasHadFirstAssistantSpeechRef.current = true;
+
             setVoiceState("speaking");
-            setTimeout(() => setVoiceState("listening"), 3000);
+            if (isIntro) setIsPlayingIntro(true);
+            // Vapi's SDK has no explicit "assistant finished speaking" event
+            // to hook — this fixed window is the same approximation the
+            // "speaking" -> "listening" transition above it already used
+            // before the intro tracking was added.
+            setTimeout(() => {
+              setVoiceState("listening");
+              if (isIntro) setIsPlayingIntro(false);
+            }, 3000);
           }
         }
       });
@@ -139,9 +169,12 @@ export function useVapiSession({
     if (isDemoModeRef.current || !vapiRef.current) {
       setVoiceState("connecting");
       startTimer();
+      hasHadFirstAssistantSpeechRef.current = false;
 
       setTimeout(() => {
         setVoiceState("speaking");
+        setIsPlayingIntro(true);
+        hasHadFirstAssistantSpeechRef.current = true;
         setMessages([
           {
             role: "assistant",
@@ -150,6 +183,7 @@ export function useVapiSession({
         ]);
         setTimeout(() => {
           setVoiceState("listening");
+          setIsPlayingIntro(false);
         }, 2500);
       }, 600);
 
@@ -162,6 +196,10 @@ export function useVapiSession({
 
       const assistantConfig = {
         firstMessage: firstMessage || DEFAULT_FIRST_MESSAGE,
+        // Default is false: without this, a visitor talking over the
+        // scripted opening would have their speech ignored until the
+        // greeting finished playing in full.
+        firstMessageInterruptionsEnabled: true,
         model: {
           provider: "openai",
           model: "gpt-4o-mini",
@@ -235,6 +273,7 @@ export function useVapiSession({
     messages,
     durationSeconds,
     error,
+    isPlayingIntro,
     startCall,
     endCall,
     toggleMute,

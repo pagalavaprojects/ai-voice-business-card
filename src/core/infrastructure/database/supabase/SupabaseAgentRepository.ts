@@ -15,6 +15,7 @@ export class SupabaseAgentRepository implements IAgentRepository {
         voice_model_id: data.voice_model_id,
         personality_prompt: data.personality_prompt,
         first_message: data.first_message ?? null,
+        welcome_message_language: data.welcome_message_language ?? "en",
         capabilities: data.capabilities ?? [],
         tools: data.tools ?? [],
         prompt_template_id: data.prompt_template_id ?? null,

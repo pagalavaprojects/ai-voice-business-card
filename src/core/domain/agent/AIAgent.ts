@@ -18,6 +18,14 @@ export interface AIAgent extends BaseEntity {
   voice_model_id: string;
   personality_prompt: string;
   first_message?: string | null;
+  /** BCP-47-ish tag ("en", "ta", "hi", ...) naming what language
+   * first_message is written in. Vapi speaks whatever text is in
+   * first_message regardless of this value — it carries no runtime
+   * behavior — but it's what lets an admin (or a future language picker)
+   * know what they're editing/swapping without having to read the script
+   * itself, and lets a multilingual greeting rotate later by changing data,
+   * never code. */
+  welcome_message_language?: string | null;
   capabilities: string[];
   tools: string[];
   prompt_template_id?: string | null;
