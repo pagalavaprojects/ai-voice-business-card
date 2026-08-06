@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
-import { Mail, Phone, Globe, MapPin, Clock, Calendar, Download, QrCode, MessageCircle, Linkedin, X } from "lucide-react";
+import { Mail, Phone, Globe, MapPin, Clock, Calendar, Download, QrCode, MessageCircle, Linkedin, Link2, X } from "lucide-react";
 import { useVapiSession } from "@/features/voice/hooks/useVapiSession";
 import { VoiceMicButton } from "@/features/voice/components/VoiceMicButton";
 import { TranscriptViewer } from "@/features/voice/components/TranscriptViewer";
@@ -166,6 +166,11 @@ export default function VoiceBusinessCardPage() {
   }
 
   const { company, employee } = card;
+  const linkedIn = card.socialLinks?.linkedin || card.socialLinks?.linkedIn;
+  // LinkedIn gets its own branded button below, so it's excluded here rather
+  // than appearing twice — once with its icon, once as a generic link.
+  const otherLinks = Object.entries(card.socialLinks ?? {}).filter(([label]) => !/^linkedin$/i.test(label));
+
   const contact = {
     name: employee.name,
     email: employee.email,
@@ -173,9 +178,8 @@ export default function VoiceBusinessCardPage() {
     company: company.name,
     designation: employee.designation,
     website: company.website,
+    links: Object.fromEntries(otherLinks.concat(linkedIn ? [["LinkedIn", linkedIn]] : [])),
   };
-
-  const linkedIn = card.socialLinks?.linkedin || card.socialLinks?.linkedIn;
 
   return (
     <main className="min-h-screen bg-[#070b12] text-slate-100 py-6 px-4 sm:py-10">
@@ -479,6 +483,9 @@ export default function VoiceBusinessCardPage() {
             {company.website && (
               <ContactLink href={company.website} icon={<Globe className="h-3.5 w-3.5" />} label="Website" external />
             )}
+            {otherLinks.map(([label, url]) => (
+              <ContactLink key={label} href={url} icon={<Link2 className="h-3.5 w-3.5" />} label={label} external />
+            ))}
           </ul>
         </Card>
 

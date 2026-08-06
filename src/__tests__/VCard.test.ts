@@ -42,4 +42,38 @@ describe("vCard generation", () => {
     const { website: _unused, ...noSite } = CONTACT;
     expect(generateVCard(noSite)).not.toContain("URL:");
   });
+
+  describe("extra labeled links", () => {
+    it("emits each as an itemN.URL + itemN.X-ABLabel pair, preserving the label", () => {
+      const card = generateVCard({ ...CONTACT, links: { "click my AI-Voice Card": "https://ai-voice-business-card.vercel.app/a/b" } });
+      expect(card).toContain("item1.URL:https://ai-voice-business-card.vercel.app/a/b");
+      expect(card).toContain("item1.X-ABLabel:click my AI-Voice Card");
+    });
+
+    it("numbers multiple links sequentially without colliding", () => {
+      const card = generateVCard({
+        ...CONTACT,
+        links: { LinkedIn: "https://linkedin.com/in/srini", "AI Voice Card": "https://example.com/card" },
+      });
+      expect(card).toContain("item1.URL:https://linkedin.com/in/srini");
+      expect(card).toContain("item1.X-ABLabel:LinkedIn");
+      expect(card).toContain("item2.URL:https://example.com/card");
+      expect(card).toContain("item2.X-ABLabel:AI Voice Card");
+    });
+
+    it("skips an empty URL rather than emitting an unusable item", () => {
+      const card = generateVCard({ ...CONTACT, links: { Empty: "" } });
+      expect(card).not.toContain("X-ABLabel:Empty");
+    });
+
+    it("escapes the label the same way every other field is escaped", () => {
+      const card = generateVCard({ ...CONTACT, links: { "Ping, Pong; Co": "https://example.com" } });
+      expect(card).toContain("item1.X-ABLabel:Ping\\, Pong\\; Co");
+    });
+
+    it("leaves the primary URL line untouched when there are no extra links", () => {
+      const card = generateVCard(CONTACT);
+      expect(card).not.toContain("item1.");
+    });
+  });
 });

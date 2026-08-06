@@ -4,6 +4,7 @@ import { handleApiError } from "@/shared/lib/apiHandler";
 import { requireCompanyAccess } from "@/shared/lib/tenant";
 import { SupabaseSettingsRepository } from "@/core/infrastructure/database/supabase/SupabaseSettingsRepository";
 import { SupabaseStorageAdapter } from "@/core/infrastructure/storage/SupabaseStorageAdapter";
+import { supabaseAdmin } from "@/shared/lib/supabase";
 
 // Reads the session cookie and/or query params, so it can never be rendered
 // statically. Declared explicitly to stop Next attempting a static pass that
@@ -40,6 +41,14 @@ export async function POST(req: NextRequest) {
 
     const branding = await settingsRepo.upsertBranding(companyId, { logo_storage_path: storagePath });
     const logoUrl = storage.getPublicUrl("company-logos", storagePath);
+
+    // The public card reads companies.logo_url directly — it does not resolve
+    // branding.logo_storage_path. Without this, uploading a logo here updated
+    // the admin's own Settings preview and nothing else: the live card never
+    // changed. companies.logo_url is kept as the single value the public path
+    // actually serves; the branding row above is upsert bookkeeping.
+    const { error: companyError } = await supabaseAdmin.from("companies").update({ logo_url: logoUrl }).eq("id", companyId);
+    if (companyError) throw new Error(`Failed to update company logo: ${companyError.message}`);
 
     return formatApiResponse({ branding, logoUrl }, 200, "Logo uploaded successfully");
   } catch (error) {

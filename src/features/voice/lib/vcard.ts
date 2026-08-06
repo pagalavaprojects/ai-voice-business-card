@@ -5,6 +5,10 @@ export interface VCardContact {
   company: string;
   designation: string;
   website?: string;
+  /** Extra labeled links beyond the company website — an employee's own
+   * social profiles, or a link back to this same AI voice card so importing
+   * the contact doesn't strand the visitor without a way to return to it. */
+  links?: Record<string, string>;
 }
 
 /**
@@ -34,6 +38,20 @@ export function generateVCard(contact: VCardContact): string {
     `EMAIL;TYPE=WORK:${escape(contact.email)}`,
   ];
   if (contact.website) lines.push(`URL:${escape(contact.website)}`);
+
+  // vCard 3.0 has no plain "labeled URL" field — TYPE only accepts fixed
+  // tokens like WORK/HOME, not free text. The `itemN.` grouping + X-ABLabel
+  // pair is Apple's extension for a custom label, and it degrades safely:
+  // iOS/macOS Contacts show the real label, everything else still imports it
+  // as a plain extra website (untitled, not dropped).
+  let itemIndex = 1;
+  for (const [label, url] of Object.entries(contact.links ?? {})) {
+    if (!url) continue;
+    lines.push(`item${itemIndex}.URL:${escape(url)}`);
+    lines.push(`item${itemIndex}.X-ABLabel:${escape(label)}`);
+    itemIndex += 1;
+  }
+
   lines.push("END:VCARD");
 
   // vCard requires CRLF line endings; some address books reject LF-only files.
