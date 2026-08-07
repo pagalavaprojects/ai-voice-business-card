@@ -25,12 +25,22 @@ test.describe("Public pages (real browser, no live infrastructure required)", ()
     expect(hasHorizontalScroll).toBe(false);
   });
 
-  test("voice widget page renders the mic button with its dynamic aria-label", async ({ page }) => {
+  test("first-time visitor sees the language gate before the mic button, then reaches it after Continue", async ({ page }) => {
     const consoleErrors: string[] = [];
     page.on("pageerror", (err) => consoleErrors.push(err.message));
 
     const response = await page.goto(SEEDED_CARD_PATH);
     expect(response?.status()).toBe(200);
+
+    // A fresh browser context has no stored language preference, so the
+    // pre-conversation gate — not the card itself — is the first thing a
+    // first-time visitor sees. This is the actual feature being verified:
+    // language selection happens before the AI conversation can start.
+    const gate = page.getByRole("radiogroup", { name: /conversation language/i });
+    await expect(gate).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByRole("button", { name: /Start voice conversation/i })).toHaveCount(0);
+
+    await page.getByRole("button", { name: /continue/i }).click();
 
     // VoiceMicButton sets a dynamic aria-label per call state — "idle" on
     // first render — this is the exact accessibility behavior code-reviewed
@@ -44,6 +54,19 @@ test.describe("Public pages (real browser, no live infrastructure required)", ()
     await expect(page.getByRole("button", { name: /Start voice conversation/i })).toBeVisible({ timeout: 20_000 });
 
     expect(consoleErrors).toEqual([]);
+  });
+
+  test("a returning visitor with a stored language preference skips the gate entirely", async ({ page }) => {
+    // Seed localStorage before the app's first script runs, on the exact
+    // origin the card is served from — matches how a real second visit
+    // behaves, not a same-page storage write after the fact.
+    await page.goto(SEEDED_CARD_PATH);
+    await page.evaluate(() => window.localStorage.setItem("pagalava.language", "en"));
+
+    await page.reload();
+
+    await expect(page.getByRole("button", { name: /Start voice conversation/i })).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByRole("radiogroup", { name: /conversation language/i })).toHaveCount(0);
   });
 
   test("an unknown card shows a not-found state instead of a fallback identity", async ({ page }) => {

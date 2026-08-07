@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Key, Globe, Save, Palette, Mic, CalendarClock, Loader2, Plus, Trash2, Copy, Upload, UserPlus, Users } from "lucide-react";
+import { Key, Globe, Save, Palette, Mic, CalendarClock, Loader2, Plus, Trash2, Copy, Upload, UserPlus, Users, Languages } from "lucide-react";
 import { Card } from "@/shared/ui/card";
 import { useToast } from "@/shared/ui/toast";
 import { Button } from "@/shared/ui/button";
@@ -10,6 +10,7 @@ import { useCompany } from "@/features/dashboard/context/CompanyContext";
 import { apiFetch, ApiClientError } from "@/shared/lib/apiClient";
 import { ApiKeyRecord, Branding, Company, CompanyMember, Settings, SUPPORTED_VOICE_IDS, UserProfile } from "@/core/domain/models/types";
 import { makePublicUrlResolver } from "@/features/dashboard/components/catalog/CatalogFormPrimitives";
+import { SUPPORTED_LANGUAGES, LanguageCode, isSupportedLanguage } from "@/features/language/config";
 
 type MemberRole = CompanyMember["role"];
 type MemberRow = CompanyMember & { user: UserProfile | null };
@@ -78,6 +79,13 @@ export default function SettingsPage() {
   const [eventTypeId, setEventTypeId] = useState("");
   const [bookingUrl, setBookingUrl] = useState("");
   const [senderName, setSenderName] = useState("");
+  // Empty string means "no company override" (inherit the platform default,
+  // Tamil) — matches the same empty-means-inherit shape as voiceModel above.
+  const [defaultLanguage, setDefaultLanguage] = useState<LanguageCode | "">("");
+  // Empty array means "no restriction, every platform language is offered" —
+  // the same inherit-all-unless-narrowed shape resolveEnabledLanguageList
+  // uses server-side, not "no languages available."
+  const [enabledLanguages, setEnabledLanguages] = useState<LanguageCode[]>([]);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   const [newKeyDialogOpen, setNewKeyDialogOpen] = useState(false);
@@ -110,6 +118,12 @@ export default function SettingsPage() {
       setEventTypeId(String(settingsData.settings?.calendar_settings?.event_type_id ?? ""));
       setBookingUrl((settingsData.settings?.calendar_settings?.booking_url as string) ?? "");
       setSenderName((settingsData.settings?.email_settings?.sender_name as string) ?? "");
+
+      const langSettings = settingsData.settings?.language_settings;
+      const storedDefault = langSettings?.default_language;
+      setDefaultLanguage(typeof storedDefault === "string" && isSupportedLanguage(storedDefault) ? storedDefault : "");
+      const storedEnabled = langSettings?.enabled_languages;
+      setEnabledLanguages(Array.isArray(storedEnabled) ? storedEnabled.filter((v): v is LanguageCode => typeof v === "string" && isSupportedLanguage(v)) : []);
     } catch (err) {
       showToast(err instanceof ApiClientError ? err.message : "Failed to load settings", "error");
     }
@@ -219,6 +233,39 @@ export default function SettingsPage() {
       showToast("Configuration saved", "success");
     } catch (err) {
       showToast(err instanceof ApiClientError ? err.message : "Failed to save configuration", "error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const toggleEnabledLanguage = (code: LanguageCode) => {
+    setEnabledLanguages((prev) => (prev.includes(code) ? prev.filter((c) => c !== code) : [...prev, code]));
+  };
+
+  const handleSaveLanguageSettings = async () => {
+    if (!activeCompanyId) return;
+    // A default that isn't in the enabled set would leave the platform
+    // resolving to a language visitors can never actually reach — caught
+    // here rather than surfacing as a confusing runtime fallback later.
+    if (defaultLanguage && enabledLanguages.length > 0 && !enabledLanguages.includes(defaultLanguage)) {
+      return setError("defaultLanguage", "The default language must also be one of the enabled languages");
+    }
+    setErrors({});
+    setSaving(true);
+    try {
+      await apiFetch<Settings>("/api/admin/settings", {
+        method: "PUT",
+        body: JSON.stringify({
+          company_id: activeCompanyId,
+          language_settings: {
+            default_language: defaultLanguage || null,
+            enabled_languages: enabledLanguages,
+          },
+        }),
+      });
+      showToast("Language settings saved", "success");
+    } catch (err) {
+      showToast(err instanceof ApiClientError ? err.message : "Failed to save language settings", "error");
     } finally {
       setSaving(false);
     }
@@ -444,6 +491,69 @@ export default function SettingsPage() {
         <Button variant="default" size="sm" onClick={handleSaveVoiceAndCalendar} disabled={saving} className="flex items-center gap-2">
           {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <Save className="h-3.5 w-3.5" aria-hidden="true" />}
           Save Configuration
+        </Button>
+      </Card>
+
+      <Card className="glass-panel border-white/[0.08] p-6 space-y-4">
+        <div className="flex items-center gap-2 text-slate-100 font-bold text-sm border-b border-white/[0.08] pb-3">
+          <Languages className="h-4 w-4 text-sky-400" />
+          Language Settings
+        </div>
+        <p className="text-[11px] text-slate-500 -mt-2">
+          Controls which languages visitors can choose on this company&rsquo;s voice cards — the pre-conversation language
+          screen and the in-call language switcher both only ever offer what&rsquo;s enabled here.
+        </p>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <SettingField label="Default language" hint="used when no preference is set" error={errors.defaultLanguage}>
+            <select value={defaultLanguage} onChange={(e) => setDefaultLanguage(e.target.value as LanguageCode | "")} className="dashboard-input">
+              <option value="">Platform default (Tamil)</option>
+              {SUPPORTED_LANGUAGES.map((l) => (
+                <option key={l.code} value={l.code}>
+                  {l.name} ({l.nativeName})
+                </option>
+              ))}
+            </select>
+          </SettingField>
+          <SettingField label="Future voice provider" hint="reserved, not yet active">
+            {/* Inert placeholder for a per-language voice provider choice —
+                every language ships on OpenAI TTS today (see
+                LanguageDefinition.futureVoiceProvider); this control exists
+                so the setting has a visible home once that lands, without
+                implying a capability this release doesn't have. */}
+            <select disabled className="dashboard-input opacity-60 cursor-not-allowed">
+              <option>OpenAI (platform default)</option>
+            </select>
+          </SettingField>
+        </div>
+
+        <fieldset>
+          <legend className="block font-medium text-xs text-slate-300 mb-2">
+            Enabled languages
+            <span className="ml-2 font-normal text-slate-500">none selected = all languages available</span>
+          </legend>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+            {SUPPORTED_LANGUAGES.map((l) => (
+              <label
+                key={l.code}
+                className="flex items-center gap-2 text-xs text-slate-300 bg-white/[0.03] hover:bg-white/[0.06] border border-white/[0.08] rounded-lg px-3 py-2 cursor-pointer transition-colors"
+              >
+                <input
+                  type="checkbox"
+                  checked={enabledLanguages.includes(l.code)}
+                  onChange={() => toggleEnabledLanguage(l.code)}
+                  className="rounded border-white/20 bg-transparent"
+                />
+                <span aria-hidden="true">{l.flag}</span>
+                <span>{l.name}</span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
+
+        <Button variant="default" size="sm" onClick={handleSaveLanguageSettings} disabled={saving} className="flex items-center gap-2">
+          {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <Save className="h-3.5 w-3.5" aria-hidden="true" />}
+          Save Language Settings
         </Button>
       </Card>
 

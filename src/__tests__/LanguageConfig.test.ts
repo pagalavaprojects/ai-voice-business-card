@@ -1,15 +1,18 @@
-import { detectLanguageFromBrowser, getLanguageDefinition, isSupportedLanguage, SUPPORTED_LANGUAGES, DEFAULT_LANGUAGE } from "@/features/language/config";
+import { detectLanguageFromBrowser, getLanguageDefinition, isSupportedLanguage, hasConfirmedSpeechRecognition, SUPPORTED_LANGUAGES, DEFAULT_LANGUAGE } from "@/features/language/config";
 import en from "@/features/language/locales/en.json";
 import ta from "@/features/language/locales/ta.json";
 import hi from "@/features/language/locales/hi.json";
+import te from "@/features/language/locales/te.json";
+import ml from "@/features/language/locales/ml.json";
+import kn from "@/features/language/locales/kn.json";
 
 describe("language config", () => {
   it("defaults to Tamil — Pagalava primarily serves Tamil Nadu", () => {
     expect(DEFAULT_LANGUAGE).toBe("ta");
   });
 
-  it("ships exactly the three initial-release languages, Tamil first", () => {
-    expect(SUPPORTED_LANGUAGES.map((l) => l.code)).toEqual(["ta", "en", "hi"]);
+  it("ships all 6 supported languages", () => {
+    expect(SUPPORTED_LANGUAGES.map((l) => l.code)).toEqual(["en", "ta", "hi", "te", "ml", "kn"]);
   });
 
   describe("detectLanguageFromBrowser", () => {
@@ -19,12 +22,12 @@ describe("language config", () => {
       expect(detectLanguageFromBrowser("en")).toBe("en");
     });
 
-    it("maps a Hindi browser locale to Hindi", () => {
+    it("maps each of the six supported languages to itself", () => {
       expect(detectLanguageFromBrowser("hi-IN")).toBe("hi");
-    });
-
-    it("maps a Tamil browser locale to Tamil", () => {
       expect(detectLanguageFromBrowser("ta-IN")).toBe("ta");
+      expect(detectLanguageFromBrowser("te-IN")).toBe("te");
+      expect(detectLanguageFromBrowser("ml-IN")).toBe("ml");
+      expect(detectLanguageFromBrowser("kn-IN")).toBe("kn");
     });
 
     it("falls back to Tamil for an unsupported language, not English", () => {
@@ -38,10 +41,10 @@ describe("language config", () => {
   });
 
   describe("isSupportedLanguage", () => {
-    it("accepts the three shipped codes", () => {
-      expect(isSupportedLanguage("ta")).toBe(true);
-      expect(isSupportedLanguage("en")).toBe(true);
-      expect(isSupportedLanguage("hi")).toBe(true);
+    it("accepts all six shipped codes", () => {
+      for (const code of ["en", "ta", "hi", "te", "ml", "kn"]) {
+        expect(isSupportedLanguage(code)).toBe(true);
+      }
     });
 
     it("rejects anything else, including null/undefined/empty", () => {
@@ -52,15 +55,42 @@ describe("language config", () => {
     });
   });
 
-  it("getLanguageDefinition returns the matching Deepgram speech locale for each language", () => {
+  it("getLanguageDefinition returns the matching Deepgram speech locale for the four Deepgram-supported languages", () => {
     expect(getLanguageDefinition("ta").speechLocale).toBe("ta");
     expect(getLanguageDefinition("en").speechLocale).toBe("en");
     expect(getLanguageDefinition("hi").speechLocale).toBe("hi");
+    expect(getLanguageDefinition("kn").speechLocale).toBe("kn");
+  });
+
+  describe("hasConfirmedSpeechRecognition", () => {
+    it("is true for the four languages Deepgram supports directly", () => {
+      expect(hasConfirmedSpeechRecognition("en")).toBe(true);
+      expect(hasConfirmedSpeechRecognition("ta")).toBe(true);
+      expect(hasConfirmedSpeechRecognition("hi")).toBe(true);
+      expect(hasConfirmedSpeechRecognition("kn")).toBe(true);
+    });
+
+    it("is false for Telugu/Malayalam — not in Deepgram's supported-language list", () => {
+      // Verified against the installed @vapi-ai/web SDK's own type
+      // definitions (a closed union with no 'te'/'ml' and no string escape
+      // hatch), not assumed. These two route through Azure instead, gated
+      // on Azure Speech actually being linked in Vapi's dashboard — see
+      // resolveTranscriberConfig.
+      expect(hasConfirmedSpeechRecognition("te")).toBe(false);
+      expect(hasConfirmedSpeechRecognition("ml")).toBe(false);
+    });
+
+    it("every language still has an Azure or Deepgram locale defined, so none is silently unreachable", () => {
+      for (const lang of SUPPORTED_LANGUAGES) {
+        expect(lang.speechLocale || lang.azureSpeechLocale).toBeTruthy();
+      }
+    });
   });
 
   describe("locale bundle completeness", () => {
-    // Catches a typo'd or missing key in one of the three hand-written JSON
-    // files before it ships as a visible untranslated key on the card.
+    // Catches a typo'd or missing key in one of the hand-written JSON files
+    // before it ships as a visible untranslated key (or a raw dotted path)
+    // on the live card.
     function flattenKeys(obj: unknown, prefix = ""): string[] {
       if (Array.isArray(obj)) return [prefix];
       if (obj && typeof obj === "object") {
@@ -70,19 +100,16 @@ describe("language config", () => {
     }
 
     const enKeys = flattenKeys(en).sort();
+    const bundles: Record<string, unknown> = { ta, hi, te, ml, kn };
 
-    it("Tamil bundle has exactly the same keys as English", () => {
-      expect(flattenKeys(ta).sort()).toEqual(enKeys);
-    });
-
-    it("Hindi bundle has exactly the same keys as English", () => {
-      expect(flattenKeys(hi).sort()).toEqual(enKeys);
+    it.each(Object.keys(bundles))("%s bundle has exactly the same keys as English", (code) => {
+      expect(flattenKeys(bundles[code]).sort()).toEqual(enKeys);
     });
 
     it("every bundle ships exactly three suggested questions", () => {
-      expect(en.suggestedQuestions).toHaveLength(3);
-      expect(ta.suggestedQuestions).toHaveLength(3);
-      expect(hi.suggestedQuestions).toHaveLength(3);
+      for (const bundle of [en, ta, hi, te, ml, kn]) {
+        expect(bundle.suggestedQuestions).toHaveLength(3);
+      }
     });
   });
 });

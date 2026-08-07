@@ -1,4 +1,13 @@
-import { resolveRequestLanguage, resolveGreeting, getLanguageDirective, resolveSuggestedQuestions } from "@/features/language/server";
+import {
+  resolveRequestLanguage,
+  resolveGreeting,
+  getLanguageDirective,
+  resolveSuggestedQuestions,
+  resolveTranscriberConfig,
+  resolveCompanyLanguageSettings,
+  clampToEnabledLanguages,
+  resolveEnabledLanguageList,
+} from "@/features/language/server";
 import { Company, Employee } from "@/core/domain/models/types";
 
 const company = { name: "Acme Corp", website: "https://acme.example" } as Company;
@@ -87,5 +96,97 @@ describe("resolveSuggestedQuestions", () => {
     expect(hi).not.toEqual(faqs);
     expect(ta[0]).toMatch(/[஀-௿]/); // contains Tamil script
     expect(hi[0]).toMatch(/[ऀ-ॿ]/); // contains Devanagari script
+  });
+});
+
+describe("resolveTranscriberConfig", () => {
+  const originalAzureFlag = process.env.VAPI_AZURE_SPEECH_ENABLED;
+  afterEach(() => {
+    if (originalAzureFlag === undefined) delete process.env.VAPI_AZURE_SPEECH_ENABLED;
+    else process.env.VAPI_AZURE_SPEECH_ENABLED = originalAzureFlag;
+  });
+
+  it("resolves Deepgram with the confirmed locale for en/ta/hi/kn", () => {
+    expect(resolveTranscriberConfig("en")).toEqual({ provider: "deepgram", language: "en" });
+    expect(resolveTranscriberConfig("ta")).toEqual({ provider: "deepgram", language: "ta" });
+    expect(resolveTranscriberConfig("hi")).toEqual({ provider: "deepgram", language: "hi" });
+    expect(resolveTranscriberConfig("kn")).toEqual({ provider: "deepgram", language: "kn" });
+  });
+
+  it("omits the transcriber override for Telugu/Malayalam when Azure Speech is not confirmed linked", () => {
+    delete process.env.VAPI_AZURE_SPEECH_ENABLED;
+    expect(resolveTranscriberConfig("te")).toBeNull();
+    expect(resolveTranscriberConfig("ml")).toBeNull();
+  });
+
+  it("resolves Azure with the Indian locale for Telugu/Malayalam once explicitly enabled", () => {
+    process.env.VAPI_AZURE_SPEECH_ENABLED = "true";
+    expect(resolveTranscriberConfig("te")).toEqual({ provider: "azure", language: "te-IN" });
+    expect(resolveTranscriberConfig("ml")).toEqual({ provider: "azure", language: "ml-IN" });
+  });
+
+  it("does not flip Deepgram languages over to Azure just because the flag is set", () => {
+    process.env.VAPI_AZURE_SPEECH_ENABLED = "true";
+    expect(resolveTranscriberConfig("en")).toEqual({ provider: "deepgram", language: "en" });
+  });
+});
+
+describe("resolveCompanyLanguageSettings", () => {
+  it("returns no override for null/undefined/empty settings", () => {
+    expect(resolveCompanyLanguageSettings(null)).toEqual({ defaultLanguage: null, enabledLanguages: [] });
+    expect(resolveCompanyLanguageSettings(undefined)).toEqual({ defaultLanguage: null, enabledLanguages: [] });
+    expect(resolveCompanyLanguageSettings({})).toEqual({ defaultLanguage: null, enabledLanguages: [] });
+  });
+
+  it("reads a valid default_language and enabled_languages", () => {
+    expect(resolveCompanyLanguageSettings({ default_language: "hi", enabled_languages: ["en", "hi", "ta"] })).toEqual({
+      defaultLanguage: "hi",
+      enabledLanguages: ["en", "hi", "ta"],
+    });
+  });
+
+  it("discards a malformed default_language rather than throwing", () => {
+    expect(resolveCompanyLanguageSettings({ default_language: "fr" }).defaultLanguage).toBeNull();
+    expect(resolveCompanyLanguageSettings({ default_language: 42 }).defaultLanguage).toBeNull();
+  });
+
+  it("filters out unsupported entries from enabled_languages instead of failing the whole list", () => {
+    expect(resolveCompanyLanguageSettings({ enabled_languages: ["en", "fr", "ta", 42, null] }).enabledLanguages).toEqual(["en", "ta"]);
+  });
+
+  it("treats a non-array enabled_languages as unset", () => {
+    expect(resolveCompanyLanguageSettings({ enabled_languages: "en" }).enabledLanguages).toEqual([]);
+  });
+});
+
+describe("clampToEnabledLanguages", () => {
+  it("passes the language through unchanged when no restriction is configured", () => {
+    expect(clampToEnabledLanguages("te", { defaultLanguage: null, enabledLanguages: [] })).toBe("te");
+  });
+
+  it("passes the language through unchanged when it is in the enabled set", () => {
+    expect(clampToEnabledLanguages("hi", { defaultLanguage: null, enabledLanguages: ["en", "hi"] })).toBe("hi");
+  });
+
+  it("falls back to the company default when the requested language is disabled and the default is enabled", () => {
+    expect(clampToEnabledLanguages("te", { defaultLanguage: "en", enabledLanguages: ["en", "hi"] })).toBe("en");
+  });
+
+  it("falls back to the first enabled language when there is no usable company default", () => {
+    expect(clampToEnabledLanguages("te", { defaultLanguage: null, enabledLanguages: ["hi", "en"] })).toBe("hi");
+    // the configured default itself isn't in the enabled set — same fallback
+    expect(clampToEnabledLanguages("te", { defaultLanguage: "kn", enabledLanguages: ["hi", "en"] })).toBe("hi");
+  });
+});
+
+describe("resolveEnabledLanguageList", () => {
+  it("returns every platform language when unrestricted", () => {
+    const result = resolveEnabledLanguageList({ defaultLanguage: null, enabledLanguages: [] });
+    expect(result).toEqual(["en", "ta", "hi", "te", "ml", "kn"]);
+  });
+
+  it("returns exactly the company's enabled subset when restricted", () => {
+    const result = resolveEnabledLanguageList({ defaultLanguage: null, enabledLanguages: ["en", "ta"] });
+    expect(result).toEqual(["en", "ta"]);
   });
 });

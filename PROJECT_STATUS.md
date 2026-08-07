@@ -8,7 +8,7 @@
 | **Repository** | https://github.com/pagalavaprojects/ai-voice-business-card |
 | **Demo card** | [`/33333333…/44444444…`](https://ai-voice-business-card.vercel.app/33333333-3333-3333-3333-333333333333/44444444-4444-4444-4444-444444444444) or the short link [`/c/srinivasan`](https://ai-voice-business-card.vercel.app/c/srinivasan) |
 | **Last updated** | 2026-08-07 |
-| **Completion** | **~99%** — all 14 migrations applied in production; enterprise multilingual voice assistant (Tamil default, English, Hindi — architecture supports unlimited more) live alongside short public URLs, founder photo/logo, HD voice, and the professional-receptionist scripted welcome, all built, tested and live |
+| **Completion** | **~99%** — all 15 migrations applied in production; enterprise multilingual voice assistant now spans **six** languages (Tamil default, English, Hindi, Telugu, Malayalam, Kannada) behind a dedicated pre-conversation language-selection screen, with per-company language settings in the dashboard, alongside short public URLs, founder photo/logo, HD voice, and the professional-receptionist scripted welcome, all built, tested and live |
 
 > This file is refreshed after every completed module. If it looks stale
 > against the repo, trust the repo and raise it.
@@ -40,15 +40,15 @@ inward; repositories abstract Supabase behind interfaces.
 
 | Metric | Value |
 |---|---|
-| Commits | 64 |
-| Source | ~21,700 lines TypeScript |
+| Commits | 65 |
+| Source | ~22,300 lines TypeScript |
 | API routes | 48 |
 | Dashboard pages | 14 |
 | Database | 27 tables · 39 indexes · 43 FKs · 26 RLS policies |
-| Migrations | 14 total, **all applied in production** |
-| Unit/integration tests | **273 passing**, 1 skipped (documented) |
-| Browser tests | **42 passing** across 3 viewports |
-| Accessibility | WCAG 2.1 AA — zero violations |
+| Migrations | 15 total, **all applied in production** |
+| Unit/integration tests | **300 passing**, 1 skipped (documented) |
+| Browser tests | **47 passing** across 3 viewports, 1 pre-existing unrelated finding (§4, Phase 13) |
+| Accessibility | WCAG 2.1 AA — zero violations on every surface this phase touched |
 | Build | Zero warnings, zero build-time error logs |
 | Code hygiene | 0 TODOs · 0 `any` · 0 `@ts-ignore` |
 
@@ -604,7 +604,7 @@ verification (real mic, real WebRTC) was not performed in this environment —
 no audio hardware / non-interactive session — left for the user's own
 hands-on test.
 
-### Phase 12 — Enterprise multilingual voice assistant *(current)*
+### Phase 12 — Enterprise multilingual voice assistant
 
 Visitor-selectable conversation language — Tamil (default), English, Hindi
 at launch, architected for unlimited more with no code duplication (add a
@@ -670,6 +670,101 @@ pre-refetch card data. Full gate suite green (tsc/lint/273 unit
 tests/build/42 e2e). Two commits, deployed, and spot-verified live in the
 browser across all three languages (screenshots) with zero console
 errors.
+
+### Phase 13 — Six-language expansion + pre-conversation language gate + dashboard language settings
+
+Extended Phase 12's three-language assistant to six (added Telugu,
+Malayalam, Kannada) and added the enterprise-style pre-conversation
+language-selection screen the platform didn't have before — large cards
+with flag, native script, and English name, shown once before a visitor's
+first AI conversation, distinct from the always-available in-card
+language switcher.
+
+- **Speech recognition gap, verified not assumed**: Deepgram (this
+  platform's transcriber for en/ta/hi/kn) does not support Telugu or
+  Malayalam at all — confirmed by reading `@vapi-ai/web`'s own closed
+  `DeepgramTranscriber` type, not by trying and catching a failure. Azure's
+  transcriber does support both (`te-IN`/`ml-IN`, same verification method),
+  but only once Azure Speech is linked as a provider key in Vapi's own
+  dashboard — unverifiable from this codebase. `resolveTranscriberConfig`
+  is env-gated on `VAPI_AZURE_SPEECH_ENABLED` (unset by default): until an
+  admin confirms Azure Speech is linked and sets it, Telugu/Malayalam calls
+  omit the transcriber override entirely and fall back to Vapi's platform
+  default rather than request a provider that likely isn't configured. The
+  language cards for Telugu/Malayalam show a small "Voice input: setup
+  pending" note rather than silently shipping a degraded experience.
+- **`LanguageGate` component** (`src/features/language/components/
+  LanguageGate.tsx`) — a real ARIA `radiogroup` with roving-tabindex
+  keyboard navigation (arrow keys move focus *and* selection, Home/End jump
+  to the ends, Enter/Space confirms), pre-selected to the visitor's
+  detected/stored language so "Continue" is always immediately actionable.
+  Styled to the platform's existing dark theme (not a redesign) with
+  `prefers-color-scheme: light` token overrides for a visitor whose OS is
+  set to light mode.
+- **Shown once per visitor**: `useLanguage` now exposes
+  `hasStoredPreference` (tri-state — `null` until the localStorage check
+  has actually run, so a returning visitor's saved language can never
+  flash the gate open before immediately closing it). `PublicBusinessCard`
+  gates its existing auto-start effect behind the gate being confirmed —
+  the auto-introduction, no-barge-in call flow from Phase 11 is otherwise
+  untouched, just deferred until a language is chosen.
+- **Per-company language settings** (genuinely new, not re-specified from
+  an earlier phase): a **Language Settings** card in Dashboard → Settings —
+  default language and an enabled-languages checklist, wired to the
+  `settings.language_settings` JSONB column Phase 12 added but never
+  built UI or resolution logic for. `resolveCompanyLanguageSettings` /
+  `clampToEnabledLanguages` / `resolveEnabledLanguageList` in
+  `features/language/server.ts` apply it server-side in both the public
+  card route and the Vapi webhook: a visitor can never land on, request,
+  or be shown a language the company has switched off, and an unrestricted
+  company (the default, unset state) sees zero behavior change. A
+  "Future voice provider" field ships inert/disabled — a named home for a
+  capability (`LanguageDefinition.futureVoiceProvider`) that doesn't exist
+  yet, not a false claim that it does.
+- **Backward compatibility, same discipline as Phase 12**: every new
+  resolution step (company default, enabled-language clamp) only changes
+  behavior for a company that has explicitly configured it — confirmed by
+  construction and by the full existing test/e2e suite passing unchanged.
+
+**Discovered, not built this phase — flagged to the user, not silently
+absorbed**: an entire untracked "Enterprise CMS" module (dashboard pages,
+API routes, a domain model, a repository, sidebar nav links, and a
+16-table migration) was sitting in the working tree with no git history at
+all. It is unrelated to this phase's task and was left untouched, except
+for one 2-character JSX-escaping fix (`"` → `&quot;`) in
+`dashboard/cms/profile/page.tsx` that was otherwise failing `next build`'s
+own lint pass outright — nothing else about that module was reviewed,
+committed, or deployed. Its migration (`20260811_enterprise_cms.sql`) was
+deliberately excluded from this phase's migration run: a standalone script
+applied only `20260811_telugu_malayalam_kannada.sql` directly, bypassing
+`scripts/migrate.mjs`'s apply-everything-in-the-directory sweep, and was
+deleted once confirmed applied.
+
+**Pre-existing, unrelated finding surfaced by this phase's fuller e2e
+pass**: the public card's `text-slate-400` helper/heading text fails WCAG
+AA color contrast (4.18–4.39:1 vs the required 4.5:1) on the iPad viewport
+specifically — present in card markup this phase never touched (confirmed
+via diff), not a regression. Left unfixed: a real fix means adjusting the
+platform's existing color palette broadly, which is out of scope for a
+multilingual-focused phase that was explicitly told not to redesign the
+application.
+
+New `20260811_telugu_malayalam_kannada.sql` migration: three new
+`languages` rows (te/ml/kn), and `languages.speech_locale` dropped its
+`NOT NULL` constraint (Telugu/Malayalam genuinely have no confirmed
+transcriber locale yet, not a data-entry gap). Applied via the same
+Supabase session-pooler workaround as every prior phase.
+
+34 new/extended tests: `resolveTranscriberConfig`'s env-gate behavior
+(6 tests), `resolveCompanyLanguageSettings`/`clampToEnabledLanguages`/
+`resolveEnabledLanguageList` (11 tests), the `LanguageGate` component's
+selection/keyboard/double-click/enabled-language-filter behavior (7
+tests), plus the existing language-config suite extended to all six
+languages. Full gate suite green: tsc, lint (project-wide, including the
+one incidental CMS fix), 300 unit/integration tests (1 pre-existing
+skip), production build, and 47/48 Playwright e2e across Desktop/iPad/
+Mobile (the one failure is the pre-existing contrast finding above, not a
+regression).
 
 ---
 
@@ -816,7 +911,7 @@ Vapi's dashboard.
 |---|---|
 | `npm run dev` | Development server |
 | `npm run build` | Production build |
-| `npm test` | 227 unit/integration tests |
+| `npm test` | 300 unit/integration tests |
 | `npm run test:e2e` | Playwright (build first) |
 | `npm run verify:migrations` | Apply migrations to local PGlite |
 | `npm run verify:db` | Check the live Supabase project |

@@ -13,9 +13,12 @@ import {
   resolveGreeting,
   getLanguageDirective,
   resolveSuggestedQuestions,
+  resolveTranscriberConfig,
+  resolveCompanyLanguageSettings,
+  clampToEnabledLanguages,
+  resolveEnabledLanguageList,
   isSupportedLanguage,
   DEFAULT_LANGUAGE,
-  getLanguageDefinition,
 } from "@/features/language/server";
 import QRCode from "qrcode";
 
@@ -119,12 +122,16 @@ export async function GET(req: NextRequest, { params }: { params: { companyId: s
     // already tagged as, not the platform's Tamil default. Only an EXPLICIT
     // ?lang= choice (the visitor actually opening the language selector)
     // engages real per-language resolution.
+    const companyLanguageSettings = resolveCompanyLanguageSettings(settings?.language_settings as Record<string, unknown> | undefined);
     const langParam = req.nextUrl.searchParams.get("lang");
-    const language = langParam
-      ? resolveRequestLanguage(langParam)
-      : isSupportedLanguage(agent?.welcome_message_language)
-        ? agent!.welcome_message_language!
-        : DEFAULT_LANGUAGE;
+    const language = clampToEnabledLanguages(
+      langParam
+        ? resolveRequestLanguage(langParam)
+        : isSupportedLanguage(agent?.welcome_message_language)
+          ? agent!.welcome_message_language!
+          : companyLanguageSettings.defaultLanguage ?? DEFAULT_LANGUAGE,
+      companyLanguageSettings
+    );
 
     const [systemPromptBase] = await Promise.all([
       promptAssemblyService.assembleSystemPrompt(companyId, employeeId).catch((err) => {
@@ -252,10 +259,19 @@ export async function GET(req: NextRequest, { params }: { params: { companyId: s
       voiceModel: voiceConfig.model,
       // Echoes back what was actually resolved (not just what was
       // requested) — the effective language even when ?lang= was absent,
-      // and the Deepgram transcriber code the client should pass to
-      // useVapiSession for speech recognition to match.
+      // and which transcriber provider/locale the client should pass to
+      // useVapiSession for speech recognition to match. null for a
+      // language with no confirmed-working transcriber right now (Telugu/
+      // Malayalam without Azure Speech linked) — useVapiSession already
+      // treats an absent speechLocale as "keep Vapi's platform default."
       language,
-      speechLocale: getLanguageDefinition(language).speechLocale,
+      speechLocale: resolveTranscriberConfig(language)?.language ?? null,
+      transcriberProvider: resolveTranscriberConfig(language)?.provider ?? null,
+      // The company's actual enabled-language set (or every platform
+      // language when unrestricted) — the header selector and the
+      // pre-conversation gate both only ever offer what's in this list, so
+      // a visitor can never pick a language this company has switched off.
+      enabledLanguages: resolveEnabledLanguageList(companyLanguageSettings),
     });
   } catch (err) {
     // Supabase unreachable/unconfigured (e.g. placeholder credentials) is

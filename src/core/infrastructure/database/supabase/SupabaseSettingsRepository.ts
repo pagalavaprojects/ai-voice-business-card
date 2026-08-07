@@ -32,7 +32,7 @@ export class SupabaseSettingsRepository implements ISettingsRepository {
 
   async upsertSettings(
     companyId: string,
-    data: Partial<Pick<Settings, "business_info" | "calendar_settings" | "email_settings" | "voice_settings">>
+    data: Partial<Pick<Settings, "business_info" | "calendar_settings" | "email_settings" | "voice_settings" | "language_settings">>
   ): Promise<Settings> {
     const existing = await this.getSettings(companyId);
     const merged = {
@@ -40,6 +40,7 @@ export class SupabaseSettingsRepository implements ISettingsRepository {
       calendar_settings: { ...(existing?.calendar_settings || {}), ...(data.calendar_settings || {}) },
       email_settings: { ...(existing?.email_settings || {}), ...(data.email_settings || {}) },
       voice_settings: { ...(existing?.voice_settings || {}), ...(data.voice_settings || {}) },
+      language_settings: { ...(existing?.language_settings || {}), ...(data.language_settings || {}) },
     };
 
     const { data: row, error } = await supabaseAdmin

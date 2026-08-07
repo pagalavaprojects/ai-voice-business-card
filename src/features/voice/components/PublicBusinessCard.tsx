@@ -12,7 +12,8 @@ import { Dialog } from "@/shared/ui/dialog";
 import { downloadVCard, imageUrlToDataUri } from "@/features/voice/lib/vcard";
 import { useLanguage } from "@/features/language/hooks/useLanguage";
 import { LanguageSelector } from "@/features/language/components/LanguageSelector";
-import { getLanguageDefinition } from "@/features/language/config";
+import { LanguageGate } from "@/features/language/components/LanguageGate";
+import { getLanguageDefinition, isSupportedLanguage, LanguageCode } from "@/features/language/config";
 
 interface PublicCardData {
   company: { name: string; website: string; logoUrl: string | null };
@@ -62,7 +63,9 @@ interface PublicCardData {
   voiceProvider?: "openai" | "11labs";
   voiceModel?: string;
   language?: string;
-  speechLocale?: string;
+  speechLocale?: string | null;
+  transcriberProvider?: "deepgram" | "azure" | null;
+  enabledLanguages?: LanguageCode[];
 }
 
 function formatTimer(secs: number): string {
@@ -88,7 +91,16 @@ function initialsOf(name: string): string {
  * can never drift into two different card experiences.
  */
 export function PublicBusinessCard({ companyId, employeeId }: { companyId: string; employeeId: string }) {
-  const { language, setLanguage, t } = useLanguage();
+  const { language, setLanguage, t, hasStoredPreference } = useLanguage();
+
+  // The pre-conversation language gate is shown exactly once per visitor —
+  // a returning visitor (hasStoredPreference true) never sees it again,
+  // and a first-time visitor's explicit "Continue" tap satisfies it for
+  // the rest of this page's lifetime. hasStoredPreference stays null until
+  // the localStorage check has actually run (see useLanguage), so this
+  // starts "unconfirmed" rather than guessing either way.
+  const [gateConfirmed, setGateConfirmed] = useState(false);
+  const languageConfirmed = hasStoredPreference === true || gateConfirmed;
 
   // No demo/fallback identity: a business card that silently renders someone
   // else's name and speaks their pitch is worse than one that admits it
@@ -131,6 +143,19 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
     };
   }, [companyId, employeeId, language]);
 
+  // The server clamps the requested language down to the company's enabled
+  // set (see clampToEnabledLanguages) — this only ever differs from what was
+  // requested when an admin has disabled the language a visitor's browser
+  // had stored. Adopting the server's answer here keeps the header selector
+  // and the gate's pre-selection from showing a language the company no
+  // longer offers; the resulting setLanguage triggers one more fetch that
+  // then matches and stops.
+  useEffect(() => {
+    if (card && card.language && card.language !== language && isSupportedLanguage(card.language)) {
+      setLanguage(card.language);
+    }
+  }, [card, language, setLanguage]);
+
   const { voiceState, isMuted, messages, durationSeconds, error, isPlayingIntro, isDemoMode, startCall, endCall, toggleMute } = useVapiSession({
     companyId,
     employeeId,
@@ -141,7 +166,8 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
     voiceId: card?.voiceId,
     voiceProvider: card?.voiceProvider,
     voiceModel: card?.voiceModel,
-    speechLocale: card?.speechLocale,
+    speechLocale: card?.speechLocale ?? undefined,
+    transcriberProvider: card?.transcriberProvider ?? undefined,
   });
 
   const isCallActive = voiceState !== "idle";
@@ -218,7 +244,7 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
     // call using the OLD language's firstMessage/systemPrompt/speechLocale,
     // then never get a second chance to restart once the right data
     // actually arrives (hasAutoAttemptedForRef would already be set).
-    if (!card || cardLoading || isDemoMode || isAutomatedBrowser || hasAutoAttemptedForRef.current === cardIdentity) return;
+    if (!card || cardLoading || !languageConfirmed || isDemoMode || isAutomatedBrowser || hasAutoAttemptedForRef.current === cardIdentity) return;
     hasAutoAttemptedForRef.current = cardIdentity;
 
     startCall();
@@ -245,7 +271,7 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
     // whenever `card` changes (including the companyId/employeeId-keyed
     // fetch's null -> loaded transition on a card switch).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [card, cardLoading, cardIdentity]);
+  }, [card, cardLoading, cardIdentity, languageConfirmed]);
 
   // A real tap always clears the fallback prompt, whether or not this
   // particular call succeeds — the point was only to stop suggesting a tap
@@ -276,12 +302,18 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
     return t("status.listening");
   }, [voiceState, isPlayingIntro, t]);
 
-  if (cardLoading) {
+  if (cardLoading || hasStoredPreference === null) {
     // Kept static/language-neutral rather than routed through t(): this can
     // render before the language bundle (or even the visitor's detected
     // language) has resolved, and a raw translation key flashing on screen
     // would look broken. A bare spinner at this stage is a reasonable,
     // deliberate scoping call, not an oversight.
+    //
+    // hasStoredPreference === null (the localStorage check hasn't run yet)
+    // is included here too — without it, a returning visitor with a saved
+    // preference could see a one-frame flash of the language gate before it
+    // immediately closes itself, which reads as a UI bug rather than a
+    // deliberate skip.
     return (
       <main className="min-h-screen bg-[#070b12] flex items-center justify-center p-4">
         <div role="status" aria-live="polite" className="flex flex-col items-center gap-3">
@@ -304,6 +336,19 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
           </p>
         </Card>
       </main>
+    );
+  }
+
+  if (!languageConfirmed) {
+    return (
+      <LanguageGate
+        initialLanguage={language}
+        enabledLanguages={card.enabledLanguages}
+        onContinue={(code) => {
+          if (code !== language) setLanguage(code);
+          setGateConfirmed(true);
+        }}
+      />
     );
   }
 
@@ -342,6 +387,7 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
             language={language}
             onChange={setLanguage}
             label={t("aria.chooseLanguage")}
+            enabledLanguages={card.enabledLanguages}
             className="absolute right-4 top-4 sm:right-5 sm:top-5"
           />
 

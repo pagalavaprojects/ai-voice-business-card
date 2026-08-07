@@ -57,6 +57,15 @@ async function loadBundle(code: LanguageCode): Promise<LocaleBundle> {
       case "hi":
         bundle = ((await import("../locales/hi.json")) as { default: LocaleBundle }).default;
         break;
+      case "te":
+        bundle = ((await import("../locales/te.json")) as { default: LocaleBundle }).default;
+        break;
+      case "ml":
+        bundle = ((await import("../locales/ml.json")) as { default: LocaleBundle }).default;
+        break;
+      case "kn":
+        bundle = ((await import("../locales/kn.json")) as { default: LocaleBundle }).default;
+        break;
       case "ta":
       default:
         bundle = ((await import("../locales/ta.json")) as { default: LocaleBundle }).default;
@@ -115,11 +124,18 @@ export function useLanguage() {
   const [language, setLanguageState] = useState<LanguageCode>(DEFAULT_LANGUAGE);
   const [bundle, setBundle] = useState<LocaleBundle | null>(bundleCache.get(DEFAULT_LANGUAGE) ?? null);
   const [isReady, setIsReady] = useState(false);
+  // null until the mount effect below has actually checked localStorage —
+  // callers (the pre-conversation language gate) need to tell "no
+  // preference stored" apart from "haven't looked yet" so a returning
+  // visitor's saved language can't flash the gate open before immediately
+  // skipping it.
+  const [hasStoredPreference, setHasStoredPreference] = useState<boolean | null>(null);
 
   useEffect(() => {
     const stored = readStoredLanguage();
     const initial = stored ?? detectLanguageFromBrowser(navigator.language);
     setLanguageState(initial);
+    setHasStoredPreference(stored !== null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -163,5 +179,5 @@ export function useLanguage() {
 
   const suggestedQuestions = useMemo(() => bundle?.suggestedQuestions ?? [], [bundle]);
 
-  return { language, setLanguage, t, isReady, suggestedQuestions, bundle };
+  return { language, setLanguage, t, isReady, suggestedQuestions, bundle, hasStoredPreference };
 }

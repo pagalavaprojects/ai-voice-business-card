@@ -9,7 +9,16 @@ import { supabaseAdmin } from "@/shared/lib/supabase";
 import { resolveVoiceProviderConfig } from "@/shared/lib/voice";
 import { SupabaseKnowledgeRepository } from "@/core/infrastructure/database/supabase/SupabaseKnowledgeRepository";
 import { verifyWebhookToken } from "@/shared/lib/webhookToken";
-import { resolveRequestLanguage, resolveGreeting, getLanguageDirective, isSupportedLanguage, DEFAULT_LANGUAGE, getLanguageDefinition } from "@/features/language/server";
+import {
+  resolveRequestLanguage,
+  resolveGreeting,
+  getLanguageDirective,
+  resolveTranscriberConfig,
+  resolveCompanyLanguageSettings,
+  clampToEnabledLanguages,
+  isSupportedLanguage,
+  DEFAULT_LANGUAGE,
+} from "@/features/language/server";
 
 // Reads the session cookie and/or query params, so it can never be rendered
 // statically. Declared explicitly to stop Next attempting a static pass that
@@ -114,11 +123,16 @@ async function handleVapiMessage(req: NextRequest, message: VapiMessage): Promis
       settingsRepo.getSettings(companyId).catch(() => null),
     ]);
 
-    const language = langParam
-      ? resolveRequestLanguage(langParam)
-      : isSupportedLanguage(agent?.welcome_message_language)
-        ? agent!.welcome_message_language!
-        : DEFAULT_LANGUAGE;
+    const companyLanguageSettings = resolveCompanyLanguageSettings(settings?.language_settings as Record<string, unknown> | undefined);
+    const language = clampToEnabledLanguages(
+      langParam
+        ? resolveRequestLanguage(langParam)
+        : isSupportedLanguage(agent?.welcome_message_language)
+          ? agent!.welcome_message_language!
+          : companyLanguageSettings.defaultLanguage ?? DEFAULT_LANGUAGE,
+      companyLanguageSettings
+    );
+    const transcriberConfig = resolveTranscriberConfig(language);
 
     const systemPromptBase = await promptAssemblyService.assembleSystemPrompt(companyId, employeeId);
     const systemPrompt = langParam ? systemPromptBase + getLanguageDirective(language) : systemPromptBase;
@@ -161,10 +175,11 @@ async function handleVapiMessage(req: NextRequest, message: VapiMessage): Promis
           voiceConfig.provider === "11labs"
             ? { provider: "11labs" as const, voiceId: voiceConfig.voiceId, model: voiceConfig.model as "eleven_multilingual_v2" }
             : { provider: "openai" as const, voiceId: voiceConfig.voiceId, model: "tts-1-hd" as const },
-        // Same Deepgram language switch as the browser call path — see
-        // useVapiSession.ts for the SDK-source confirmation that 'ta'/'hi'
-        // are directly supported transcriber language codes.
-        ...(langParam ? { transcriber: { provider: "deepgram" as const, language: getLanguageDefinition(language).speechLocale } } : {}),
+        // Same transcriber resolution as the browser call path — Deepgram
+        // for en/ta/hi/kn, Azure (env-gated on confirmed setup) for te/ml,
+        // omitted entirely for a language with no confirmed-working
+        // transcriber right now. See resolveTranscriberConfig.
+        ...(langParam && transcriberConfig ? { transcriber: { provider: transcriberConfig.provider, language: transcriberConfig.language } as const } : {}),
       },
     });
   }

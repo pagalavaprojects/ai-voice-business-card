@@ -6,8 +6,11 @@ import { getDefaultGreeting } from "./greetings";
 import en from "./locales/en.json";
 import ta from "./locales/ta.json";
 import hi from "./locales/hi.json";
+import te from "./locales/te.json";
+import ml from "./locales/ml.json";
+import kn from "./locales/kn.json";
 
-const LOCALE_BUNDLES: Record<LanguageCode, { suggestedQuestions: string[] }> = { en, ta, hi };
+const LOCALE_BUNDLES: Record<LanguageCode, { suggestedQuestions: string[] }> = { en, ta, hi, te, ml, kn };
 
 /** Server-side counterpart to useLanguage's browser-only detection —
  * resolves the ?lang= query param a request arrives with down to one of
@@ -63,6 +66,39 @@ export function getLanguageDirective(language: LanguageCode): string {
   );
 }
 
+export interface TranscriberConfig {
+  provider: "deepgram" | "azure";
+  language: string;
+}
+
+/**
+ * Resolves which speech-recognition provider/language a live call should
+ * request, per the visitor's chosen language. Deepgram covers English/
+ * Tamil/Hindi/Kannada directly (confirmed against the installed
+ * @vapi-ai/web SDK's own type definitions). Telugu and Malayalam are not in
+ * Deepgram's supported-language list at all — Azure's transcriber does
+ * support both ('te-IN'/'ml-IN', also verified against the SDK types), but
+ * requires Azure Speech to be linked as a provider key in Vapi's own
+ * dashboard, which this app has no way to detect or verify.
+ *
+ * Gated behind VAPI_AZURE_SPEECH_ENABLED so the unconfigured (default)
+ * state is the SAFE one: requesting a transcriber provider Vapi doesn't
+ * actually have credentials for is more likely to fail the call outright
+ * than to gracefully degrade, so until an admin confirms Azure Speech is
+ * linked and sets this env var, Telugu/Malayalam calls omit the
+ * transcriber override entirely and fall back to Vapi's platform default
+ * rather than risk a broken call. Same env-gated-opt-in shape as
+ * resolveVoiceProviderConfig's ElevenLabs override.
+ */
+export function resolveTranscriberConfig(language: LanguageCode): TranscriberConfig | null {
+  const def = getLanguageDefinition(language);
+  if (def.speechLocale) return { provider: "deepgram", language: def.speechLocale };
+  if (def.azureSpeechLocale && process.env.VAPI_AZURE_SPEECH_ENABLED === "true") {
+    return { provider: "azure", language: def.azureSpeechLocale };
+  }
+  return null;
+}
+
 /**
  * Suggested-question starters for the visitor's chosen language. Real FAQ
  * questions (provably answerable, company-specific) are used when they're
@@ -76,6 +112,54 @@ export function getLanguageDirective(language: LanguageCode): string {
 export function resolveSuggestedQuestions(language: LanguageCode, faqQuestions: string[]): string[] {
   if (language === "en" && faqQuestions.length > 0) return faqQuestions.slice(0, 4);
   return LOCALE_BUNDLES[language]?.suggestedQuestions ?? LOCALE_BUNDLES[DEFAULT_LANGUAGE].suggestedQuestions;
+}
+
+export interface CompanyLanguageSettings {
+  defaultLanguage: LanguageCode | null;
+  enabledLanguages: LanguageCode[];
+}
+
+/**
+ * Reads a company's `settings.language_settings` JSONB — same
+ * inherit-unless-overridden shape this app already uses for
+ * voice_settings/calendar_settings. An empty/absent `enabled_languages`
+ * means "no restriction, every platform language is available," not
+ * "no languages are available" — the same inherit-all default as every
+ * other per-company override here. Malformed or partial admin-entered
+ * data degrades to "no override" per field rather than throwing, since
+ * this runs on the public, unauthenticated card route where a bad value
+ * must never break a visitor's card.
+ */
+export function resolveCompanyLanguageSettings(raw: Record<string, unknown> | null | undefined): CompanyLanguageSettings {
+  const defaultLanguageRaw = raw?.default_language;
+  const defaultLanguage = typeof defaultLanguageRaw === "string" && isSupportedLanguage(defaultLanguageRaw) ? defaultLanguageRaw : null;
+
+  const enabledRaw = raw?.enabled_languages;
+  const enabledLanguages = Array.isArray(enabledRaw)
+    ? enabledRaw.filter((v): v is LanguageCode => typeof v === "string" && isSupportedLanguage(v))
+    : [];
+
+  return { defaultLanguage, enabledLanguages };
+}
+
+/**
+ * Applies a company's enabled-language restriction to an otherwise-resolved
+ * language. A visitor who lands on (via browser detection, a stored
+ * preference, or an explicit ?lang=) a language the company has not
+ * enabled falls back to the company's own default, then the platform
+ * default — never silently to a language the company deliberately left
+ * off, and never by erroring the card.
+ */
+export function clampToEnabledLanguages(language: LanguageCode, settings: CompanyLanguageSettings): LanguageCode {
+  if (settings.enabledLanguages.length === 0 || settings.enabledLanguages.includes(language)) return language;
+  if (settings.defaultLanguage && settings.enabledLanguages.includes(settings.defaultLanguage)) return settings.defaultLanguage;
+  return settings.enabledLanguages[0];
+}
+
+/** The language list a visitor should actually be offered — the company's
+ * enabled subset, or every platform language when unrestricted. */
+export function resolveEnabledLanguageList(settings: CompanyLanguageSettings): LanguageCode[] {
+  return settings.enabledLanguages.length > 0 ? settings.enabledLanguages : SUPPORTED_LANGUAGES.map((l) => l.code);
 }
 
 export { SUPPORTED_LANGUAGES, DEFAULT_LANGUAGE, isSupportedLanguage, getLanguageDefinition };

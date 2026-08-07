@@ -300,6 +300,7 @@ export interface Settings extends BaseEntity {
   calendar_settings: Record<string, unknown>;
   email_settings: Record<string, unknown>;
   voice_settings: Record<string, unknown>;
+  language_settings: Record<string, unknown>;
 }
 
 export interface ApiKeyRecord {

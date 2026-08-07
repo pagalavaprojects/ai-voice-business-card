@@ -7,7 +7,7 @@ export interface ISettingsRepository {
   getSettings(companyId: string): Promise<Settings | null>;
   upsertSettings(
     companyId: string,
-    data: Partial<Pick<Settings, "business_info" | "calendar_settings" | "email_settings" | "voice_settings">>
+    data: Partial<Pick<Settings, "business_info" | "calendar_settings" | "email_settings" | "voice_settings" | "language_settings">>
   ): Promise<Settings>;
 
   listApiKeys(companyId: string): Promise<ApiKeyRecord[]>;

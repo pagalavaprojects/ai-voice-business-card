@@ -16,6 +16,8 @@ import { SEEDED_CARD_PATH } from "./seeded-card";
 test.describe("Catalog surfaces expose accessible names", () => {
   test("every interactive control on the public card has an accessible name", async ({ page }) => {
     await page.goto(SEEDED_CARD_PATH);
+    await expect(page.getByRole("radiogroup", { name: /conversation language/i })).toBeVisible({ timeout: 20_000 });
+    await page.getByRole("button", { name: /continue/i }).click();
     await expect(page.getByRole("button", { name: /Start voice conversation/i })).toBeVisible({ timeout: 20_000 });
 
     const unnamed = await page.evaluate(() => {
@@ -38,6 +40,8 @@ test.describe("Catalog surfaces expose accessible names", () => {
 
   test("the public card passes a WCAG 2.1 AA scan with product and service sections rendered", async ({ page }) => {
     await page.goto(SEEDED_CARD_PATH);
+    await expect(page.getByRole("radiogroup", { name: /conversation language/i })).toBeVisible({ timeout: 20_000 });
+    await page.getByRole("button", { name: /continue/i }).click();
     await expect(page.getByRole("button", { name: /Start voice conversation/i })).toBeVisible({ timeout: 20_000 });
 
     const results = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]).analyze();

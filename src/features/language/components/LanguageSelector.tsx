@@ -10,6 +10,11 @@ interface LanguageSelectorProps {
    * pass the current locale's own translation so the control's own label
    * switches languages too. */
   label: string;
+  /** The company's actual enabled-language set, from the card API's
+   * `enabledLanguages`. Undefined/empty falls back to every platform
+   * language — the safe default before that field existed, and for a
+   * company that hasn't restricted anything. */
+  enabledLanguages?: LanguageCode[];
   className?: string;
 }
 
@@ -21,7 +26,10 @@ interface LanguageSelectorProps {
  * split asked for, without a second, custom-built mobile code path to
  * maintain and keep accessible.
  */
-export function LanguageSelector({ language, onChange, label, className }: LanguageSelectorProps) {
+export function LanguageSelector({ language, onChange, label, enabledLanguages, className }: LanguageSelectorProps) {
+  const options = enabledLanguages && enabledLanguages.length > 0
+    ? SUPPORTED_LANGUAGES.filter((l) => enabledLanguages.includes(l.code))
+    : SUPPORTED_LANGUAGES;
   // className (e.g. the parent's "absolute right-4 top-4" placement) goes on
   // this OUTER wrapper, never merged into the inner div below — that inner
   // div's own "relative" is load-bearing (the Globe icon and chevron
@@ -41,7 +49,7 @@ export function LanguageSelector({ language, onChange, label, className }: Langu
           onChange={(e) => onChange(e.target.value as LanguageCode)}
           className="appearance-none rounded-full bg-white/[0.06] border border-white/[0.1] hover:border-sky-400/40 text-[11px] font-semibold text-slate-200 pl-8 pr-6 py-1.5 focus:outline-none focus:ring-2 focus:ring-sky-500 cursor-pointer transition-colors"
         >
-          {SUPPORTED_LANGUAGES.map((l) => (
+          {options.map((l) => (
             <option key={l.code} value={l.code} lang={l.code} className="bg-slate-900 text-slate-100">
               {l.nativeName}
             </option>

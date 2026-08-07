@@ -23,6 +23,7 @@ const UpdateSettingsSchema = z.object({
   calendar_settings: z.record(z.unknown()).optional(),
   email_settings: z.record(z.unknown()).optional(),
   voice_settings: z.record(z.unknown()).optional(),
+  language_settings: z.record(z.unknown()).optional(),
 });
 
 export async function GET(req: NextRequest) {
@@ -66,6 +67,7 @@ export async function PUT(req: NextRequest) {
       calendar_settings: parsed.calendar_settings,
       email_settings: parsed.email_settings,
       voice_settings: parsed.voice_settings,
+      language_settings: parsed.language_settings,
     });
 
     return formatApiResponse(settings, 200, "Settings saved successfully");
