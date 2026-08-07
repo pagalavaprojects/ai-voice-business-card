@@ -15,6 +15,7 @@ describe("VoiceEngine Tool Execution & Registry", () => {
       getLeadById: jest.fn(),
       getLeadByEmail: jest.fn(),
       updateLeadScore: jest.fn(),
+      updateLeadQualification: jest.fn(),
       updateLeadStatus: jest.fn(),
       updateLeadOwner: jest.fn(),
       updateLeadTags: jest.fn(),
@@ -102,7 +103,7 @@ describe("VoiceEngine Tool Execution & Registry", () => {
       created_at: "",
       updated_at: "",
     });
-    mockCrmRepo.updateLeadScore.mockResolvedValue({
+    mockCrmRepo.updateLeadQualification.mockResolvedValue({
       id: "lead-1",
       company_id: "comp-1",
       employee_id: "emp-1",
@@ -113,6 +114,7 @@ describe("VoiceEngine Tool Execution & Registry", () => {
       score_category: "HIGH" as never,
       score_reasoning: "Budget >= $5,000 (+40), Urgent Timeline (+30), Explicit Need Identified (+30)",
       status: "QUALIFIED" as never,
+      lead_temperature: "HOT" as never,
       tags: [],
       created_at: "",
       updated_at: "",
@@ -126,8 +128,12 @@ describe("VoiceEngine Tool Execution & Registry", () => {
 
     expect(mockCrmRepo.createLead).toHaveBeenCalled();
     // The bug this closes: before Phase 14, nothing ever called
-    // updateLeadScore — every lead stayed at score 0/LOW forever.
-    expect(mockCrmRepo.updateLeadScore).toHaveBeenCalledWith("lead-1", 100, "HIGH", expect.stringContaining("Budget >= $5,000"));
+    // updateLeadQualification (formerly updateLeadScore) — every lead
+    // stayed at score 0/LOW forever.
+    expect(mockCrmRepo.updateLeadQualification).toHaveBeenCalledWith(
+      "lead-1",
+      expect.objectContaining({ score: 100, score_category: "HIGH", score_reasoning: expect.stringContaining("Budget >= $5,000") })
+    );
     expect(result.success).toBe(true);
     expect(result.score_category).toBe("HIGH");
   });
@@ -162,5 +168,184 @@ describe("VoiceEngine Tool Execution & Registry", () => {
     );
     expect(result.success).toBe(true);
     expect(result.appointment_id).toBe("appt-1");
+  });
+
+  it("update_lead_qualification merges new signals with the existing lead and re-scores it", async () => {
+    mockCrmRepo.getLeadById.mockResolvedValue({
+      id: "lead-2",
+      company_id: "comp-1",
+      employee_id: "emp-1",
+      name: "Cold Lead",
+      email: "cold@example.com",
+      phone: "+15550002222",
+      budget: 100, // already on file from an earlier save_lead call (+20)
+      score: 20,
+      score_category: "LOW" as never,
+      status: "NEW" as never,
+      lead_temperature: "COLD" as never,
+      nurture_status: "NONE" as never,
+      tags: [],
+      created_at: "",
+      updated_at: "",
+    });
+    mockCrmRepo.updateLeadQualification.mockResolvedValue({
+      id: "lead-2",
+      company_id: "comp-1",
+      employee_id: "emp-1",
+      name: "Cold Lead",
+      email: "cold@example.com",
+      phone: "+15550002222",
+      budget: 100,
+      score: 45, // 20 (existing budget) + 10 (decision_maker yes) + 15 (buying_intent high)
+      score_category: "MEDIUM" as never,
+      status: "NEW" as never,
+      lead_temperature: "WARM" as never,
+      nurture_status: "NONE" as never,
+      tags: [],
+      created_at: "",
+      updated_at: "",
+    });
+
+    const tool = toolRegistry.getTool("update_lead_qualification")!;
+    const result = await tool.execute(
+      { lead_id: "lead-2", decision_maker: "yes", buying_intent: "high" },
+      { companyId: "comp-1", employeeId: "emp-1" }
+    );
+
+    // The existing budget (from the earlier save_lead call) must still be
+    // read from the stored lead and carried into the re-score — this is
+    // "dynamic stage two" refining a lead, not starting from a blank slate.
+    expect(mockCrmRepo.updateLeadQualification).toHaveBeenCalledWith(
+      "lead-2",
+      expect.objectContaining({ score: 45, lead_temperature: "WARM" })
+    );
+    expect(result.success).toBe(true);
+    expect(result.lead_temperature).toBe("WARM");
+  });
+
+  it("update_lead_qualification reports failure without throwing when the lead doesn't exist", async () => {
+    mockCrmRepo.getLeadById.mockResolvedValue(null);
+    const tool = toolRegistry.getTool("update_lead_qualification")!;
+    const result = await tool.execute({ lead_id: "does-not-exist" }, { companyId: "comp-1", employeeId: "emp-1" });
+    expect(result.success).toBe(false);
+    expect(mockCrmRepo.updateLeadQualification).not.toHaveBeenCalled();
+  });
+
+  describe("cold-lead nurture email", () => {
+    let mockNotificationService: { send: jest.Mock };
+    let registryWithNotifications: ToolRegistry;
+
+    beforeEach(() => {
+      mockNotificationService = { send: jest.fn().mockResolvedValue({ success: true }) };
+      registryWithNotifications = new ToolRegistry(
+        mockCrmRepo,
+        mockBookingRepo,
+        mockKnowledgeRepo,
+        mockNotificationService as never
+      );
+      mockKnowledgeRepo.getEmployeeById.mockResolvedValue({
+        id: "emp-1",
+        company_id: "comp-1",
+        name: "Srinivasan Kandasamy",
+        designation: "Founder",
+        email: "srinivasan@example.com",
+        phone: "+15550003333",
+        created_at: "",
+        updated_at: "",
+      } as never);
+    });
+
+    it("sends exactly one nurture email the first time a lead is classified COLD", async () => {
+      mockCrmRepo.createLead.mockResolvedValue({
+        id: "lead-3",
+        company_id: "comp-1",
+        employee_id: "emp-1",
+        name: "Just Browsing",
+        email: "browsing@example.com",
+        phone: "+15550004444",
+        score: 0,
+        score_category: "LOW" as never,
+        status: "NEW" as never,
+        tags: [],
+        created_at: "",
+        updated_at: "",
+      });
+      mockCrmRepo.updateLeadQualification.mockResolvedValue({
+        id: "lead-3",
+        company_id: "comp-1",
+        employee_id: "emp-1",
+        name: "Just Browsing",
+        email: "browsing@example.com",
+        phone: "+15550004444",
+        score: 0,
+        score_category: "LOW" as never,
+        status: "NEW" as never,
+        lead_temperature: "COLD" as never,
+        cold_reason: "BUDGET" as never,
+        nurture_status: "QUEUED" as never,
+        tags: [],
+        created_at: "",
+        updated_at: "",
+      });
+
+      const tool = registryWithNotifications.getTool("save_lead")!;
+      await tool.execute(
+        { name: "Just Browsing", email: "browsing@example.com", phone: "+15550004444" },
+        { companyId: "comp-1", employeeId: "emp-1" }
+      );
+
+      // The nurture email is fire-and-forget (never blocks the tool
+      // response) — flush the microtask queue so its async body settles
+      // before asserting.
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(mockNotificationService.send).toHaveBeenCalledTimes(1);
+      expect(mockNotificationService.send).toHaveBeenCalledWith(
+        expect.objectContaining({ to: "browsing@example.com", templateName: "cold_lead_nurture" })
+      );
+      expect(mockCrmRepo.updateLeadQualification).toHaveBeenLastCalledWith("lead-3", { nurture_status: "SENT" });
+    });
+
+    it("never re-sends the nurture email for a lead that was already queued/sent", async () => {
+      mockCrmRepo.getLeadById.mockResolvedValue({
+        id: "lead-4",
+        company_id: "comp-1",
+        employee_id: "emp-1",
+        name: "Still Cold",
+        email: "stillcold@example.com",
+        phone: "+15550005555",
+        score: 0,
+        score_category: "LOW" as never,
+        status: "NEW" as never,
+        lead_temperature: "COLD" as never,
+        nurture_status: "SENT" as never, // already emailed once
+        tags: [],
+        created_at: "",
+        updated_at: "",
+      });
+      mockCrmRepo.updateLeadQualification.mockResolvedValue({
+        id: "lead-4",
+        company_id: "comp-1",
+        employee_id: "emp-1",
+        name: "Still Cold",
+        email: "stillcold@example.com",
+        phone: "+15550005555",
+        score: 0,
+        score_category: "LOW" as never,
+        status: "NEW" as never,
+        lead_temperature: "COLD" as never,
+        nurture_status: "SENT" as never,
+        tags: [],
+        created_at: "",
+        updated_at: "",
+      });
+
+      const tool = registryWithNotifications.getTool("update_lead_qualification")!;
+      await tool.execute({ lead_id: "lead-4", objections: "still thinking it over" }, { companyId: "comp-1", employeeId: "emp-1" });
+
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(mockNotificationService.send).not.toHaveBeenCalled();
+    });
   });
 });

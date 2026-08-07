@@ -103,6 +103,12 @@ export class SupabaseCRMRepository implements ICRMRepository {
     return lead as Lead;
   }
 
+  async updateLeadQualification(id: string, patch: Partial<Lead>): Promise<Lead> {
+    const { data: lead, error } = await supabaseAdmin.from("leads").update(patch).eq("id", id).select().single();
+    if (error) throw new Error(`SupabaseCRMRepository.updateLeadQualification failed: ${error.message}`);
+    return lead as Lead;
+  }
+
   async updateLeadStatus(id: string, status: Lead["status"], actorUserId?: string): Promise<Lead> {
     const { data: lead, error } = await supabaseAdmin
       .from("leads")

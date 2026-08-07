@@ -17,6 +17,13 @@ export interface ICRMRepository {
   getLeadById(id: string): Promise<Lead | null>;
   getLeadByEmail(companyId: string, email: string): Promise<Lead | null>;
   updateLeadScore(id: string, score: number, category: Lead["score_category"], reasoning?: string): Promise<Lead>;
+  /** Generic partial update for everything LeadQualificationService computes
+   * beyond the legacy score/category/reasoning triad — temperature, cold
+   * reason, nurture routing, and the extended qualification signals. A thin
+   * persistence call: the caller (the service) decides every business rule
+   * (status transitions, temperature classification); this just writes
+   * whatever fields are present in `patch`. */
+  updateLeadQualification(id: string, patch: Partial<Lead>): Promise<Lead>;
   updateLeadStatus(id: string, status: Lead["status"], actorUserId?: string): Promise<Lead>;
   updateLeadOwner(id: string, ownerId: string | null, actorUserId?: string): Promise<Lead>;
   updateLeadTags(id: string, tags: string[]): Promise<Lead>;

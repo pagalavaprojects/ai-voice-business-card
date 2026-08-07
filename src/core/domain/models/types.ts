@@ -166,6 +166,42 @@ export interface LeadScoringRule extends BaseEntity {
   condition_value: string;
 }
 
+/** HOT/WARM push the conversation toward booking; COLD routes to the nurture
+ * path instead of being dropped (see LeadQualificationService.classify and
+ * ToolRegistry's cold-lead nurture email). Distinct from `score_category`
+ * (HIGH/MEDIUM/LOW) — score_category is the historical 0-100 point total,
+ * temperature is the qualitative read that actually drives what the AI (and
+ * a human reviewing the CRM) does next. */
+export enum LeadTemperature {
+  HOT = "HOT",
+  WARM = "WARM",
+  COLD = "COLD",
+}
+
+/** Why a lead landed COLD — set only when temperature is COLD, so a human
+ * following up knows what to address rather than re-running the same
+ * qualification conversation from scratch. */
+export enum ColdReason {
+  BUDGET = "BUDGET",
+  TIMING = "TIMING",
+  AUTHORITY = "AUTHORITY",
+  NEED_UNCLEAR = "NEED_UNCLEAR",
+  RESEARCH_PHASE = "RESEARCH_PHASE",
+}
+
+export enum NurtureStatus {
+  NONE = "NONE",
+  QUEUED = "QUEUED",
+  SENT = "SENT",
+  SKIPPED = "SKIPPED",
+}
+
+export type DecisionMakerStatus = "yes" | "no" | "shared";
+export type Urgency = "immediate" | "this_quarter" | "exploring";
+export type BuyingIntent = "high" | "medium" | "low";
+export type Sentiment = "positive" | "neutral" | "negative";
+export type NurtureChannel = "EMAIL" | "WHATSAPP" | "CONTENT";
+
 export interface Lead extends BaseEntity {
   company_id: string;
   employee_id: string;
@@ -184,6 +220,23 @@ export interface Lead extends BaseEntity {
   status: LeadStatus;
   owner_id?: string | null;
   tags: string[];
+  // Extended qualification signals — all optional because they're gathered
+  // progressively through natural conversation, never all at once.
+  current_solution?: string | null;
+  decision_maker?: DecisionMakerStatus | null;
+  urgency?: Urgency | null;
+  buying_intent?: BuyingIntent | null;
+  objections?: string | null;
+  referral_source?: string | null;
+  sentiment?: Sentiment | null;
+  qualification_confidence?: number | null;
+  conversation_summary?: string | null;
+  qualification_notes?: string | null;
+  lead_temperature?: LeadTemperature;
+  cold_reason?: ColdReason | null;
+  nurture_status?: NurtureStatus;
+  nurture_channel_recommended?: NurtureChannel | null;
+  next_followup_date?: string | null;
 }
 
 export interface Conversation extends BaseEntity {
@@ -360,6 +413,26 @@ export const CreateLeadSchema = z.object({
 });
 
 export type CreateLeadDTO = z.infer<typeof CreateLeadSchema>;
+
+/** What `save_lead`/`update_lead_qualification` actually persist beyond the
+ * base contact fields — every field optional since the AI records whatever
+ * it has learned so far, not a completed form. Shared between both tools so
+ * a lead saved early in the call and refined later goes through the exact
+ * same validation and scoring path. */
+export const LeadQualificationSignalsSchema = z.object({
+  current_solution: z.string().max(500).optional(),
+  decision_maker: z.enum(["yes", "no", "shared"]).optional(),
+  urgency: z.enum(["immediate", "this_quarter", "exploring"]).optional(),
+  buying_intent: z.enum(["high", "medium", "low"]).optional(),
+  objections: z.string().max(1000).optional(),
+  referral_source: z.string().max(200).optional(),
+  sentiment: z.enum(["positive", "neutral", "negative"]).optional(),
+  qualification_confidence: z.number().min(0).max(1).optional(),
+  conversation_summary: z.string().max(2000).optional(),
+  qualification_notes: z.string().max(2000).optional(),
+});
+
+export type LeadQualificationSignals = z.infer<typeof LeadQualificationSignalsSchema>;
 
 export const CreateAppointmentSchema = z.object({
   company_id: z.string().uuid(),

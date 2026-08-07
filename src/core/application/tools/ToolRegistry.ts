@@ -2,16 +2,25 @@ import { ICRMRepository } from "../../domain/repositories/ICRMRepository";
 import { IBookingRepository } from "../../domain/repositories/IBookingRepository";
 import { IKnowledgeRepository } from "../../domain/repositories/IKnowledgeRepository";
 import { NotificationService } from "../services/NotificationService";
-import { LeadQualificationService } from "../services/LeadQualificationService";
+import { LeadQualificationService, QualificationParams } from "../services/LeadQualificationService";
 import { CalcomAdapter } from "../../infrastructure/booking/calcom/CalcomAdapter";
 import { ISettingsRepository } from "../../domain/repositories/ISettingsRepository";
 import { IKnowledgeDocumentRepository } from "../../domain/repositories/IKnowledgeDocumentRepository";
 import { OpenAIEmbeddingAdapter } from "../../infrastructure/embeddings/OpenAIEmbeddingAdapter";
-import { AppointmentStatus } from "../../domain/models/types";
+import {
+  AppointmentStatus,
+  LeadTemperature,
+  NurtureStatus,
+  DecisionMakerStatus,
+  Urgency,
+  BuyingIntent,
+  Sentiment,
+} from "../../domain/models/types";
 import { Logger } from "@/shared/lib/logger";
 
 export const KNOWN_TOOL_NAMES = [
   "save_lead",
+  "update_lead_qualification",
   "book_appointment",
   "search_products",
   "search_services",
@@ -20,6 +29,76 @@ export const KNOWN_TOOL_NAMES = [
   "get_company_information",
   "get_employee_information",
 ] as const;
+
+/** Extended qualification-signal parameters shared by both `save_lead` and
+ * `update_lead_qualification`'s JSON schemas — kept as one constant so the
+ * two tools can never drift into accepting subtly different shapes for the
+ * same underlying fields. */
+const QUALIFICATION_SIGNAL_PARAMETERS: Record<string, unknown> = {
+  decision_maker: {
+    type: "string",
+    enum: ["yes", "no", "shared"],
+    description: "Whether the visitor confirmed they can personally approve this purchase, only if they said so explicitly.",
+  },
+  urgency: {
+    type: "string",
+    enum: ["immediate", "this_quarter", "exploring"],
+    description: "How soon the visitor indicated they want to move, only if they said so.",
+  },
+  buying_intent: {
+    type: "string",
+    enum: ["high", "medium", "low"],
+    description: "Your honest read of how ready the visitor is to buy, based only on what they actually said — never guessed to be generous.",
+  },
+  objections: { type: "string", description: "Any concerns or hesitations the visitor raised (price, timing, trust, etc.)." },
+  current_solution: { type: "string", description: "What the visitor is currently using or doing instead, if they mentioned it." },
+  referral_source: { type: "string", description: "How the visitor found this card, if they mentioned it." },
+  sentiment: { type: "string", enum: ["positive", "neutral", "negative"], description: "The visitor's overall tone in this conversation." },
+  qualification_confidence: {
+    type: "number",
+    description: "Your own confidence (0 to 1) in this qualification read — low if you're going mostly on limited signals.",
+  },
+  conversation_summary: { type: "string", description: "A short internal summary of the conversation so far, for the human who reviews this lead later." },
+  qualification_notes: { type: "string", description: "Any other internal reasoning worth recording — never shown to the visitor." },
+};
+
+/** Warm, no-pressure cold-lead nurture email — sent once per lead the
+ * moment qualification classifies them COLD (see ToolRegistry's save_lead
+ * and update_lead_qualification), so a lead who isn't ready today is never
+ * simply dropped. Deliberately short: the goal is "we're here when you're
+ * ready," not a hard second pitch. */
+const NURTURE_EMAIL_COPY: Record<string, { subject: string; body: (name: string, employeeName: string) => string }> = {
+  en: {
+    subject: "Thanks for the conversation — we're here when you're ready",
+    body: (name, employeeName) =>
+      `<p>Hi ${name},</p><p>Thank you for taking the time to talk with us. No rush at all — whenever the timing is right, we'd be glad to pick the conversation back up.</p><p>Feel free to reply to this email anytime with questions. ${employeeName} will personally follow up.</p>`,
+  },
+  ta: {
+    subject: "உரையாடலுக்கு நன்றி — நீங்கள் தயாராகும்போது நாங்கள் இருக்கிறோம்",
+    body: (name, employeeName) =>
+      `<p>வணக்கம் ${name},</p><p>எங்களுடன் பேச நேரம் ஒதுக்கியதற்கு நன்றி. அவசரம் இல்லை — சரியான நேரத்தில் உரையாடலைத் தொடரலாம்.</p><p>ஏதேனும் கேள்விகள் இருந்தால் இந்த மின்னஞ்சலுக்கு பதிலளிக்கவும். ${employeeName} நேரடியாகத் தொடர்பு கொள்வார்.</p>`,
+  },
+  hi: {
+    subject: "बातचीत के लिए धन्यवाद — जब आप तैयार हों, हम यहाँ हैं",
+    body: (name, employeeName) =>
+      `<p>नमस्ते ${name},</p><p>हमसे बात करने के लिए समय निकालने हेतु धन्यवाद। कोई जल्दी नहीं है — सही समय पर हम बातचीत आगे बढ़ा सकते हैं।</p><p>कोई भी सवाल हो तो इस ईमेल का जवाब दें। ${employeeName} व्यक्तिगत रूप से फॉलो-अप करेंगे।</p>`,
+  },
+  te: {
+    subject: "సంభాషణకు ధన్యవాదాలు — మీరు సిద్ధంగా ఉన్నప్పుడు మేము ఇక్కడ ఉన్నాము",
+    body: (name, employeeName) =>
+      `<p>నమస్తే ${name},</p><p>మాతో మాట్లాడటానికి సమయం కేటాయించినందుకు ధన్యవాదాలు. తొందర లేదు — సరైన సమయంలో సంభాషణను కొనసాగించవచ్చు.</p><p>ఏవైనా ప్రశ్నలు ఉంటే ఈ ఇమెయిల్‌కు రిప్లై ఇవ్వండి. ${employeeName} వ్యక్తిగతంగా ఫాలో అప్ చేస్తారు.</p>`,
+  },
+  ml: {
+    subject: "സംഭാഷണത്തിന് നന്ദി — നിങ്ങൾ തയ്യാറാകുമ്പോൾ ഞങ്ങൾ ഇവിടെയുണ്ട്",
+    body: (name, employeeName) =>
+      `<p>നമസ്കാരം ${name},</p><p>ഞങ്ങളോട് സംസാരിക്കാൻ സമയം കണ്ടെത്തിയതിന് നന്ദി. തിരക്കില്ല — ശരിയായ സമയത്ത് സംഭാഷണം തുടരാം.</p><p>എന്തെങ്കിലും ചോദ്യങ്ങൾ ഉണ്ടെങ്കിൽ ഈ ഇമെയിലിന് മറുപടി നൽകുക. ${employeeName} നേരിട്ട് ബന്ധപ്പെടും.</p>`,
+  },
+  kn: {
+    subject: "ಸಂಭಾಷಣೆಗೆ ಧನ್ಯವಾದಗಳು — ನೀವು ಸಿದ್ಧರಾದಾಗ ನಾವು ಇಲ್ಲಿದ್ದೇವೆ",
+    body: (name, employeeName) =>
+      `<p>ನಮಸ್ಕಾರ ${name},</p><p>ನಮ್ಮೊಂದಿಗೆ ಮಾತನಾಡಲು ಸಮಯ ಮೀಸಲಿಟ್ಟಿದ್ದಕ್ಕೆ ಧನ್ಯವಾದಗಳು. ಆತುರವಿಲ್ಲ — ಸರಿಯಾದ ಸಮಯದಲ್ಲಿ ಸಂಭಾಷಣೆ ಮುಂದುವರಿಸಬಹುದು.</p><p>ಯಾವುದೇ ಪ್ರಶ್ನೆಗಳಿದ್ದರೆ ಈ ಇಮೇಲ್‌ಗೆ ಪ್ರತ್ಯುತ್ತರಿಸಿ. ${employeeName} ವೈಯಕ್ತಿಕವಾಗಿ ಫಾಲೋ ಅಪ್ ಮಾಡುತ್ತಾರೆ.</p>`,
+  },
+};
 
 export interface ToolContext {
   companyId: string;
@@ -171,11 +250,47 @@ export class ToolRegistry {
     }
   }
 
+  /** Fires the cold-lead nurture email once per lead — guarded by the
+   * caller passing `alreadyNurtured` (the lead's nurture_status BEFORE this
+   * qualification write), so a lead that stays COLD across several
+   * update_lead_qualification calls in the same conversation is never
+   * emailed more than once. Fire-and-forget, matching every other
+   * notification in this registry (book_appointment's confirmation email,
+   * the high-value-lead alert): the tool call itself must not block or
+   * fail on email delivery. */
+  private maybeSendColdLeadNurtureEmail(
+    scored: { id: string; name: string; email: string; lead_temperature?: LeadTemperature },
+    alreadyNurtured: boolean,
+    context: ToolContext
+  ): void {
+    if (scored.lead_temperature !== LeadTemperature.COLD || alreadyNurtured || !this.notificationService) return;
+    const notificationService = this.notificationService;
+
+    const send = async () => {
+      const copy = NURTURE_EMAIL_COPY[context.language ?? "en"] ?? NURTURE_EMAIL_COPY.en;
+      const employee = await this.knowledgeRepo.getEmployeeById(context.employeeId);
+      if (!employee) return;
+      const result = await notificationService.send({
+        companyId: context.companyId,
+        to: scored.email,
+        subject: copy.subject,
+        templateName: "cold_lead_nurture",
+        html: copy.body(scored.name, employee.name),
+      });
+      await this.crmRepo.updateLeadQualification(scored.id, {
+        nurture_status: result.success ? NurtureStatus.SENT : NurtureStatus.SKIPPED,
+      });
+    };
+
+    send().catch((err) => Logger.error("Cold-lead nurture email failed", { error: err instanceof Error ? err.message : String(err) }));
+  }
+
   private registerDefaultTools() {
     // 1. Save Lead Tool
     this.register({
       name: "save_lead",
-      description: "Save or update a visitor's lead contact details once they express interest or share their information.",
+      description:
+        "Save a visitor's lead contact details once they share them. Include any qualification signals you've already learned naturally in conversation — decision authority, urgency, buying intent, objections, current solution, how they found this card. Never invent or guess a value the visitor didn't actually state; leave a field out if you don't know it yet. Call update_lead_qualification later if you learn more as the conversation continues.",
       parameters: {
         type: "object",
         properties: {
@@ -187,6 +302,7 @@ export class ToolRegistry {
           problem_statement: { type: "string", description: "Pain points expressed" },
           budget: { type: "number", description: "Estimated budget in USD" },
           timeline: { type: "string", description: "Project launch timeline" },
+          ...QUALIFICATION_SIGNAL_PARAMETERS,
         },
         required: ["name", "email", "phone"],
       },
@@ -209,6 +325,16 @@ export class ToolRegistry {
           budget: args.budget ? Number(args.budget) : undefined,
           timeline: args.timeline ? String(args.timeline) : undefined,
           hasNeed: Boolean(args.problem_statement),
+          decisionMaker: args.decision_maker as DecisionMakerStatus | undefined,
+          urgency: args.urgency as Urgency | undefined,
+          buyingIntent: args.buying_intent as BuyingIntent | undefined,
+          objections: args.objections ? String(args.objections) : undefined,
+          currentSolution: args.current_solution ? String(args.current_solution) : undefined,
+          referralSource: args.referral_source ? String(args.referral_source) : undefined,
+          sentiment: args.sentiment as Sentiment | undefined,
+          confidence: args.qualification_confidence !== undefined ? Number(args.qualification_confidence) : undefined,
+          conversationSummary: args.conversation_summary ? String(args.conversation_summary) : undefined,
+          qualificationNotes: args.qualification_notes ? String(args.qualification_notes) : undefined,
         });
 
         if (scored.score_category === "HIGH" && this.notificationService) {
@@ -227,12 +353,81 @@ export class ToolRegistry {
           }
         }
 
+        // A brand-new lead can never have been nurtured before — no lookup
+        // needed to know `alreadyNurtured` is false.
+        this.maybeSendColdLeadNurtureEmail(scored, false, context);
+
         return {
           success: true,
           lead_id: lead.id,
           score: scored.score,
           score_category: scored.score_category,
+          // Internal-only signal for the LLM to decide its own next move
+          // (push toward booking vs. wind down warmly) — never phrase this
+          // back to the visitor verbatim; see the sales/booking prompt
+          // modules for how this is meant to be used.
+          lead_temperature: scored.lead_temperature,
           message: "Lead contact details saved and qualified successfully.",
+        };
+      },
+    });
+
+    // 1b. Update Lead Qualification Tool — refines an already-saved lead as
+    // the conversation naturally surfaces more (the "dynamic stage two":
+    // deciding what to ask next based on what's still missing, rather than
+    // working through a fixed question list). Re-scores from the merged
+    // signals every time, so a lead that clarifies its budget mid-call can
+    // move from COLD to WARM within the same conversation.
+    this.register({
+      name: "update_lead_qualification",
+      description:
+        "Record additional qualification signals for a lead you already saved with save_lead, as the conversation naturally surfaces them. Only include what the visitor actually said — never invent or infer a value to fill a gap. Re-scores the lead immediately.",
+      parameters: {
+        type: "object",
+        properties: {
+          lead_id: { type: "string", description: "UUID returned by save_lead" },
+          budget: { type: "number", description: "Estimated budget in USD, if newly learned or clarified" },
+          timeline: { type: "string", description: "Project timeline, if newly learned or clarified" },
+          ...QUALIFICATION_SIGNAL_PARAMETERS,
+        },
+        required: ["lead_id"],
+      },
+      execute: async (args, context) => {
+        const leadId = String(args.lead_id);
+        const existing = await this.crmRepo.getLeadById(leadId);
+        if (!existing) {
+          return { success: false, message: "No lead found with that ID — call save_lead first." };
+        }
+
+        const alreadyNurtured =
+          existing.nurture_status === NurtureStatus.QUEUED || existing.nurture_status === NurtureStatus.SENT;
+
+        const scored = await this.qualificationService.calculateAndSaveLeadScore(leadId, {
+          budget: args.budget !== undefined ? Number(args.budget) : existing.budget ?? undefined,
+          timeline: args.timeline !== undefined ? String(args.timeline) : existing.timeline ?? undefined,
+          hasNeed: args.has_need !== undefined ? Boolean(args.has_need) : existing.problem_statement ? true : undefined,
+          decisionMaker: (args.decision_maker as DecisionMakerStatus | undefined) ?? existing.decision_maker ?? undefined,
+          urgency: (args.urgency as Urgency | undefined) ?? existing.urgency ?? undefined,
+          buyingIntent: (args.buying_intent as BuyingIntent | undefined) ?? existing.buying_intent ?? undefined,
+          objections: args.objections ? String(args.objections) : existing.objections ?? undefined,
+          currentSolution: args.current_solution ? String(args.current_solution) : existing.current_solution ?? undefined,
+          referralSource: args.referral_source ? String(args.referral_source) : existing.referral_source ?? undefined,
+          sentiment: (args.sentiment as Sentiment | undefined) ?? existing.sentiment ?? undefined,
+          confidence:
+            args.qualification_confidence !== undefined ? Number(args.qualification_confidence) : existing.qualification_confidence ?? undefined,
+          conversationSummary: args.conversation_summary ? String(args.conversation_summary) : existing.conversation_summary ?? undefined,
+          qualificationNotes: args.qualification_notes ? String(args.qualification_notes) : existing.qualification_notes ?? undefined,
+        });
+
+        this.maybeSendColdLeadNurtureEmail(scored, alreadyNurtured, context);
+
+        return {
+          success: true,
+          lead_id: leadId,
+          score: scored.score,
+          score_category: scored.score_category,
+          lead_temperature: scored.lead_temperature,
+          message: "Lead qualification updated.",
         };
       },
     });

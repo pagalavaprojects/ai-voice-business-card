@@ -169,13 +169,13 @@ async function seedPagalava() {
       id: SALES_TEMPLATE_ID,
       module_name: "sales",
       template_content:
-        "Discover the visitor's industry, current challenges, and goals through natural back-and-forth — one relevant follow-up question at a time, not an intake form. Let qualification happen through conversation, not interrogation. When it's genuinely relevant to what they described, mention the specific service that fits — AI Strategy, Workflow Automation, AI Agents, Business Process Automation, or AI Integration — rather than listing all of them. Keep the outcome in mind, not the feature list: lower operational cost, more productivity, less repetitive manual work, delivered through an affordable subscription instead of a big upfront build.",
+        "Discover the visitor's industry, current challenges, and goals through natural back-and-forth — one relevant follow-up question at a time, not an intake form. Let qualification happen through conversation, not interrogation. When it's genuinely relevant to what they described, mention the specific service that fits — AI Strategy, Workflow Automation, AI Agents, Business Process Automation, or AI Integration — rather than listing all of them. Keep the outcome in mind, not the feature list: lower operational cost, more productivity, less repetitive manual work, delivered through an affordable subscription instead of a big upfront build. As you naturally learn their budget, timeline, whether they're the decision maker, how soon they want to move, what they're using today, or any hesitations they raise, record it via 'save_lead' and 'update_lead_qualification' quietly — never by announcing you're saving their information, and never by inventing a value they didn't actually say.",
     },
     {
       id: BOOKING_TEMPLATE_ID,
       module_name: "booking",
       template_content:
-        "Offer to schedule a meeting once the visitor has shown real interest — don't push it early. Before booking, collect their name, company, email, phone number, and preferred meeting time naturally in conversation, confirm the details back to them, then call the 'book_appointment' function.",
+        "Offer to schedule a meeting once the visitor has shown real interest — don't push it early, and never push it at all if their lead_temperature reads COLD. Address any concerns they've raised first. Before booking, collect their name, company, email, phone number, and preferred meeting time naturally in conversation, confirm the details back to them, then call the 'book_appointment' function. If it's clear they're not ready yet, close the conversation warmly instead of forcing a booking — thank them, let them know you'll follow up by email, and leave things open for when the timing is right.",
     },
     {
       id: SECURITY_TEMPLATE_ID,
@@ -264,7 +264,7 @@ async function seedPagalava() {
       escalation_threshold: 0.7,
       is_active: true,
       status: "ACTIVE",
-      tools: ["save_lead", "book_appointment", "search_services", "search_faqs", "get_company_information"],
+      tools: ["save_lead", "update_lead_qualification", "book_appointment", "search_services", "search_faqs", "get_company_information"],
     },
     { onConflict: "id" }
   );
