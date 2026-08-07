@@ -764,7 +764,10 @@ languages. Full gate suite green: tsc, lint (project-wide, including the
 one incidental CMS fix), 300 unit/integration tests (1 pre-existing
 skip), production build, and 47/48 Playwright e2e across Desktop/iPad/
 Mobile (the one failure is the pre-existing contrast finding above, not a
-regression).
+regression). One commit, deployed, and spot-verified live in production:
+`/api/public/.../...` returns all six languages in `enabledLanguages`,
+`/c/srinivasan` still 200s, an unknown short link still 404s, and the
+founder photo/company logo URLs are both still present.
 
 ---
 
