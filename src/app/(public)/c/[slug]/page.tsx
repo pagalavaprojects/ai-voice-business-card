@@ -51,7 +51,7 @@ export default async function ShortLinkBusinessCardPage({ params }: { params: Pa
   // must reach a genuinely public address) a request-derived origin is fine
   // here even in local development — it just describes "this page," it isn't
   // asked to receive anything.
-  const host = headers().get("host") ?? "ai-voice-business-card.vercel.app";
+  const host = headers().get("host") ?? (process.env.NEXT_PUBLIC_APP_URL || "https://maylaanai.com").replace(/^https?:\/\//, "");
   const protocol = host.startsWith("localhost") || host.startsWith("127.") ? "http" : "https";
   const jsonLd = buildCardJsonLd({ employee, company, canonicalUrl: `${protocol}://${host}/c/${params.slug}` });
 

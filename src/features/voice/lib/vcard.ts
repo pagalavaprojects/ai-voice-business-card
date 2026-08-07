@@ -53,8 +53,6 @@ function imagePropertyLine(property: "PHOTO" | "LOGO", dataUri: string | null | 
 }
 
 /**
- * RFC 6350 vCard, used by the business card's "Save contact" action.
- *
  * Commas, semicolons and backslashes are structural separators in vCard and
  * must be escaped, or a company name like "Pagalava, Inc." silently splits
  * into two fields when imported into a phone's address book.
@@ -63,6 +61,19 @@ function escape(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\n/g, "\\n");
 }
 
+/**
+ * Generates a vCard 3.0 (RFC 2426) card for the business card's "Save
+ * contact" action — deliberately NOT vCard 4.0 (RFC 6350). 4.0 is newer and
+ * marginally cleaner, but it has real gaps in exactly the clients this
+ * needs to reach: classic desktop Outlook has no reliable 4.0 support at
+ * all, and several stock/OEM Android contact apps still parse it
+ * inconsistently or not at all. 3.0 is understood correctly by every
+ * mainstream contact app in use today (Android, iOS/macOS Contacts,
+ * Outlook, Google Contacts) with no compatibility caveats, which matters
+ * more here than the incremental spec cleanliness — a saved contact that
+ * silently fails to import on an older phone is a worse outcome than one
+ * written to a slightly older, universally-supported spec version.
+ */
 export function generateVCard(contact: VCardContact): string {
   const parts = contact.name.trim().split(/\s+/);
   const firstName = parts[0] ?? "";
@@ -75,7 +86,11 @@ export function generateVCard(contact: VCardContact): string {
     `FN:${escape(contact.name)}`,
     `ORG:${escape(contact.company)}`,
     `TITLE:${escape(contact.designation)}`,
-    `TEL;TYPE=WORK,VOICE:${escape(contact.phone)}`,
+    // CELL (not just WORK) so phones that group contact numbers by type —
+    // most Android/iOS address books do — file this under "mobile" rather
+    // than a generic work line; this number is a direct mobile line in
+    // practice, not a shared office switchboard extension.
+    `TEL;TYPE=CELL,WORK,VOICE:${escape(contact.phone)}`,
     `EMAIL;TYPE=WORK:${escape(contact.email)}`,
   ];
   if (contact.website) lines.push(`URL:${escape(contact.website)}`);

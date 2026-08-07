@@ -13,6 +13,23 @@ const nextConfig = {
     config.resolve.fallback = { ...config.resolve.fallback, "@valkey/valkey-glide": false };
     return config;
   },
+  // The apex (maylaanai.com) is canonical; www exists only because people
+  // type it out of habit. A 301 here — rather than relying on Vercel's own
+  // per-domain redirect setting — keeps the redirect in source control and
+  // working identically regardless of how the domain is configured on the
+  // hosting side.
+  async redirects() {
+    const canonicalHost = (process.env.NEXT_PUBLIC_APP_URL || "https://maylaanai.com").replace(/^https?:\/\//, "");
+    const wwwHost = canonicalHost.startsWith("www.") ? canonicalHost : `www.${canonicalHost}`;
+    return [
+      {
+        source: "/:path*",
+        has: [{ type: "host", value: wwwHost }],
+        destination: `https://${canonicalHost}/:path*`,
+        permanent: true,
+      },
+    ];
+  },
   async headers() {
     return [
       {

@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Mail, Phone, Globe, Calendar, Download, QrCode, MessageCircle, Linkedin, Link2, X, Loader2 } from "lucide-react";
+import dynamic from "next/dynamic";
+import { Mail, Phone, Globe, Calendar, Download, QrCode, MessageCircle, Linkedin, Link2, X, Loader2, CheckCircle2 } from "lucide-react";
 import { useVapiSession } from "@/features/voice/hooks/useVapiSession";
 import { VoiceMicButton } from "@/features/voice/components/VoiceMicButton";
 import { TranscriptViewer } from "@/features/voice/components/TranscriptViewer";
@@ -14,6 +15,19 @@ import { useLanguage } from "@/features/language/hooks/useLanguage";
 import { LanguageSelector } from "@/features/language/components/LanguageSelector";
 import { LanguageGate } from "@/features/language/components/LanguageGate";
 import { getLanguageDefinition, isSupportedLanguage, LanguageCode } from "@/features/language/config";
+
+// Every visitor loads this page to talk to the voice AI, not to book a
+// meeting — code-splitting the booking modal (real Cal.com fetches, date
+// formatting, a multi-step form) out of the initial bundle means the one
+// thing every single visitor actually needs, the mic button, ships faster.
+// `ssr: false` is correct here, not a workaround: this modal is 100%
+// interaction-triggered (opens only on a client click) and reads
+// `Intl`/`fetch`, so there is nothing for the server to usefully render for
+// it up front.
+const AppointmentModal = dynamic(
+  () => import("@/features/voice/components/AppointmentModal").then((m) => m.AppointmentModal),
+  { ssr: false }
+);
 
 interface PublicCardData {
   company: { name: string; website: string; logoUrl: string | null };
@@ -110,6 +124,8 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
   const [loadError, setLoadError] = useState<"notfound" | "unavailable" | null>(null);
   const [qrOpen, setQrOpen] = useState(false);
   const [savingContact, setSavingContact] = useState(false);
+  const [appointmentOpen, setAppointmentOpen] = useState(false);
+  const [savedContactSuccess, setSavedContactSuccess] = useState(false);
 
   // Refetches whenever the visitor's language changes (including the one
   // extra fetch on first load once useLanguage resolves the real starting
@@ -365,7 +381,11 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
     company: company.name,
     designation: employee.designation,
     website: company.website,
-    links: Object.fromEntries(otherLinks.concat(linkedIn ? [["LinkedIn", linkedIn]] : [])),
+    links: Object.fromEntries(
+      otherLinks
+        .concat(linkedIn ? [["LinkedIn", linkedIn]] : [])
+        .concat(card.whatsappUrl ? [["WhatsApp", card.whatsappUrl]] : [])
+    ),
   };
 
   return (
@@ -705,16 +725,14 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
             Contact and actions
           </h2>
 
-          {card.bookingUrl && (
-            <Button
-              variant="default"
-              onClick={() => window.open(card.bookingUrl as string, "_blank", "noopener,noreferrer")}
-              className="w-full flex items-center justify-center gap-2 text-xs"
-            >
-              <Calendar className="h-4 w-4" aria-hidden="true" />
-              {t("buttons.bookMeeting")}
-            </Button>
-          )}
+          <Button
+            variant="default"
+            onClick={() => setAppointmentOpen(true)}
+            className="w-full flex items-center justify-center gap-2 text-xs font-semibold shadow-lg shadow-sky-500/20"
+          >
+            <Calendar className="h-4 w-4" aria-hidden="true" />
+            {t("buttons.bookMeeting")}
+          </Button>
 
           <div className="grid grid-cols-2 gap-3">
             <Button
@@ -723,22 +741,27 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
               onClick={async () => {
                 setSavingContact(true);
                 try {
-                  // Resolved just-in-time rather than on every render: this
-                  // fetches and re-encodes two images, work worth doing only
-                  // when the visitor actually asks to save the contact.
                   const [photoDataUri, logoDataUri] = await Promise.all([
                     employee.avatarUrl ? imageUrlToDataUri(employee.avatarUrl) : Promise.resolve(null),
                     company.logoUrl ? imageUrlToDataUri(company.logoUrl) : Promise.resolve(null),
                   ]);
                   downloadVCard({ ...contact, photoDataUri, logoDataUri });
+                  setSavedContactSuccess(true);
+                  setTimeout(() => setSavedContactSuccess(false), 3000);
                 } finally {
                   setSavingContact(false);
                 }
               }}
               className="w-full flex items-center justify-center gap-2 text-xs"
             >
-              {savingContact ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Download className="h-4 w-4" aria-hidden="true" />}
-              {t("buttons.saveContact")}
+              {savingContact ? (
+                <Loader2 className="h-4 w-4 animate-spin text-sky-400" aria-hidden="true" />
+              ) : savedContactSuccess ? (
+                <CheckCircle2 className="h-4 w-4 text-emerald-400" aria-hidden="true" />
+              ) : (
+                <Download className="h-4 w-4 text-slate-300" aria-hidden="true" />
+              )}
+              {savedContactSuccess ? "Contact Saved!" : t("buttons.saveContact")}
             </Button>
             <Button
               variant="glass"
@@ -746,7 +769,7 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
               disabled={!card.qrSvg}
               className="w-full flex items-center justify-center gap-2 text-xs"
             >
-              <QrCode className="h-4 w-4" aria-hidden="true" />
+              <QrCode className="h-4 w-4 text-slate-300" aria-hidden="true" />
               {t("buttons.shareQR")}
             </Button>
           </div>
@@ -787,6 +810,16 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
           </Button>
         </div>
       </Dialog>
+
+      <AppointmentModal
+        open={appointmentOpen}
+        onClose={() => setAppointmentOpen(false)}
+        companyId={companyId}
+        employeeId={employeeId}
+        employeeName={employee.name}
+        companyName={company.name}
+        externalBookingUrl={card.bookingUrl}
+      />
     </main>
   );
 }

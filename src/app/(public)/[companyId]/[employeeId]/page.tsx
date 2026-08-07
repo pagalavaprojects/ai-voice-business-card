@@ -55,7 +55,7 @@ export default async function VoiceBusinessCardPage({ params }: { params: Params
   // describe to a search engine here.
   const jsonLd = card
     ? (() => {
-        const host = headers().get("host") ?? "ai-voice-business-card.vercel.app";
+        const host = headers().get("host") ?? (process.env.NEXT_PUBLIC_APP_URL || "https://maylaanai.com").replace(/^https?:\/\//, "");
         const protocol = host.startsWith("localhost") || host.startsWith("127.") ? "http" : "https";
         return buildCardJsonLd({
           employee: card.employee,

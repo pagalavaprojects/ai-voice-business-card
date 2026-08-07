@@ -75,7 +75,10 @@ export class ToolRegistry {
    * always used the env var and every email went out under the platform's own
    * name. A settings read failure degrades to the platform defaults rather
    * than failing the booking. */
-  private async resolveCompanyDefaults(companyId: string): Promise<{ eventTypeId?: number; fromName?: string }> {
+  /** Public so the manual (non-voice) booking route can resolve the same
+   * Cal.com event type a live call would use, without duplicating the
+   * per-company-setting-then-platform-env-var fallback chain. */
+  public async resolveCompanyDefaults(companyId: string): Promise<{ eventTypeId?: number; fromName?: string }> {
     if (!this.settingsRepo) return { eventTypeId: this.calcomEventTypeId };
     try {
       const settings = await this.settingsRepo.getSettings(companyId);
