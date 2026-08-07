@@ -14,6 +14,17 @@ interface LanguageGateProps {
    * the same inherit-all default used server-side and in LanguageSelector. */
   enabledLanguages?: LanguageCode[];
   onContinue: (code: LanguageCode) => void;
+  /** Translator for the gate's OWN chrome ("Choose your preferred
+   * language", "Continue"...), resolved against `initialLanguage` by the
+   * caller (PublicBusinessCard already runs useLanguage() once and detects
+   * a starting language before this screen ever renders — see there). This
+   * is deliberately NOT hardcoded English: the one screen whose entire job
+   * is letting a non-English speaker pick their language was, until this
+   * fix, only ever presented in English regardless of who was looking at
+   * it — the exact irony a real audit should catch. Each language card's
+   * own name (e.g. "தமிழ்") is never translated — a language's name in
+   * its own script is what identifies it, in every UI language equally. */
+  t: (key: string, vars?: Record<string, string>) => string;
 }
 
 /**
@@ -30,7 +41,7 @@ interface LanguageGateProps {
  * is set to light mode still gets a legible, considered screen rather than
  * a forced-dark one.
  */
-export function LanguageGate({ initialLanguage, enabledLanguages, onContinue }: LanguageGateProps) {
+export function LanguageGate({ initialLanguage, enabledLanguages, onContinue, t }: LanguageGateProps) {
   const [selected, setSelected] = useState<LanguageCode>(initialLanguage);
   const cardRefs = useRef<Record<string, HTMLButtonElement | null>>({});
 
@@ -93,13 +104,13 @@ export function LanguageGate({ initialLanguage, enabledLanguages, onContinue }: 
           <div className="mx-auto mb-4 h-11 w-11 rounded-2xl bg-gradient-to-tr from-sky-500 to-indigo-500 flex items-center justify-center shadow-lg shadow-sky-500/30">
             <span className="text-lg" aria-hidden="true">🌐</span>
           </div>
-          <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight">Choose your preferred language</h1>
+          <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight">{t("gate.title")}</h1>
           <p className="mt-1.5 text-sm" style={{ color: "var(--gate-ink-muted)" }}>
-            Your AI conversation will run entirely in the language you pick — you can change it anytime.
+            {t("gate.subtitle")}
           </p>
         </div>
 
-        <div role="radiogroup" aria-label="Conversation language" className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div role="radiogroup" aria-label={t("aria.chooseLanguage")} className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           {languages.map((lang, index) => {
             const isSelected = selected === lang.code;
             const sttConfirmed = hasConfirmedSpeechRecognition(lang.code);
@@ -135,7 +146,7 @@ export function LanguageGate({ initialLanguage, enabledLanguages, onContinue }: 
                 <span className="text-base sm:text-lg font-bold" lang={lang.code}>{lang.nativeName}</span>
                 <span className="text-[11px]" style={{ color: "var(--gate-ink-muted)" }}>{lang.name}</span>
                 {!sttConfirmed && (
-                  <span className="mt-0.5 text-[9px] uppercase tracking-wide text-amber-400/90">Voice input: setup pending</span>
+                  <span className="mt-0.5 text-[9px] uppercase tracking-wide text-amber-400/90">{t("gate.sttPending")}</span>
                 )}
               </motion.button>
             );
@@ -147,7 +158,7 @@ export function LanguageGate({ initialLanguage, enabledLanguages, onContinue }: 
           onClick={() => onContinue(selected)}
           className="mt-8 w-full flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-sky-500 to-indigo-500 py-3.5 text-sm font-semibold text-white shadow-lg shadow-sky-500/25 transition-transform hover:scale-[1.01] active:scale-[0.99] focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:ring-offset-2 focus-visible:ring-offset-transparent"
         >
-          Continue
+          {t("gate.continue")}
           <ArrowRight className="h-4 w-4" aria-hidden="true" />
         </button>
       </motion.div>

@@ -3,6 +3,7 @@
 import React from "react";
 import { motion } from "framer-motion";
 import { Mic, MicOff, Loader2, Volume2 } from "lucide-react";
+import { WaveformVisualizer } from "./WaveformVisualizer";
 
 export type VoiceState = "idle" | "connecting" | "listening" | "speaking" | "thinking";
 
@@ -10,22 +11,14 @@ interface VoiceMicButtonProps {
   state: VoiceState;
   isMuted?: boolean;
   onClick: () => void;
-  /** True when autoplay was blocked and the visitor needs to tap to start —
-   * draws an attention ring sized to match the button's own circle, rather
-   * than a wrapping div (which squares off into a pill against the button's
-   * rectangular layout box). */
   ringActive?: boolean;
-  /** True while the scripted opening is playing — the mic is force-muted at
-   * the SDK level for this whole window (see useVapiSession.ts), so the
-   * button itself is inert too rather than looking tappable and doing
-   * nothing useful. */
   disabled?: boolean;
-  /** Translated announcements for each state — supplied by the caller
-   * (which has the visitor's chosen language) rather than this component
-   * importing the language hook itself, so VoiceMicButton stays a plain,
-   * reusable, language-agnostic control. Falls back to English so any
-   * existing caller that hasn't been updated keeps working unchanged. */
-  ariaLabels?: {
+  introCountdown?: number;
+  /** Required, not defaulted: every caller resolves these against the
+   * visitor's chosen language (see PublicBusinessCard), so a hardcoded
+   * English fallback here would be exactly the kind of untranslated leak
+   * a multilingual audit exists to catch. */
+  ariaLabels: {
     idle: string;
     connecting: string;
     listening: string;
@@ -35,18 +28,17 @@ interface VoiceMicButtonProps {
   };
 }
 
-const DEFAULT_ARIA_LABELS = {
-  idle: "Start voice conversation with AI Twin",
-  connecting: "Connecting to AI Twin, please wait",
-  listening: "AI Twin is listening — speak now",
-  speaking: "AI Twin is speaking",
-  thinking: "AI Twin is processing your message",
-  disabled: "Playing introduction — please wait",
-};
-
-export const VoiceMicButton: React.FC<VoiceMicButtonProps> = ({ state, isMuted, onClick, ringActive, disabled, ariaLabels = DEFAULT_ARIA_LABELS }) => {
+export const VoiceMicButton = React.memo(function VoiceMicButton({
+  state,
+  isMuted,
+  onClick,
+  ringActive,
+  disabled,
+  introCountdown,
+  ariaLabels,
+}: VoiceMicButtonProps) {
   return (
-    <div className="relative flex items-center justify-center py-6">
+    <div className="relative flex flex-col items-center justify-center py-4">
       {/* Pulsing Concentric Outer Rings for Listening/Speaking State */}
       {(state === "listening" || state === "speaking") && (
         <>
@@ -88,7 +80,7 @@ export const VoiceMicButton: React.FC<VoiceMicButtonProps> = ({ state, isMuted, 
             : ariaLabels.thinking
         }
         className={`relative z-10 flex h-28 w-28 items-center justify-center rounded-full shadow-2xl backdrop-blur-xl transition-all duration-300 ${
-          disabled ? "cursor-not-allowed opacity-60" : ""
+          disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer"
         } ${
           state === "idle"
             ? "bg-slate-800/80 border border-white/20 text-slate-100 shadow-sky-500/10 hover:border-sky-400/50"
@@ -100,17 +92,25 @@ export const VoiceMicButton: React.FC<VoiceMicButtonProps> = ({ state, isMuted, 
         }`}
       >
         {disabled ? (
-          <MicOff className="h-10 w-10 text-sky-300/70" />
+          <div className="flex flex-col items-center gap-1">
+            <Volume2 className="h-8 w-8 text-sky-300 animate-pulse" />
+            {introCountdown && introCountdown > 0 && (
+              <span className="text-[10px] font-mono font-bold text-sky-200">{introCountdown}s</span>
+            )}
+          </div>
         ) : state === "connecting" || state === "thinking" ? (
-          <Loader2 className="h-10 w-10 animate-spin text-sky-400" />
+          <Loader2 className="h-9 w-9 animate-spin text-sky-400" />
         ) : isMuted ? (
-          <MicOff className="h-10 w-10 text-rose-400" />
+          <MicOff className="h-9 w-9 text-rose-400" />
         ) : state === "speaking" ? (
-          <Volume2 className="h-10 w-10 animate-bounce" />
+          <Volume2 className="h-9 w-9 text-white animate-pulse" />
         ) : (
-          <Mic className="h-10 w-10" />
+          <Mic className="h-9 w-9 text-white" />
         )}
       </motion.button>
+
+      {/* Audio Waveform Visualizer */}
+      <WaveformVisualizer state={state} className="mt-3" />
     </div>
   );
-};
+});

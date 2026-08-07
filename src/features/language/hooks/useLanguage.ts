@@ -9,6 +9,7 @@ export interface LocaleBundle {
   cardNotFoundBody: string;
   cardUnavailable: string;
   cardUnavailableBody: string;
+  tagline: string;
   status: Record<"availableNow" | "preparingVoice" | "playingIntroduction" | "speaking" | "thinking" | "listening", string>;
   mic: Record<
     | "talkWithAI"
@@ -21,15 +22,62 @@ export interface LocaleBundle {
     | "listeningHelper"
     | "tapRequiredHelper"
     | "idleHelper"
-    | "nowYouCanAsk",
+    | "nowYouCanAsk"
+    | "defaultFirstMessage"
+    | "connectionError"
+    | "startCallError",
     string
   >;
-  buttons: Record<"mute" | "unmute" | "endCall" | "bookMeeting" | "saveContact" | "shareQR" | "close", string>;
-  sections: Record<"tryAsking" | "whatWeDo" | "products" | "featured", string>;
+  buttons: Record<"mute" | "unmute" | "endCall" | "bookMeeting" | "saveContact" | "contactSaved" | "shareQR" | "close", string>;
+  sections: Record<"tryAsking" | "whatWeDo" | "products" | "featured" | "actionsHeading", string>;
   contact: Record<"website", string>;
   qr: Record<"title" | "instructions", string>;
   aria: Record<"callDuration" | "startCall" | "introPlaying" | "connecting" | "listening" | "speaking" | "thinking" | "chooseLanguage", string>;
   suggestedQuestions: string[];
+  appointment: Record<
+    | "title"
+    | "stepSelectTime"
+    | "stepYourDetails"
+    | "stepDone"
+    | "chooseSlotTitle"
+    | "chooseSlotSubtitle"
+    | "loadingSlots"
+    | "errorRateLimited"
+    | "errorSlotsGeneric"
+    | "errorSlotsHintWithLink"
+    | "errorSlotsHintNoLink"
+    | "unconfiguredNotice"
+    | "unconfiguredHintWithLink"
+    | "unconfiguredHintNoLink"
+    | "openCalendarLink"
+    | "nextStep"
+    | "enterDetailsTitle"
+    | "slotSelectedLabel"
+    | "fullNameLabel"
+    | "fullNamePlaceholder"
+    | "emailLabel"
+    | "emailPlaceholder"
+    | "phoneLabel"
+    | "phonePlaceholder"
+    | "back"
+    | "booking"
+    | "confirmBooking"
+    | "submitErrorValidation"
+    | "submitErrorInvalidTime"
+    | "submitErrorUnavailable"
+    | "submitErrorGeneric"
+    | "submitErrorNetwork"
+    | "submitErrorRateLimited"
+    | "confirmedTitle"
+    | "confirmedMessage"
+    | "requestedTitle"
+    | "requestedMessage"
+    | "preferredTimeLabel"
+    | "done",
+    string
+  >;
+  gate: Record<"title" | "subtitle" | "continue" | "sttPending", string>;
+  transcript: Record<"heading" | "ariaLabel" | "you" | "aiTwin", string>;
 }
 
 const STORAGE_KEY = "pagalava.language";

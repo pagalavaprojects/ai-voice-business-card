@@ -25,7 +25,81 @@ export interface ToolContext {
   companyId: string;
   employeeId: string;
   conversationId?: string;
+  /** The visitor's chosen conversation language ("en"/"ta"/"hi"/"te"/"ml"/
+   * "kn"), resolved by the caller (the webhook route from the live call's
+   * ?lang= param, the public booking route from the submitted form) —
+   * deliberately a plain string, not features/language's LanguageCode type,
+   * so this application-layer file has no dependency on that UI-adjacent
+   * feature module. Unset or unrecognized falls back to English, never a
+   * thrown error: a booking must still succeed even if language resolution
+   * fails. */
+  language?: string;
 }
+
+/** Visitor-facing appointment email copy, one of the few genuinely
+ * user-visible strings this application-layer module owns — everything
+ * else here is either internal (the employee's high-value-lead alert stays
+ * in the platform's own language deliberately) or already routed through
+ * the caller's own translation layer. English is the fallback for any
+ * language code this map doesn't recognize. */
+const APPOINTMENT_EMAIL_COPY: Record<
+  string,
+  {
+    confirmedSubject: string;
+    requestedSubject: string;
+    confirmedBody: (name: string, when: string, meetingUrl?: string) => string;
+    requestedBody: (name: string, when: string) => string;
+  }
+> = {
+  en: {
+    confirmedSubject: "Your meeting is confirmed",
+    requestedSubject: "We've received your meeting request",
+    confirmedBody: (name, when, meetingUrl) =>
+      `<p>Hi ${name},</p><p>Your meeting is confirmed for <strong>${when}</strong>.</p>${meetingUrl ? `<p><a href="${meetingUrl}">Join the meeting</a></p>` : ""}`,
+    requestedBody: (name, when) =>
+      `<p>Hi ${name},</p><p>Thanks — we've noted your preferred time of <strong>${when}</strong>. You'll receive a calendar invitation once it's confirmed.</p>`,
+  },
+  ta: {
+    confirmedSubject: "உங்கள் சந்திப்பு உறுதி செய்யப்பட்டது",
+    requestedSubject: "உங்கள் சந்திப்பு கோரிக்கை பெறப்பட்டது",
+    confirmedBody: (name, when, meetingUrl) =>
+      `<p>வணக்கம் ${name},</p><p>உங்கள் சந்திப்பு <strong>${when}</strong> அன்று உறுதி செய்யப்பட்டுள்ளது.</p>${meetingUrl ? `<p><a href="${meetingUrl}">கூட்டத்தில் இணையவும்</a></p>` : ""}`,
+    requestedBody: (name, when) =>
+      `<p>வணக்கம் ${name},</p><p>நன்றி — உங்கள் விருப்பமான நேரமான <strong>${when}</strong> பதிவு செய்யப்பட்டுள்ளது. உறுதி செய்யப்பட்டவுடன் கேலெண்டர் அழைப்பிதழ் பெறுவீர்கள்.</p>`,
+  },
+  hi: {
+    confirmedSubject: "आपकी मीटिंग की पुष्टि हो गई है",
+    requestedSubject: "आपका मीटिंग अनुरोध प्राप्त हो गया है",
+    confirmedBody: (name, when, meetingUrl) =>
+      `<p>नमस्ते ${name},</p><p>आपकी मीटिंग <strong>${when}</strong> के लिए पुष्टि की जा चुकी है।</p>${meetingUrl ? `<p><a href="${meetingUrl}">मीटिंग में शामिल हों</a></p>` : ""}`,
+    requestedBody: (name, when) =>
+      `<p>नमस्ते ${name},</p><p>धन्यवाद — आपका पसंदीदा समय <strong>${when}</strong> दर्ज कर लिया गया है। पुष्टि होते ही आपको कैलेंडर आमंत्रण मिलेगा।</p>`,
+  },
+  te: {
+    confirmedSubject: "మీ మీటింగ్ నిర్ధారించబడింది",
+    requestedSubject: "మీ మీటింగ్ అభ్యర్థన అందుకున్నాము",
+    confirmedBody: (name, when, meetingUrl) =>
+      `<p>నమస్తే ${name},</p><p>మీ మీటింగ్ <strong>${when}</strong> కు నిర్ధారించబడింది.</p>${meetingUrl ? `<p><a href="${meetingUrl}">మీటింగ్‌లో చేరండి</a></p>` : ""}`,
+    requestedBody: (name, when) =>
+      `<p>నమస్తే ${name},</p><p>ధన్యవాదాలు — మీరు ఇష్టపడే సమయం <strong>${when}</strong> నమోదు చేయబడింది. నిర్ధారించిన వెంటనే మీకు క్యాలెండర్ ఆహ్వానం అందుతుంది.</p>`,
+  },
+  ml: {
+    confirmedSubject: "നിങ്ങളുടെ മീറ്റിംഗ് സ്ഥിരീകരിച്ചു",
+    requestedSubject: "നിങ്ങളുടെ മീറ്റിംഗ് അഭ്യർത്ഥന ലഭിച്ചു",
+    confirmedBody: (name, when, meetingUrl) =>
+      `<p>നമസ്കാരം ${name},</p><p>നിങ്ങളുടെ മീറ്റിംഗ് <strong>${when}</strong>-ന് സ്ഥിരീകരിച്ചു.</p>${meetingUrl ? `<p><a href="${meetingUrl}">മീറ്റിംഗിൽ ചേരുക</a></p>` : ""}`,
+    requestedBody: (name, when) =>
+      `<p>നമസ്കാരം ${name},</p><p>നന്ദി — നിങ്ങൾ ഇഷ്ടപ്പെടുന്ന സമയം <strong>${when}</strong> രേഖപ്പെടുത്തി. സ്ഥിരീകരിച്ചുകഴിഞ്ഞാൽ ഉടൻ കലണ്ടർ ക്ഷണം ലഭിക്കും.</p>`,
+  },
+  kn: {
+    confirmedSubject: "ನಿಮ್ಮ ಸಭೆ ದೃಢಪಡಿಸಲಾಗಿದೆ",
+    requestedSubject: "ನಿಮ್ಮ ಸಭೆ ವಿನಂತಿ ಸ್ವೀಕರಿಸಲಾಗಿದೆ",
+    confirmedBody: (name, when, meetingUrl) =>
+      `<p>ನಮಸ್ಕಾರ ${name},</p><p>ನಿಮ್ಮ ಸಭೆ <strong>${when}</strong> ಗೆ ದೃಢಪಡಿಸಲಾಗಿದೆ.</p>${meetingUrl ? `<p><a href="${meetingUrl}">ಸಭೆಗೆ ಸೇರಿ</a></p>` : ""}`,
+    requestedBody: (name, when) =>
+      `<p>ನಮಸ್ಕಾರ ${name},</p><p>ಧನ್ಯವಾದಗಳು — ನಿಮ್ಮ ಆದ್ಯತೆಯ ಸಮಯ <strong>${when}</strong> ದಾಖಲಿಸಲಾಗಿದೆ. ದೃಢೀಕರಣದ ನಂತರ ನಿಮಗೆ ಕ್ಯಾಲೆಂಡರ್ ಆಮಂತ್ರಣ ಬರುತ್ತದೆ.</p>`,
+  },
+};
 
 export interface ToolDefinition {
   name: string;
@@ -227,21 +301,26 @@ export class ToolRegistry {
 
         // The email must match reality too — telling someone a meeting is
         // confirmed when no calendar entry exists is the same lie in a
-        // different channel.
+        // different channel. The email ITSELF must also match the visitor's
+        // own conversation language — a Tamil caller who booked in Tamil
+        // getting an all-English confirmation is the same class of leak the
+        // rest of this platform's multilingual work exists to close.
         if (this.notificationService && lead) {
-          const when = new Date(appointment.start_time).toLocaleString();
+          const copy = APPOINTMENT_EMAIL_COPY[context.language ?? "en"] ?? APPOINTMENT_EMAIL_COPY.en;
+          const when = new Date(appointment.start_time).toLocaleString(context.language || "en-US", {
+            dateStyle: "full",
+            timeStyle: "short",
+          });
           this.notificationService
             .send({
               companyId: context.companyId,
               to: lead.email,
-              subject: confirmed ? "Your meeting is confirmed" : "We've received your meeting request",
+              subject: confirmed ? copy.confirmedSubject : copy.requestedSubject,
               templateName: confirmed ? "appointment_confirmation" : "appointment_requested",
               fromName: companyDefaults.fromName,
               html: confirmed
-                ? `<p>Hi ${lead.name},</p><p>Your meeting is confirmed for <strong>${when}</strong>.</p>${
-                    appointment.meeting_url ? `<p><a href="${appointment.meeting_url}">Join the meeting</a></p>` : ""
-                  }`
-                : `<p>Hi ${lead.name},</p><p>Thanks — we've noted your preferred time of <strong>${when}</strong>. You'll receive a calendar invitation once it's confirmed.</p>`,
+                ? copy.confirmedBody(lead.name, when, appointment.meeting_url ?? undefined)
+                : copy.requestedBody(lead.name, when),
             })
             .catch((err) => Logger.error("book_appointment email failed", { error: err instanceof Error ? err.message : String(err) }));
         }

@@ -4,6 +4,7 @@
   "cardNotFoundBody": "This link doesn't match an active business card. Please check the QR code or link and try again.",
   "cardUnavailable": "Card temporarily unavailable",
   "cardUnavailableBody": "We couldn't load this business card right now. Please try again in a moment.",
+  "tagline": "AI Integrated. Growth Automated.",
   "status": {
     "availableNow": "Available now",
     "preparingVoice": "Preparing Voice…",
@@ -23,7 +24,10 @@
     "listeningHelper": "Speak naturally — I'm listening. Tap the microphone to end.",
     "tapRequiredHelper": "Your browser needs a tap before it will turn on the microphone.",
     "idleHelper": "Ask anything about what we do. Your browser will ask for microphone access.",
-    "nowYouCanAsk": "Now you can ask your questions"
+    "nowYouCanAsk": "Now you can ask your questions",
+    "defaultFirstMessage": "Hello, thank you for scanning my business card. How can I help you today?",
+    "connectionError": "Voice connection error",
+    "startCallError": "Failed to start live voice call"
   },
   "buttons": {
     "mute": "Mute",
@@ -31,6 +35,7 @@
     "endCall": "End call",
     "bookMeeting": "Book a meeting",
     "saveContact": "Save contact",
+    "contactSaved": "Contact saved!",
     "shareQR": "Share QR",
     "close": "Close"
   },
@@ -38,7 +43,8 @@
     "tryAsking": "Try asking",
     "whatWeDo": "What we do",
     "products": "Products",
-    "featured": "Featured"
+    "featured": "Featured",
+    "actionsHeading": "Contact and actions"
   },
   "contact": {
     "website": "Website"
@@ -61,5 +67,58 @@
     "What services do you offer?",
     "How can AI reduce costs?",
     "Can I schedule a demo?"
-  ]
+  ],
+  "appointment": {
+    "title": "Book an Appointment",
+    "stepSelectTime": "Select Time",
+    "stepYourDetails": "Your Details",
+    "stepDone": "Done",
+    "chooseSlotTitle": "Choose a meeting slot",
+    "chooseSlotSubtitle": "Book a 30-minute discovery consultation with {employeeName} from {companyName}.",
+    "loadingSlots": "Loading available times…",
+    "errorRateLimited": "Too many attempts — please wait a moment and reopen this.",
+    "errorSlotsGeneric": "We couldn't load available times right now.",
+    "errorSlotsHintWithLink": "You can still use the calendar link below.",
+    "errorSlotsHintNoLink": "Please try again shortly, or reach out directly.",
+    "unconfiguredNotice": "No online booking is configured yet for {employeeName}.",
+    "unconfiguredHintWithLink": "Use the calendar link below, or ",
+    "unconfiguredHintNoLink": "Contact them directly to arrange a time.",
+    "openCalendarLink": "Open Cal.com Calendar",
+    "nextStep": "Next Step",
+    "enterDetailsTitle": "Enter your contact info",
+    "slotSelectedLabel": "Slot selected:",
+    "fullNameLabel": "Full Name",
+    "fullNamePlaceholder": "John Doe",
+    "emailLabel": "Email Address",
+    "emailPlaceholder": "john@example.com",
+    "phoneLabel": "Phone Number",
+    "phonePlaceholder": "+1 (555) 000-0000",
+    "back": "Back",
+    "booking": "Booking…",
+    "confirmBooking": "Confirm Booking",
+    "submitErrorValidation": "Please check the form and try again.",
+    "submitErrorInvalidTime": "Please choose a valid, upcoming time.",
+    "submitErrorUnavailable": "Booking is temporarily unavailable. Please contact us directly.",
+    "submitErrorGeneric": "We couldn't process your request — please try again or contact us directly.",
+    "submitErrorNetwork": "We couldn't reach the server — please check your connection and try again.",
+    "submitErrorRateLimited": "Too many requests — please try again in a few minutes.",
+    "confirmedTitle": "Appointment Confirmed!",
+    "confirmedMessage": "Appointment confirmed and a calendar invitation has been sent.",
+    "requestedTitle": "Request Received!",
+    "requestedMessage": "Preferred time noted. A confirmation will follow shortly by email.",
+    "preferredTimeLabel": "Preferred time:",
+    "done": "Done"
+  },
+  "gate": {
+    "title": "Choose your preferred language",
+    "subtitle": "Your AI conversation will run entirely in the language you pick — you can change it anytime.",
+    "continue": "Continue",
+    "sttPending": "Voice input: setup pending"
+  },
+  "transcript": {
+    "heading": "Live Transcript ({count})",
+    "ariaLabel": "Live transcript of voice conversation",
+    "you": "You",
+    "aiTwin": "AI Digital Twin"
+  }
 }

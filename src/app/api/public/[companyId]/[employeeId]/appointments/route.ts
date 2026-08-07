@@ -4,6 +4,7 @@ import { toolRegistry } from "@/core/infrastructure/bootstrap/assistantRuntime";
 import { CalcomAdapter } from "@/core/infrastructure/booking/calcom/CalcomAdapter";
 import { checkRateLimitDistributed } from "@/shared/lib/rateLimit";
 import { Logger } from "@/shared/lib/logger";
+import { isSupportedLanguage } from "@/features/language/config";
 
 // Reads live availability and writes real bookings on every request — a
 // public, unauthenticated, write-capable endpoint has nothing safe to cache.
@@ -24,6 +25,12 @@ const BookRequestSchema = z.object({
   notes: z.string().trim().max(2000).optional(),
   startTime: z.string().min(1),
   timeZone: z.string().trim().min(1).max(100).default("UTC"),
+  // The visitor's chosen conversation language, so the confirmation email
+  // (see ToolRegistry's book_appointment) goes out in the same language as
+  // the card they booked from. An unrecognized/missing value is not a
+  // validation failure — it just falls back to English in the tool below —
+  // a stray language code must never block a real booking.
+  language: z.string().trim().max(10).optional(),
 });
 
 /** A visitor who scans the same card repeatedly (or a script) can only spam
@@ -135,7 +142,11 @@ export async function POST(req: NextRequest, { params }: { params: { companyId: 
     return NextResponse.json({ success: false, message: "Booking is temporarily unavailable. Please contact us directly." }, { status: 503 });
   }
 
-  const context = { companyId: params.companyId, employeeId: params.employeeId };
+  const context = {
+    companyId: params.companyId,
+    employeeId: params.employeeId,
+    language: isSupportedLanguage(parsed.data.language) ? parsed.data.language : undefined,
+  };
 
   try {
     const leadResult = await saveLeadTool.execute(

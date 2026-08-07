@@ -1,9 +1,11 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { Clock, User, Mail, Phone, CheckCircle2, ArrowRight, Loader2, AlertTriangle } from "lucide-react";
+import { Clock, User, Mail, Phone, CheckCircle2, ArrowRight, Loader2, AlertTriangle, Globe } from "lucide-react";
 import { Dialog } from "@/shared/ui/dialog";
 import { Button } from "@/shared/ui/button";
+import { Skeleton } from "@/shared/ui/skeleton";
+import type { LanguageCode } from "@/features/language/config";
 
 interface AppointmentModalProps {
   open: boolean;
@@ -13,13 +15,19 @@ interface AppointmentModalProps {
   employeeName: string;
   companyName: string;
   externalBookingUrl?: string | null;
+  /** The visitor's chosen language and translator — passed down from
+   * PublicBusinessCard (the single place useLanguage() is called) rather
+   * than calling the hook again here, so this modal's language state can
+   * never drift from the rest of the card's. */
+  language: LanguageCode;
+  t: (key: string, vars?: Record<string, string>) => string;
 }
 
 interface CalcomSlot {
   time: string;
 }
 
-type BookingOutcome = { confirmed: boolean; message: string };
+type BookingOutcome = { confirmed: boolean };
 
 /**
  * Real appointment booking, not a UI mockup — fetches genuine availability
@@ -30,6 +38,17 @@ type BookingOutcome = { confirmed: boolean; message: string };
  * "Appointment confirmed" — nothing was ever booked and no email was ever
  * sent. This version never claims a confirmation the backend didn't
  * actually report.
+ *
+ * Every visible string routes through t() — the very first version of this
+ * rewrite (this project's own Phase 14) shipped 100% hardcoded English with
+ * zero calls to the translation system, which a Tamil/Hindi/Telugu/
+ * Malayalam/Kannada visitor would have seen regardless of their chosen
+ * language. The server's own result `message` field (English, meant for
+ * the voice AI's tool-call result — the LLM paraphrases it into the
+ * visitor's language when speaking) is deliberately NOT rendered here;
+ * this modal derives its own localized copy from the `confirmed` boolean
+ * and HTTP status instead, since there is no LLM in this path to
+ * naturally re-express an English sentence in another language.
  */
 export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   open,
@@ -39,6 +58,8 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   employeeName,
   companyName,
   externalBookingUrl,
+  language,
+  t,
 }) => {
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [slots, setSlots] = useState<CalcomSlot[]>([]);
@@ -52,7 +73,11 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   const [selectedSlot, setSelectedSlot] = useState<string | null>(null);
   const [formData, setFormData] = useState({ name: "", email: "", phone: "", notes: "" });
   const [submitting, setSubmitting] = useState(false);
-  const [submitError, setSubmitError] = useState<string | null>(null);
+  // A translation KEY, not display text — resolved through t() at render
+  // time, same reasoning as `outcome` below: the server's raw HTTP status
+  // maps to one of a fixed set of localized messages, never the server's
+  // own English string.
+  const [submitErrorKey, setSubmitErrorKey] = useState<string | null>(null);
   const [outcome, setOutcome] = useState<BookingOutcome | null>(null);
 
   // Real availability, fetched fresh every time the modal opens — a slot
@@ -79,8 +104,12 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
       .finally(() => setSlotsLoading(false));
   }, [open, companyId, employeeId]);
 
+  // `language` (a BCP-47 primary subtag: en/ta/hi/te/ml/kn) is a valid
+  // Intl locale on its own, so the date renders in the visitor's own
+  // script/numerals/word order wherever the runtime's ICU data supports
+  // it, not just translated labels around an English-formatted date.
   const formatSlot = (iso: string) =>
-    new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(
+    new Intl.DateTimeFormat(language, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(
       new Date(iso)
     );
 
@@ -88,7 +117,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
     e.preventDefault();
     if (!selectedSlot) return;
     setSubmitting(true);
-    setSubmitError(null);
+    setSubmitErrorKey(null);
     try {
       const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
       const res = await fetch(`/api/public/${companyId}/${employeeId}/appointments`, {
@@ -101,19 +130,29 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
           notes: formData.notes || undefined,
           startTime: selectedSlot,
           timeZone,
+          language,
         }),
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
-        setSubmitError(data.message || "We couldn't process your request — please try again.");
+        setSubmitErrorKey(
+          res.status === 429
+            ? "appointment.submitErrorRateLimited"
+            : res.status === 400
+              ? "appointment.submitErrorValidation"
+              : res.status === 503
+                ? "appointment.submitErrorUnavailable"
+                : "appointment.submitErrorGeneric"
+        );
         return;
       }
-      // confirmed/message come straight from the server's honest result —
-      // never upgraded to a more reassuring message here.
-      setOutcome({ confirmed: Boolean(data.confirmed), message: data.message });
+      // Only the honest `confirmed` boolean carries through — never the
+      // server's raw English `message` string (see the component doc
+      // comment above for why).
+      setOutcome({ confirmed: Boolean(data.confirmed) });
       setStep(3);
     } catch {
-      setSubmitError("We couldn't reach the server — please check your connection and try again.");
+      setSubmitErrorKey("appointment.submitErrorNetwork");
     } finally {
       setSubmitting(false);
     }
@@ -123,45 +162,51 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
     setStep(1);
     setFormData({ name: "", email: "", phone: "", notes: "" });
     setOutcome(null);
-    setSubmitError(null);
+    setSubmitErrorKey(null);
     onClose();
   };
 
   return (
-    <Dialog open={open} onClose={handleReset} title="Book an Appointment" size="md">
+    <Dialog open={open} onClose={handleReset} title={t("appointment.title")} size="md">
       <div className="space-y-6">
         {/* Progress Bar */}
         <div className="flex items-center justify-between border-b border-white/[0.08] pb-4">
           <div className="flex items-center gap-2">
             <span className={`h-6 w-6 rounded-full text-xs font-bold flex items-center justify-center ${step >= 1 ? "bg-sky-500 text-white" : "bg-slate-800 text-slate-400"}`}>1</span>
-            <span className={`text-xs font-semibold ${step >= 1 ? "text-slate-200" : "text-slate-500"}`}>Select Time</span>
+            <span className={`text-xs font-semibold ${step >= 1 ? "text-slate-200" : "text-slate-500"}`}>{t("appointment.stepSelectTime")}</span>
           </div>
           <div className="h-0.5 w-8 bg-slate-800" />
           <div className="flex items-center gap-2">
             <span className={`h-6 w-6 rounded-full text-xs font-bold flex items-center justify-center ${step >= 2 ? "bg-sky-500 text-white" : "bg-slate-800 text-slate-400"}`}>2</span>
-            <span className={`text-xs font-semibold ${step >= 2 ? "text-slate-200" : "text-slate-500"}`}>Your Details</span>
+            <span className={`text-xs font-semibold ${step >= 2 ? "text-slate-200" : "text-slate-500"}`}>{t("appointment.stepYourDetails")}</span>
           </div>
           <div className="h-0.5 w-8 bg-slate-800" />
           <div className="flex items-center gap-2">
             <span className={`h-6 w-6 rounded-full text-xs font-bold flex items-center justify-center ${step === 3 ? "bg-emerald-500 text-white" : "bg-slate-800 text-slate-400"}`}>3</span>
-            <span className={`text-xs font-semibold ${step === 3 ? "text-emerald-400" : "text-slate-500"}`}>Done</span>
+            <span className={`text-xs font-semibold ${step === 3 ? "text-emerald-400" : "text-slate-500"}`}>{t("appointment.stepDone")}</span>
           </div>
         </div>
 
         {/* Step 1: Slot Selection */}
         {step === 1 && (
           <div className="space-y-4">
-            <div className="space-y-1">
-              <h3 className="text-sm font-bold text-slate-100">Choose a meeting slot</h3>
-              <p className="text-xs text-slate-400">
-                Book a 30-minute discovery consultation with {employeeName} from {companyName}.
-              </p>
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="text-sm font-bold text-slate-100">{t("appointment.chooseSlotTitle")}</h3>
+                <span className="inline-flex items-center gap-1 text-[10px] text-sky-400 bg-sky-500/10 border border-sky-500/20 rounded-full px-2 py-0.5 font-mono">
+                  <Globe className="h-3 w-3" aria-hidden="true" />
+                  {typeof window !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : "Local Time"}
+                </span>
+              </div>
+              <p className="text-xs text-slate-400">{t("appointment.chooseSlotSubtitle", { employeeName, companyName })}</p>
             </div>
 
             {slotsLoading && (
-              <div className="flex items-center justify-center gap-2 py-8 text-xs text-slate-400">
-                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-                Loading available times…
+              <div className="space-y-2 py-1" aria-busy="true" aria-label={t("appointment.loadingSlots")}>
+                <Skeleton className="h-11 w-full rounded-xl" />
+                <Skeleton className="h-11 w-full rounded-xl" />
+                <Skeleton className="h-11 w-full rounded-xl" />
+                <Skeleton className="h-11 w-full rounded-xl" />
               </div>
             )}
 
@@ -169,18 +214,17 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
               <div role="alert" className="flex items-start gap-2 p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-200 text-xs">
                 <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" aria-hidden="true" />
                 <span>
-                  {slotsReason === "rate_limited"
-                    ? "Too many attempts — please wait a moment and reopen this."
-                    : "We couldn't load available times right now."}{" "}
-                  {externalBookingUrl ? "You can still use the calendar link below." : "Please try again shortly, or reach out directly."}
+                  {slotsReason === "rate_limited" ? t("appointment.errorRateLimited") : t("appointment.errorSlotsGeneric")}{" "}
+                  {externalBookingUrl ? t("appointment.errorSlotsHintWithLink") : t("appointment.errorSlotsHintNoLink")}
                 </span>
               </div>
             )}
 
             {!slotsLoading && slotsReason === "unconfigured" && (
               <div className="p-3 rounded-xl bg-white/[0.04] border border-white/[0.08] text-xs text-slate-400">
-                No online booking is configured yet for {employeeName}.{" "}
-                {externalBookingUrl ? "Use the calendar link below, or " : ""}Contact them directly to arrange a time.
+                {t("appointment.unconfiguredNotice", { employeeName })}{" "}
+                {externalBookingUrl ? t("appointment.unconfiguredHintWithLink") : ""}
+                {t("appointment.unconfiguredHintNoLink")}
               </div>
             )}
 
@@ -210,13 +254,13 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
             <div className="flex items-center justify-between pt-4 border-t border-white/[0.08]">
               {externalBookingUrl ? (
                 <a href={externalBookingUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-sky-400 hover:underline">
-                  Open Cal.com Calendar &rarr;
+                  {t("appointment.openCalendarLink")} &rarr;
                 </a>
               ) : (
                 <div />
               )}
               <Button variant="default" onClick={() => setStep(2)} disabled={!selectedSlot} className="flex items-center gap-2 text-xs">
-                Next Step <ArrowRight className="h-4 w-4" aria-hidden="true" />
+                {t("appointment.nextStep")} <ArrowRight className="h-4 w-4" aria-hidden="true" />
               </Button>
             </div>
           </div>
@@ -226,15 +270,15 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
         {step === 2 && (
           <form onSubmit={handleBook} className="space-y-4">
             <div className="space-y-1">
-              <h3 className="text-sm font-bold text-slate-100">Enter your contact info</h3>
+              <h3 className="text-sm font-bold text-slate-100">{t("appointment.enterDetailsTitle")}</h3>
               <p className="text-xs text-slate-400">
-                Slot selected: <span className="text-sky-400 font-semibold">{selectedSlot ? formatSlot(selectedSlot) : "—"}</span>
+                {t("appointment.slotSelectedLabel")} <span className="text-sky-400 font-semibold">{selectedSlot ? formatSlot(selectedSlot) : "—"}</span>
               </p>
             </div>
 
             <div className="space-y-3">
               <div>
-                <label className="text-xs text-slate-400 font-medium" htmlFor="appt-name">Full Name</label>
+                <label className="text-xs text-slate-400 font-medium" htmlFor="appt-name">{t("appointment.fullNameLabel")}</label>
                 <div className="relative mt-1">
                   <User className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" aria-hidden="true" />
                   <input
@@ -243,14 +287,14 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                     required
                     value={formData.name}
                     onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                    placeholder="John Doe"
+                    placeholder={t("appointment.fullNamePlaceholder")}
                     className="dashboard-input pl-9 w-full"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="text-xs text-slate-400 font-medium" htmlFor="appt-email">Email Address</label>
+                <label className="text-xs text-slate-400 font-medium" htmlFor="appt-email">{t("appointment.emailLabel")}</label>
                 <div className="relative mt-1">
                   <Mail className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" aria-hidden="true" />
                   <input
@@ -259,14 +303,14 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                     required
                     value={formData.email}
                     onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                    placeholder="john@example.com"
+                    placeholder={t("appointment.emailPlaceholder")}
                     className="dashboard-input pl-9 w-full"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="text-xs text-slate-400 font-medium" htmlFor="appt-phone">Phone Number</label>
+                <label className="text-xs text-slate-400 font-medium" htmlFor="appt-phone">{t("appointment.phoneLabel")}</label>
                 <div className="relative mt-1">
                   <Phone className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" aria-hidden="true" />
                   <input
@@ -275,26 +319,26 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                     required
                     value={formData.phone}
                     onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                    placeholder="+1 (555) 000-0000"
+                    placeholder={t("appointment.phonePlaceholder")}
                     className="dashboard-input pl-9 w-full"
                   />
                 </div>
               </div>
             </div>
 
-            {submitError && (
+            {submitErrorKey && (
               <div role="alert" className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-200 text-xs">
-                {submitError}
+                {t(submitErrorKey)}
               </div>
             )}
 
             <div className="flex items-center justify-between pt-4 border-t border-white/[0.08]">
               <Button type="button" variant="outline" onClick={() => setStep(1)} className="text-xs">
-                Back
+                {t("appointment.back")}
               </Button>
               <Button type="submit" disabled={submitting} className="flex items-center gap-2 text-xs">
                 {submitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : null}
-                {submitting ? "Booking…" : "Confirm Booking"}
+                {submitting ? t("appointment.booking") : t("appointment.confirmBooking")}
               </Button>
             </div>
           </form>
@@ -313,16 +357,20 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
               <CheckCircle2 className="h-8 w-8" aria-hidden="true" />
             </div>
             <div className="space-y-1">
-              <h3 className="text-lg font-bold text-slate-100">{outcome.confirmed ? "Appointment Confirmed!" : "Request Received!"}</h3>
-              <p className="text-xs text-slate-300">{outcome.message}</p>
+              <h3 className="text-lg font-bold text-slate-100">
+                {outcome.confirmed ? t("appointment.confirmedTitle") : t("appointment.requestedTitle")}
+              </h3>
+              <p className="text-xs text-slate-300">
+                {outcome.confirmed ? t("appointment.confirmedMessage") : t("appointment.requestedMessage")}
+              </p>
               {selectedSlot && (
                 <p className="text-[11px] text-slate-400 pt-1">
-                  Preferred time: <span className="text-slate-200">{formatSlot(selectedSlot)}</span>
+                  {t("appointment.preferredTimeLabel")} <span className="text-slate-200">{formatSlot(selectedSlot)}</span>
                 </p>
               )}
             </div>
             <Button variant="outline" onClick={handleReset} className="text-xs mt-4">
-              Done
+              {t("appointment.done")}
             </Button>
           </div>
         )}

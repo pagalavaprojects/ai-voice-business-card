@@ -59,6 +59,13 @@ export interface UseVapiSessionOptions {
    * behaving identically. "azure" is used for the two languages Deepgram
    * doesn't support (see features/language/config.ts's azureSpeechLocale). */
   transcriberProvider?: "deepgram" | "azure";
+  /** Translator for this hook's own fallback strings (demo-mode greeting,
+   * connection-error text) — resolved by the caller against the visitor's
+   * chosen language, same t-as-prop convention as LanguageGate/
+   * AppointmentModal/TranscriptViewer. Optional: a caller that omits it
+   * (or renders before the language bundle has loaded) still gets the
+   * English defaults below rather than a raw translation key or a crash. */
+  t?: (key: string, vars?: Record<string, string>) => string;
 }
 
 export function useVapiSession({
@@ -74,7 +81,21 @@ export function useVapiSession({
   serverUrl,
   speechLocale,
   transcriberProvider = "deepgram",
+  t,
 }: UseVapiSessionOptions) {
+  const defaultFirstMessage = t ? t("mic.defaultFirstMessage") : DEFAULT_FIRST_MESSAGE;
+  const connectionErrorText = t ? t("mic.connectionError") : "Voice connection error";
+  const startCallErrorText = t ? t("mic.startCallError") : "Failed to start live voice call";
+  // Kept fresh via a ref, not read directly: the "error" handler below is
+  // registered once inside the Vapi-instance-init effect, whose dependency
+  // array deliberately excludes these localized strings — recreating the
+  // whole Vapi SDK instance on every language switch would be wasteful when
+  // nothing about the connection itself needs to change.
+  const connectionErrorTextRef = useRef(connectionErrorText);
+  useEffect(() => {
+    connectionErrorTextRef.current = connectionErrorText;
+  }, [connectionErrorText]);
+
   const [voiceState, setVoiceState] = useState<VoiceState>("idle");
   const [isMuted, setIsMuted] = useState(false);
   const [messages, setMessages] = useState<MessageItem[]>([]);
@@ -307,7 +328,7 @@ export function useVapiSession({
 
       vapi.on("error", (e: Error) => {
         console.error("Vapi WebRTC Error:", e);
-        setError(e.message || "Voice connection error");
+        setError(e.message || connectionErrorTextRef.current);
         introGateActiveRef.current = false;
         setVoiceState("idle");
         clearSpeakingTimeout();
@@ -374,7 +395,7 @@ export function useVapiSession({
         setMessages([
           {
             role: "assistant",
-            content: firstMessage || DEFAULT_FIRST_MESSAGE,
+            content: firstMessage || defaultFirstMessage,
           },
         ]);
         const listeningTimeout = setTimeout(() => {
@@ -396,7 +417,7 @@ export function useVapiSession({
       setVoiceState("connecting");
 
       const assistantConfig = {
-        firstMessage: firstMessage || DEFAULT_FIRST_MESSAGE,
+        firstMessage: firstMessage || defaultFirstMessage,
         // Explicitly false (Vapi's own default): the scripted opening must
         // play to completion, uninterrupted, like a professional
         // receptionist's fixed announcement — a deliberate reversal of an
@@ -450,13 +471,13 @@ export function useVapiSession({
 
       await vapiRef.current.start(assistantConfig);
     } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : "Failed to start live voice call";
+      const errorMessage = err instanceof Error ? err.message : startCallErrorText;
       setError(errorMessage);
       introGateActiveRef.current = false;
       setVoiceState("idle");
       stopTimer();
     }
-  }, [voiceState, startTimer, stopTimer, firstMessage, systemPrompt, tools, serverUrl, voiceId, voiceProvider, voiceModel, speechLocale, transcriberProvider, clearDemoTimeouts]);
+  }, [voiceState, startTimer, stopTimer, firstMessage, systemPrompt, tools, serverUrl, voiceId, voiceProvider, voiceModel, speechLocale, transcriberProvider, clearDemoTimeouts, defaultFirstMessage, startCallErrorText]);
 
   // Always call the latest startCall from the stable error handler
   // registered once inside the init effect (see reconnect logic above).

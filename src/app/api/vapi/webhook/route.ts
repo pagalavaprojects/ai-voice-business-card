@@ -207,19 +207,25 @@ async function handleVapiMessage(req: NextRequest, message: VapiMessage): Promis
     // route previously did) would fail that foreign key constraint the
     // first time a real call tried to save a lead.
     let conversationId: string | undefined;
+    // Resolved once outside the `if` below so it's available to the tool
+    // call regardless of whether a conversation row was created/found this
+    // request — book_appointment's confirmation email (see ToolRegistry)
+    // needs it to match the visitor's own conversation language, the same
+    // ?lang= param already used above to pick the transcriber/voice/prompt.
+    const lang = req.nextUrl.searchParams.get("lang");
+    const language = lang ? resolveRequestLanguage(lang) : undefined;
     if (vapiCallId && companyId && employeeId) {
-      const lang = req.nextUrl.searchParams.get("lang");
       const conversation = await conversationRepo.getOrCreateConversationByVapiCallId(
         companyId,
         employeeId,
         vapiCallId,
-        lang ? resolveRequestLanguage(lang) : undefined
+        language
       );
       await conversationRepo.appendToolCalled(conversation.id, name);
       conversationId = conversation.id;
     }
 
-    const result = await tool.execute(args, { companyId, employeeId, conversationId });
+    const result = await tool.execute(args, { companyId, employeeId, conversationId, language });
 
     return NextResponse.json({
       results: [{ toolCallId: toolCall.id, result: JSON.stringify(result) }],

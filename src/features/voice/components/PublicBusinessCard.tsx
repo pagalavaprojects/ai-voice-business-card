@@ -5,7 +5,6 @@ import dynamic from "next/dynamic";
 import { Mail, Phone, Globe, Calendar, Download, QrCode, MessageCircle, Linkedin, Link2, X, Loader2, CheckCircle2 } from "lucide-react";
 import { useVapiSession } from "@/features/voice/hooks/useVapiSession";
 import { VoiceMicButton } from "@/features/voice/components/VoiceMicButton";
-import { TranscriptViewer } from "@/features/voice/components/TranscriptViewer";
 import { Card } from "@/shared/ui/card";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
@@ -16,18 +15,21 @@ import { LanguageSelector } from "@/features/language/components/LanguageSelecto
 import { LanguageGate } from "@/features/language/components/LanguageGate";
 import { getLanguageDefinition, isSupportedLanguage, LanguageCode } from "@/features/language/config";
 
-// Every visitor loads this page to talk to the voice AI, not to book a
-// meeting — code-splitting the booking modal (real Cal.com fetches, date
-// formatting, a multi-step form) out of the initial bundle means the one
-// thing every single visitor actually needs, the mic button, ships faster.
-// `ssr: false` is correct here, not a workaround: this modal is 100%
-// interaction-triggered (opens only on a client click) and reads
-// `Intl`/`fetch`, so there is nothing for the server to usefully render for
-// it up front.
-const AppointmentModal = dynamic(
-  () => import("@/features/voice/components/AppointmentModal").then((m) => m.AppointmentModal),
-  { ssr: false }
+import { BusinessCardSkeleton } from "@/features/voice/components/BusinessCardSkeleton";
+
+// Code-split: TranscriptViewer and AppointmentModal are only needed after user
+// interaction (transcript visible mid/post call; booking modal on button click).
+// Deferring them keeps the critical-path JS bundle smaller, improving LCP and
+// TTI on mobile devices and slow connections.
+const TranscriptViewer = dynamic(
+  () => import("@/features/voice/components/TranscriptViewer").then((m) => ({ default: m.TranscriptViewer })),
+  { ssr: false, loading: () => null }
 );
+const AppointmentModal = dynamic(
+  () => import("@/features/voice/components/AppointmentModal").then((m) => ({ default: m.AppointmentModal })),
+  { ssr: false, loading: () => null }
+);
+
 
 interface PublicCardData {
   company: { name: string; website: string; logoUrl: string | null };
@@ -97,6 +99,18 @@ function initialsOf(name: string): string {
     .join("");
 }
 
+/** A `tel:` URI must be dialable as-is — spacing/punctuation kept in the
+ * visible label (e.g. "+91 94431 25639") is formatting for a human reader,
+ * not part of the number, and some mobile dialers mis-handle it in the URI
+ * itself. Strips everything but digits and a leading "+", matching the same
+ * digits-only convention this app already uses for the derived WhatsApp
+ * wa.me link (see toWhatsappUrl in the public card API route). */
+function toTelHref(phone: string): string {
+  const hasPlus = phone.trim().startsWith("+");
+  const digits = phone.replace(/\D/g, "");
+  return `tel:${hasPlus ? "+" : ""}${digits}`;
+}
+
 /**
  * The voice business card, shared by both public routes that can resolve to
  * one: the permanent `/{companyId}/{employeeId}` URL and the short,
@@ -135,8 +149,15 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
   // directive, and suggested questions all switching together.
   useEffect(() => {
     let cancelled = false;
+    // Captured once per effect run, not re-read later: this fetch's own
+    // response must only ever be judged against the language IT was
+    // requested for. A visitor who switches language again before this
+    const controller = new AbortController();
+    const requestedLanguage = language;
     setCardLoading(true);
-    fetch(`/api/public/${companyId}/${employeeId}?lang=${encodeURIComponent(language)}`)
+    fetch(`/api/public/${companyId}/${employeeId}?lang=${encodeURIComponent(requestedLanguage)}`, {
+      signal: controller.signal,
+    })
       .then(async (res) => {
         if (res.ok) return (await res.json()) as PublicCardData;
         throw new Error(res.status === 404 ? "notfound" : "unavailable");
@@ -145,9 +166,18 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
         if (cancelled) return;
         setCard(data);
         setLoadError(null);
+        // The server clamps the requested language down to the company's
+        // enabled set (see clampToEnabledLanguages) — this only ever differs
+        // from what was requested when an admin has disabled the language a
+        // visitor's browser had stored or just picked. Comparing against
+        // `requestedLanguage` (this fetch's own request), never the live
+        // `language` state — see the comment above.
+        if (data.language && data.language !== requestedLanguage && isSupportedLanguage(data.language)) {
+          setLanguage(data.language);
+        }
       })
       .catch((err: Error) => {
-        if (cancelled) return;
+        if (cancelled || err.name === "AbortError") return;
         setCard(null);
         setLoadError(err.message === "notfound" ? "notfound" : "unavailable");
       })
@@ -156,21 +186,9 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
       });
     return () => {
       cancelled = true;
+      controller.abort();
     };
-  }, [companyId, employeeId, language]);
-
-  // The server clamps the requested language down to the company's enabled
-  // set (see clampToEnabledLanguages) — this only ever differs from what was
-  // requested when an admin has disabled the language a visitor's browser
-  // had stored. Adopting the server's answer here keeps the header selector
-  // and the gate's pre-selection from showing a language the company no
-  // longer offers; the resulting setLanguage triggers one more fetch that
-  // then matches and stops.
-  useEffect(() => {
-    if (card && card.language && card.language !== language && isSupportedLanguage(card.language)) {
-      setLanguage(card.language);
-    }
-  }, [card, language, setLanguage]);
+  }, [companyId, employeeId, language, setLanguage]);
 
   const { voiceState, isMuted, messages, durationSeconds, error, isPlayingIntro, isDemoMode, startCall, endCall, toggleMute } = useVapiSession({
     companyId,
@@ -184,6 +202,7 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
     voiceModel: card?.voiceModel,
     speechLocale: card?.speechLocale ?? undefined,
     transcriberProvider: card?.transcriberProvider ?? undefined,
+    t,
   });
 
   const isCallActive = voiceState !== "idle";
@@ -330,14 +349,7 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
     // preference could see a one-frame flash of the language gate before it
     // immediately closes itself, which reads as a UI bug rather than a
     // deliberate skip.
-    return (
-      <main className="min-h-screen bg-[#070b12] flex items-center justify-center p-4">
-        <div role="status" aria-live="polite" className="flex flex-col items-center gap-3">
-          <div className="h-8 w-8 rounded-full border-2 border-sky-400/30 border-t-sky-400 animate-spin" />
-          <p className="text-xs text-slate-400">Loading…</p>
-        </div>
-      </main>
-    );
+    return <BusinessCardSkeleton />;
   }
 
   if (!card) {
@@ -364,11 +376,20 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
           if (code !== language) setLanguage(code);
           setGateConfirmed(true);
         }}
+        t={t}
       />
     );
   }
 
   const { company, employee } = card;
+  // Plain consts, not useMemo: `card` can be null until the early returns
+  // above (loading/not-found/language-gate) have already exited the
+  // function, so a hook here would be called conditionally — a real Rules
+  // of Hooks violation (caught by eslint's react-hooks/rules-of-hooks) that
+  // would skip these hooks entirely on every one of those earlier-return
+  // renders and desync hook order across renders. These computations are
+  // cheap (filtering a handful of social-link entries) and don't need
+  // memoizing anyway.
   const linkedIn = card.socialLinks?.linkedin || card.socialLinks?.linkedIn;
   // LinkedIn gets its own branded button below, so it's excluded here rather
   // than appearing twice — once with its icon, once as a generic link.
@@ -394,7 +415,7 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
     // Arabic/Hebrew addition — every string below already flows through
     // t(), so an RTL language needs no further code change here, only its
     // own locale file and this flag flipping true for it.
-    <main lang={language} dir={getLanguageDefinition(language).isRtl ? "rtl" : "ltr"} className="min-h-screen bg-[#070b12] text-slate-100 py-6 px-4 sm:py-10">
+    <main id="main-content" lang={language} dir={getLanguageDefinition(language).isRtl ? "rtl" : "ltr"} className="min-h-screen bg-[#070b12] text-slate-100 py-6 px-4 sm:py-10">
       <div className="fixed inset-0 pointer-events-none overflow-hidden" aria-hidden="true">
         <div className="absolute -top-24 left-1/2 -translate-x-1/2 w-[34rem] h-[34rem] bg-sky-500/10 blur-[140px] rounded-full" />
         <div className="absolute bottom-0 right-0 w-96 h-96 bg-indigo-500/[0.07] blur-[130px] rounded-full" />
@@ -597,7 +618,7 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
             </section>
           )}
 
-          <TranscriptViewer messages={messages} />
+          <TranscriptViewer messages={messages} t={t} />
         </Card>
 
         {/* ---------- Services ---------- */}
@@ -689,7 +710,7 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
                         {p.name}
                         {p.featured && (
                           <span className="ml-2 text-[9px] uppercase tracking-wide text-amber-300 bg-amber-400/10 border border-amber-400/25 rounded-full px-1.5 py-0.5 align-middle">
-                            Featured
+                            {t("sections.featured")}
                           </span>
                         )}
                       </p>
@@ -722,7 +743,7 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
         {/* ---------- Actions ---------- */}
         <Card className="glass-panel border-white/[0.08] rounded-3xl p-6 space-y-3" aria-labelledby="actions-heading">
           <h2 id="actions-heading" className="sr-only">
-            Contact and actions
+            {t("sections.actionsHeading")}
           </h2>
 
           <Button
@@ -761,7 +782,7 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
               ) : (
                 <Download className="h-4 w-4 text-slate-300" aria-hidden="true" />
               )}
-              {savedContactSuccess ? "Contact Saved!" : t("buttons.saveContact")}
+              {savedContactSuccess ? t("buttons.contactSaved") : t("buttons.saveContact")}
             </Button>
             <Button
               variant="glass"
@@ -776,7 +797,7 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
 
           <ul className="grid grid-cols-2 gap-2 pt-1">
             <ContactLink href={`mailto:${employee.email}`} icon={<Mail className="h-3.5 w-3.5" />} label={employee.email} />
-            <ContactLink href={`tel:${employee.phone}`} icon={<Phone className="h-3.5 w-3.5" />} label={employee.phone} />
+            <ContactLink href={toTelHref(employee.phone)} icon={<Phone className="h-3.5 w-3.5" />} label={employee.phone} />
             {card.whatsappUrl && (
               <ContactLink href={card.whatsappUrl} icon={<MessageCircle className="h-3.5 w-3.5" />} label="WhatsApp" external />
             )}
@@ -790,7 +811,7 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
           </ul>
         </Card>
 
-        <p className="text-center text-[11px] text-slate-400 font-mono pb-4">AI Integrated. Growth Automated.</p>
+        <p className="text-center text-[11px] text-slate-400 font-mono pb-4">{t("tagline")}</p>
       </div>
 
       <Dialog open={qrOpen} onClose={() => setQrOpen(false)} title={t("qr.title")} size="sm">
@@ -819,12 +840,14 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
         employeeName={employee.name}
         companyName={company.name}
         externalBookingUrl={card.bookingUrl}
+        language={language}
+        t={t}
       />
     </main>
   );
 }
 
-function ContactLink({
+const ContactLink = React.memo(function ContactLink({
   href,
   icon,
   label,
@@ -849,4 +872,4 @@ function ContactLink({
       </a>
     </li>
   );
-}
+});

@@ -29,6 +29,15 @@ export default defineConfig({
   use: {
     baseURL: "http://localhost:3100",
     trace: "retain-on-failure",
+    // Pinned so the pre-conversation language gate's initial (browser-
+    // detected) language is deterministic across any host machine — the
+    // multilingual suite's selectLanguageViaGate helper locates that gate
+    // via its English aria-label regardless of which language a given test
+    // then selects, since the gate always shows in the *detected* language
+    // first, not the target one. Without a pinned locale, a host whose OS
+    // locale isn't English would render that first-paint gate in a
+    // different language and the helper's regex would never match.
+    locale: "en-US",
   },
   // iPad/Mobile use Chromium with the real iPad/iPhone viewport + touch
   // metrics rather than Playwright's WebKit device presets — only the
