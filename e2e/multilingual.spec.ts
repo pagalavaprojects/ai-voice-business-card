@@ -51,8 +51,12 @@ test.describe("Multilingual verification — all 6 languages, real browser", () 
 
       // The real mic button — proof the gate handed off correctly and the
       // card actually rendered past it, for every language, not just the
-      // ones already covered by earlier phases' tests.
-      await expect(page.getByRole("button", { name: /Start voice conversation|talk|mic/i }).first()).toBeVisible({ timeout: 20_000 });
+      // ones already covered by earlier phases' tests. A data-testid, not
+      // an aria-label text match: the label is fully translated per
+      // language (as it must be), so an English-only regex would never
+      // match a non-English render and this readiness check must not
+      // itself assume English.
+      await expect(page.getByTestId("voice-mic-button")).toBeVisible({ timeout: 20_000 });
 
       const bodyText = await page.locator("body").innerText();
 
@@ -86,6 +90,11 @@ test.describe("Multilingual verification — all 6 languages, real browser", () 
       const page2 = await context.newPage();
       await page2.goto(SEEDED_CARD_PATH);
       await expect(page2.getByRole("radiogroup", { name: /conversation language/i })).toHaveCount(0);
+      // Wait for the card to actually finish loading (not just "the gate
+      // didn't appear") before reading its text — a fresh page load starts
+      // on the loading skeleton, which has no language-specific text at
+      // all, and reading too early would just see that empty shell.
+      await expect(page2.getByTestId("voice-mic-button")).toBeVisible({ timeout: 20_000 });
       const body2 = await page2.locator("body").innerText();
       expect(body2).toMatch(lang.sample);
       await page2.close();
@@ -98,7 +107,7 @@ test.describe("Multilingual verification — all 6 languages, real browser", () 
 
     await page.goto(SEEDED_CARD_PATH);
     await selectLanguageViaGate(page, "English");
-    await expect(page.getByRole("button", { name: /Start voice conversation/i })).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId("voice-mic-button")).toBeVisible({ timeout: 20_000 });
 
     const selector = page.getByRole("combobox", { name: /choose.*language|language/i });
     await expect(selector).toBeVisible();
@@ -119,7 +128,7 @@ test.describe("Multilingual verification — all 6 languages, real browser", () 
   test("browser Back after a language switch does not strand the visitor on a broken or blank page", async ({ page }) => {
     await page.goto(SEEDED_CARD_PATH);
     await selectLanguageViaGate(page, "English");
-    await expect(page.getByRole("button", { name: /Start voice conversation/i })).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId("voice-mic-button")).toBeVisible({ timeout: 20_000 });
 
     await page.goto("about:blank");
     await page.goBack();
@@ -132,7 +141,7 @@ test.describe("Multilingual verification — all 6 languages, real browser", () 
     test(`[${lang.code}] passes WCAG 2.1 AA (axe-core) after language selection`, async ({ page }) => {
       await page.goto(SEEDED_CARD_PATH);
       await selectLanguageViaGate(page, lang.native);
-      await expect(page.getByRole("button", { name: /Start voice conversation/i })).toBeVisible({ timeout: 20_000 });
+      await expect(page.getByTestId("voice-mic-button")).toBeVisible({ timeout: 20_000 });
 
       const results = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]).analyze();
       expect(results.violations, JSON.stringify(results.violations, null, 2)).toEqual([]);
@@ -143,9 +152,9 @@ test.describe("Multilingual verification — all 6 languages, real browser", () 
     test(`[${lang.code}] Book an Appointment modal renders fully localized, no leaked keys, no hardcoded English chrome`, async ({ page }) => {
       await page.goto(SEEDED_CARD_PATH);
       await selectLanguageViaGate(page, lang.native);
-      await expect(page.getByRole("button", { name: /Start voice conversation/i })).toBeVisible({ timeout: 20_000 });
+      await expect(page.getByTestId("voice-mic-button")).toBeVisible({ timeout: 20_000 });
 
-      await page.getByRole("button", { name: /Book (a|an) meeting/i }).click();
+      await page.getByTestId("book-meeting-button").click();
       const dialog = page.getByRole("dialog");
       await expect(dialog).toBeVisible();
       // Give the real availability fetch a moment to resolve either way

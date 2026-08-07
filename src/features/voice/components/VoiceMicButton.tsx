@@ -61,6 +61,11 @@ export const VoiceMicButton = React.memo(function VoiceMicButton({
 
       {/* Main Touch Button */}
       <motion.button
+        // Stable, language-independent hook for e2e tests: aria-label is
+        // fully translated (as it must be), so a test that needs to know
+        // "the card has finished loading and rendered" without asserting on
+        // a specific language's text reaches for this instead.
+        data-testid="voice-mic-button"
         whileHover={disabled ? undefined : { scale: 1.05 }}
         whileTap={disabled ? undefined : { scale: 0.95 }}
         onClick={disabled ? undefined : onClick}

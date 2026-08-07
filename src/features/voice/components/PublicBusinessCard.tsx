@@ -748,6 +748,7 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
 
           <Button
             variant="default"
+            data-testid="book-meeting-button"
             onClick={() => setAppointmentOpen(true)}
             className="w-full flex items-center justify-center gap-2 text-xs font-semibold shadow-lg shadow-sky-500/20"
           >
