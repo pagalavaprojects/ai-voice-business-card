@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Live** | https://ai-voice-business-card.vercel.app |
+| **Live** | https://maylaanai.com (primary) · https://ai-voice-business-card.vercel.app (still live, unchanged) |
 | **Repository** | https://github.com/pagalavaprojects/ai-voice-business-card |
-| **Demo card** | [`/33333333…/44444444…`](https://ai-voice-business-card.vercel.app/33333333-3333-3333-3333-333333333333/44444444-4444-4444-4444-444444444444) or the short link [`/c/srinivasan`](https://ai-voice-business-card.vercel.app/c/srinivasan) |
+| **Demo card** | [`/33333333…/44444444…`](https://maylaanai.com/33333333-3333-3333-3333-333333333333/44444444-4444-4444-4444-444444444444) or the short link [`/c/srinivasan`](https://maylaanai.com/c/srinivasan) |
 | **Last updated** | 2026-08-07 |
-| **Completion** | **~99%** — all 15 migrations applied in production; enterprise multilingual voice assistant now spans **six** languages (Tamil default, English, Hindi, Telugu, Malayalam, Kannada) behind a dedicated pre-conversation language-selection screen, with per-company language settings in the dashboard, alongside short public URLs, founder photo/logo, HD voice, and the professional-receptionist scripted welcome, all built, tested and live |
+| **Completion** | **~99%** — all 15 migrations applied in production; production domain migrated to maylaanai.com; the public "Book an Appointment" flow now performs a real Cal.com booking (previously a UI mockup that always claimed success); enterprise multilingual voice assistant spans **six** languages (Tamil default, English, Hindi, Telugu, Malayalam, Kannada) behind a dedicated pre-conversation language-selection screen, with per-company language settings in the dashboard, alongside short public URLs, founder photo/logo, HD voice, and the professional-receptionist scripted welcome, all built, tested and live |
 
 > This file is refreshed after every completed module. If it looks stale
 > against the repo, trust the repo and raise it.
@@ -40,13 +40,13 @@ inward; repositories abstract Supabase behind interfaces.
 
 | Metric | Value |
 |---|---|
-| Commits | 65 |
-| Source | ~22,300 lines TypeScript |
-| API routes | 48 |
+| Commits | 66 |
+| Source | ~22,700 lines TypeScript |
+| API routes | 49 |
 | Dashboard pages | 14 |
 | Database | 27 tables · 39 indexes · 43 FKs · 26 RLS policies |
 | Migrations | 15 total, **all applied in production** |
-| Unit/integration tests | **300 passing**, 1 skipped (documented) |
+| Unit/integration tests | **310 passing**, 1 skipped (documented) |
 | Browser tests | **47 passing** across 3 viewports, 1 pre-existing unrelated finding (§4, Phase 13) |
 | Accessibility | WCAG 2.1 AA — zero violations on every surface this phase touched |
 | Build | Zero warnings, zero build-time error logs |
@@ -769,6 +769,128 @@ regression). One commit, deployed, and spot-verified live in production:
 `/c/srinivasan` still 200s, an unknown short link still 404s, and the
 founder photo/company logo URLs are both still present.
 
+### Phase 14 — Production domain migration + real appointment booking
+
+**Domain migration to maylaanai.com**, executed directly against live
+infrastructure (GoDaddy DNS API + Vercel CLI, both authenticated in this
+environment) rather than left as instructions:
+- Read current DNS first — the apex `A` record and `www` `CNAME` were
+  GoDaddy's own default parked-site placeholders, and a DMARC TXT record
+  existed with **no MX record**, confirming no live email was routed
+  through the domain yet — safe to change without breaking anything.
+- Added `maylaanai.com` and `www.maylaanai.com` to the Vercel project
+  (`vercel domains add`), then set GoDaddy's `A @` to Vercel's two current
+  recommended anycast IPs and `CNAME www` to `cname.vercel-dns.com`.
+  `vercel domains verify` confirmed both **configured-correctly** within
+  minutes — SSL auto-provisioned by Vercel, no manual certificate step.
+- Updated the Vercel project's **production** `NEXT_PUBLIC_APP_URL`,
+  `APP_URL`, and `PUBLIC_BASE_URL` to `https://maylaanai.com` (Preview
+  environment deliberately left alone — those should keep resolving to
+  their own preview URLs). Build-time metadata (`metadataBase`, OG,
+  Twitter, JSON-LD) reads these at build time, not per-request, so this
+  step is load-bearing, not cosmetic.
+- Added a `www` → apex 301(-equivalent) redirect in `next.config.mjs`
+  (Next's `permanent: true` emits HTTP 308, the modern method-preserving
+  replacement for 301 — functionally identical for this purpose) rather
+  than relying on a Vercel dashboard toggle, so the redirect is versioned
+  and portable.
+- Removed the last two hardcoded `ai-voice-business-card.vercel.app`
+  fallback strings (defensive-only paths in the two public card routes'
+  JSON-LD generation). Metadata/OG/Twitter/canonical/JSON-LD/robots/
+  sitemap were **already** fully dynamic and env-driven from earlier
+  work — nothing else needed touching.
+- The old `.vercel.app` URL was deliberately left alone: Vercel does not
+  disable it when a custom domain is added, so already-printed QR codes
+  and existing links keep working with no expiry, satisfying the
+  "keep it working" requirement with zero extra code.
+
+**Fixed a real "confirmed booking that never happened" bug** — the public
+card's "Book an Appointment" button (added between sessions, not by an
+earlier phase of this log) opened a modal with hardcoded fake time slots
+and a `setTimeout(...)` that unconditionally displayed "Appointment
+Requested! ... A calendar invitation and confirmation email will be sent."
+Nothing was ever booked, no lead was saved, no email was ever sent — the
+same defect class as the original `book_appointment` tool bug pinned in
+`BookAppointmentTool.test.ts`, reintroduced in a second, disconnected UI
+path. Fixed by:
+- New `GET/POST /api/public/{companyId}/{employeeId}/appointments` route.
+  `POST` deliberately calls `toolRegistry.getTool("save_lead")` then
+  `toolRegistry.getTool("book_appointment")` — the exact same tools the
+  live voice call uses — instead of a second, parallel booking
+  implementation that could honestly drift from the first one.
+  `GET` reuses `CalcomAdapter.getAvailableSlots`'s existing demo-mode
+  fallback; the honesty boundary is at booking time, not slot-display time.
+  Both routes are rate-limited (write: 8/10min, read: 30/10min — separate
+  buckets, so reloading the slot picker can never lock out a real
+  submission).
+- Rewrote `AppointmentModal.tsx` to fetch real availability and render the
+  server's actual `confirmed` boolean — different icon/copy for a real
+  Cal.com booking vs. an honest "request received, we'll confirm shortly"
+  — instead of one hardcoded success state. Distinguishes "this company
+  hasn't configured online booking" from "Cal.com is having an outage"
+  (an adversarial review caught the two being conflated in an earlier
+  draft — a real outage was being misreported to the visitor as a
+  permanent limitation).
+- `ToolRegistry.resolveCompanyDefaults` changed from `private` to
+  `public` (one-line visibility change, zero behavior change) so the new
+  route resolves the same per-company Cal.com event-type-id fallback
+  chain the voice tool already uses, rather than duplicating it.
+- 10 new tests (`PublicAppointmentBooking.test.ts`): validation, rate
+  limiting (both buckets independently), confirmed vs. requested honesty,
+  outage-vs-unconfigured distinction, and failure handling — mocking
+  `assistantRuntime`/`CalcomAdapter` with exact-args assertions (not
+  loose `objectContaining`) on the `timezone` key specifically, since a
+  key-name drift there would silently book every visitor in UTC.
+
+**vCard**: added WhatsApp to the exported contact links (was shown on the
+card itself but never included in the downloadable contact), tagged the
+phone `CELL` in addition to `WORK` so contact apps file it under "mobile,"
+and documented — rather than silently deciding — why the card stays on
+vCard 3.0 instead of upgrading to 4.0: 4.0 has real gaps in classic
+desktop Outlook and several stock Android contact apps, which matters
+more here than the spec being newer. (`navigator.contacts` — a request in
+this phase's brief — does not exist as a way to write a contact into a
+phone's address book from a web page; the Contact Picker API is read-only.
+Flagged rather than built as if it worked.)
+
+**Voice provider research** (`docs/VOICE_PROVIDER_COMPARISON.md`,
+research-only, no code changed): evaluated OpenAI Realtime, LiveKit,
+Daily.co, ElevenLabs Conversational AI, Retell AI, Deepgram, Hume AI, and
+Cartesia against Vapi. Recommendation: a full migration isn't justified
+right now — the coupling to Vapi's undocumented SDK internals (discovered
+through real production incidents, not assumed) makes a swap risky with
+no concrete forcing trigger, and the business logic (tools, prompts,
+CRM/booking) is already vendor-neutral. A general abstraction layer isn't
+worth building speculatively either — worth designing once a second real
+implementation exists to design against. If one alternative is worth a
+hands-on prototype, it's ElevenLabs Conversational AI: the only
+full-orchestration option with confirmed support for all six of this
+platform's languages including Telugu/Malayalam, which Vapi's own
+comments flag as unconfirmed.
+
+**Performance**: the appointment modal is now `next/dynamic`-loaded with
+`ssr:false` — a real Cal.com fetch, date formatting, and a multi-step form
+that every visitor was previously shipped whether or not they ever click
+"Book Meeting" now only loads on that click.
+
+**Discovered mid-session, not part of this phase's scope**: the same
+untracked "Enterprise CMS" module flagged in earlier phases (§7) has grown
+further and is under **active, concurrent modification** — `globals.css`,
+`Sidebar.tsx`, and `VoiceMicButton.tsx` all changed during this session
+without this phase touching them, plus a new `WaveformVisualizer.tsx`.
+None of it was committed, reviewed, or built upon here; only the files
+this phase actually intended to change were staged and committed.
+
+Full gate suite green: tsc, lint, 310 unit/integration tests (1
+pre-existing skip), production build. One commit, pushed, deployed, and
+verified live: `maylaanai.com` and `www.maylaanai.com` both 200 with valid
+Vercel-issued SSL, `www` redirects with 308, the old `.vercel.app` URL
+still works unchanged, `/c/srinivasan` resolves on the new domain,
+OG/canonical/JSON-LD all reflect `maylaanai.com`, and the new appointments
+endpoint returns a real (not fabricated) `{"configured":false,"slots":[],
+"reason":"unconfigured"}` for the demo company, which has no Cal.com key
+configured — exactly the honest answer, not a fake one.
+
 ---
 
 ## 5. Recurring theme
@@ -777,7 +899,11 @@ The defects that mattered most were not crashes. They were **things that
 silently pretended to work**:
 
 - a business card that rendered a stranger's identity when lookup failed
-- a booking tool that confirmed meetings nobody would attend
+- a booking tool that confirmed meetings nobody would attend — and, in
+  Phase 14, the identical defect reintroduced in a second, disconnected UI
+  path (a manual "Book an Appointment" modal) months after the original
+  was fixed and pinned with regression tests. Same lesson each time: fix
+  the shared code path, not just the one caller that got audited
 - a dashboard reporting invented business metrics
 - adapters returning fabricated successes when unconfigured
 - alert rules with no scrape config, so alerting was structurally inert
