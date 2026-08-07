@@ -46,7 +46,7 @@ inward; repositories abstract Supabase behind interfaces.
 | Dashboard pages | 14 |
 | Database | 27 tables · 39 indexes · 43 FKs · 26 RLS policies |
 | Migrations | 16 total, 15 applied in production, **1 pending** (Phase 16's qualification-engine migration — see §7) |
-| Unit/integration tests | **324 passing**, 1 skipped (documented) |
+| Unit/integration tests | **328 passing**, 1 skipped (documented) |
 | Browser tests | **47 passing** across 3 viewports, 1 pre-existing unrelated finding (§4, Phase 13) |
 | Accessibility | WCAG 2.1 AA — zero violations on every surface this phase touched |
 | Build | Zero warnings, zero build-time error logs |
@@ -1052,16 +1052,50 @@ stale.
   for explicit confirmation rather than run autonomously; see the session's
   final report.
 
-18 new/changed unit tests across `LeadQualificationService.test.ts` (full
-rewrite — temperature classification including the buying-intent override,
+**Adversarial review caught 4 real defects before any of this reached
+production**, since fixed:
+
+1. `classifyTemperature`'s "explicit negative signal overrides the point
+   score" rule only actually applied to low buying-intent — `decisionMaker
+   === "no"` was checked *after* the `score >= 70` branch, so a lead with a
+   large budget and an urgent timeline who explicitly said they couldn't
+   approve the purchase was still classified HOT. Reordered so both explicit
+   negatives are checked first, alongside a regression test (score 70 +
+   `decisionMaker: "no"` → COLD, not HOT).
+2. `budget`/`timeline` were read for scoring but never written into the
+   patch — a lead whose budget was clarified via `update_lead_qualification`
+   would score correctly but the `leads.budget` column itself stayed at
+   whatever `save_lead` originally wrote (often null), so the CRM would show
+   a HIGH-scored lead citing "Budget >= $5,000" against a null budget field.
+   Fixed by adding both to the patch; pinned with a regression test.
+3. `LeadQualificationSignalsSchema` (Zod) was defined but never actually
+   used to validate a tool call's arguments — a hallucinated
+   `decision_maker: "maybe"` (outside the declared enum) would have reached
+   Supabase as an unvalidated string with no CHECK constraint to catch it.
+   New `parseQualificationSignals()` runs every `save_lead`/
+   `update_lead_qualification` call through the schema first; an invalid
+   field is dropped and logged rather than corrupting the row or crashing
+   the tool call. `has_need` also gained a real, schema-declared parameter
+   on `update_lead_qualification` (it previously could only ever be inferred
+   from `problem_statement`, never explicitly set to `false`).
+4. The migration's `lead_temperature VARCHAR(4) DEFAULT 'COLD'` would have
+   backfilled *every existing lead* — including already-QUALIFIED,
+   high-value ones — to COLD the moment it applied, since Postgres applies a
+   column default to existing rows too. Split into an undefaulted `ADD
+   COLUMN` (existing rows stay NULL, i.e. "not yet classified under this
+   engine") plus a separate `ALTER COLUMN ... SET DEFAULT` that only affects
+   rows inserted from here on.
+
+22 new/changed unit tests across `LeadQualificationService.test.ts` (full
+rewrite — temperature classification including both override signals,
 cold-reason priority ordering, next-follow-up-date set/clear behavior, the
-undefined-fields-never-written regression) and `VoiceEngine.test.ts`
-(`update_lead_qualification` merge/re-score, nonexistent-lead handling,
-nurture-email send-once/no-duplicate). Full gate suite green: tsc, lint, 324
-unit/integration tests (1 pre-existing skip), production build. One commit,
-11 files (9 modified, 1 new migration, this doc) — the concurrent Enterprise
-CMS session's files (§4, Phases 13–15) remain untouched, staged by explicit
-path only. Not yet pushed; migration not yet applied to production.
+undefined-fields-never-written and budget/timeline-persisted regressions)
+and `VoiceEngine.test.ts` (`update_lead_qualification` merge/re-score,
+nonexistent-lead handling, explicit `has_need: false`, hallucinated-enum
+rejection, nurture-email send-once/no-duplicate). Full gate suite green: tsc,
+lint, 328 unit/integration tests (1 pre-existing skip), production build.
+Not yet pushed; migration not yet applied to production — both held for
+explicit confirmation.
 
 ---
 

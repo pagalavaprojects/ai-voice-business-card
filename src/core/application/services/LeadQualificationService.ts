@@ -72,6 +72,8 @@ export class LeadQualificationService {
       score_reasoning: reasons.join(", "),
       status: category === LeadScoreCategory.HIGH ? LeadStatus.QUALIFIED : LeadStatus.NEW,
       lead_temperature: temperature,
+      budget: params.budget,
+      timeline: params.timeline,
       decision_maker: params.decisionMaker,
       urgency: params.urgency,
       buying_intent: params.buyingIntent,
@@ -167,15 +169,20 @@ export class LeadQualificationService {
   }
 
   /** Temperature is the qualitative read that actually drives what happens
-   * next — booking vs. nurture — so an explicit "low buying intent" signal
-   * from the AI overrides a favourable point total rather than the other
-   * way around: someone can have budget and a rough timeline and still
-   * clearly say "just researching for now," and that should route to
-   * nurture, not a pushed booking. */
+   * next — booking vs. nurture — so an explicit NEGATIVE signal from the AI
+   * overrides a favourable point total rather than the other way around:
+   * someone can have a large budget and an urgent-sounding timeline and
+   * still have explicitly said they can't approve the purchase, or that
+   * they're just researching — that should route to nurture, not a pushed
+   * booking, no matter how high the arithmetic score climbs. `hasNeed ===
+   * false` is deliberately NOT in this override group: it means "no need
+   * confirmed yet," an absence of a positive signal rather than an explicit
+   * negative one, so it only breaks a tie in the 40–69 WARM band, same as
+   * before. */
   private classifyTemperature(score: number, params: QualificationParams): LeadTemperature {
-    if (params.buyingIntent === "low") return LeadTemperature.COLD;
+    if (params.buyingIntent === "low" || params.decisionMaker === "no") return LeadTemperature.COLD;
     if (score >= 70) return LeadTemperature.HOT;
-    if (params.decisionMaker === "no" || params.hasNeed === false) return LeadTemperature.COLD;
+    if (params.hasNeed === false) return LeadTemperature.COLD;
     if (score >= 40) return LeadTemperature.WARM;
     return LeadTemperature.COLD;
   }

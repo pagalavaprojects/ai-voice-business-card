@@ -2,20 +2,12 @@ import { ICRMRepository } from "../../domain/repositories/ICRMRepository";
 import { IBookingRepository } from "../../domain/repositories/IBookingRepository";
 import { IKnowledgeRepository } from "../../domain/repositories/IKnowledgeRepository";
 import { NotificationService } from "../services/NotificationService";
-import { LeadQualificationService, QualificationParams } from "../services/LeadQualificationService";
+import { LeadQualificationService } from "../services/LeadQualificationService";
 import { CalcomAdapter } from "../../infrastructure/booking/calcom/CalcomAdapter";
 import { ISettingsRepository } from "../../domain/repositories/ISettingsRepository";
 import { IKnowledgeDocumentRepository } from "../../domain/repositories/IKnowledgeDocumentRepository";
 import { OpenAIEmbeddingAdapter } from "../../infrastructure/embeddings/OpenAIEmbeddingAdapter";
-import {
-  AppointmentStatus,
-  LeadTemperature,
-  NurtureStatus,
-  DecisionMakerStatus,
-  Urgency,
-  BuyingIntent,
-  Sentiment,
-} from "../../domain/models/types";
+import { AppointmentStatus, LeadTemperature, NurtureStatus, LeadQualificationSignalsSchema } from "../../domain/models/types";
 import { Logger } from "@/shared/lib/logger";
 
 export const KNOWN_TOOL_NAMES = [
@@ -259,7 +251,7 @@ export class ToolRegistry {
    * the high-value-lead alert): the tool call itself must not block or
    * fail on email delivery. */
   private maybeSendColdLeadNurtureEmail(
-    scored: { id: string; name: string; email: string; lead_temperature?: LeadTemperature },
+    scored: { id: string; name: string; email: string; lead_temperature?: LeadTemperature | null },
     alreadyNurtured: boolean,
     context: ToolContext
   ): void {
@@ -283,6 +275,22 @@ export class ToolRegistry {
     };
 
     send().catch((err) => Logger.error("Cold-lead nurture email failed", { error: err instanceof Error ? err.message : String(err) }));
+  }
+
+  /** Tool-call arguments come from an LLM, not a typed caller — a
+   * hallucinated `decision_maker: "maybe"` (outside the declared enum) must
+   * not silently reach Supabase as an unvalidated string. Validates the
+   * qualification-signal subset of `args` against the same
+   * `LeadQualificationSignalsSchema` used elsewhere at domain boundaries;
+   * anything that fails validation is dropped (logged, not thrown) rather
+   * than failing the whole tool call over one bad field. */
+  private parseQualificationSignals(args: Record<string, unknown>) {
+    const result = LeadQualificationSignalsSchema.safeParse(args);
+    if (!result.success) {
+      Logger.warn("Dropping invalid qualification signal(s) from a tool call", { issues: result.error.issues });
+      return {};
+    }
+    return result.data;
   }
 
   private registerDefaultTools() {
@@ -321,20 +329,21 @@ export class ToolRegistry {
           timeline: args.timeline ? String(args.timeline) : undefined,
         });
 
+        const signals = this.parseQualificationSignals(args);
         const scored = await this.qualificationService.calculateAndSaveLeadScore(lead.id, {
           budget: args.budget ? Number(args.budget) : undefined,
           timeline: args.timeline ? String(args.timeline) : undefined,
           hasNeed: Boolean(args.problem_statement),
-          decisionMaker: args.decision_maker as DecisionMakerStatus | undefined,
-          urgency: args.urgency as Urgency | undefined,
-          buyingIntent: args.buying_intent as BuyingIntent | undefined,
-          objections: args.objections ? String(args.objections) : undefined,
-          currentSolution: args.current_solution ? String(args.current_solution) : undefined,
-          referralSource: args.referral_source ? String(args.referral_source) : undefined,
-          sentiment: args.sentiment as Sentiment | undefined,
-          confidence: args.qualification_confidence !== undefined ? Number(args.qualification_confidence) : undefined,
-          conversationSummary: args.conversation_summary ? String(args.conversation_summary) : undefined,
-          qualificationNotes: args.qualification_notes ? String(args.qualification_notes) : undefined,
+          decisionMaker: signals.decision_maker,
+          urgency: signals.urgency,
+          buyingIntent: signals.buying_intent,
+          objections: signals.objections,
+          currentSolution: signals.current_solution,
+          referralSource: signals.referral_source,
+          sentiment: signals.sentiment,
+          confidence: signals.qualification_confidence,
+          conversationSummary: signals.conversation_summary,
+          qualificationNotes: signals.qualification_notes,
         });
 
         if (scored.score_category === "HIGH" && this.notificationService) {
@@ -388,6 +397,11 @@ export class ToolRegistry {
           lead_id: { type: "string", description: "UUID returned by save_lead" },
           budget: { type: "number", description: "Estimated budget in USD, if newly learned or clarified" },
           timeline: { type: "string", description: "Project timeline, if newly learned or clarified" },
+          has_need: {
+            type: "boolean",
+            description:
+              "Whether the visitor has now confirmed (true) or explicitly ruled out (false) a genuine need — only set this if that has newly become clear; leave it out if unchanged.",
+          },
           ...QUALIFICATION_SIGNAL_PARAMETERS,
         },
         required: ["lead_id"],
@@ -402,21 +416,21 @@ export class ToolRegistry {
         const alreadyNurtured =
           existing.nurture_status === NurtureStatus.QUEUED || existing.nurture_status === NurtureStatus.SENT;
 
+        const signals = this.parseQualificationSignals(args);
         const scored = await this.qualificationService.calculateAndSaveLeadScore(leadId, {
           budget: args.budget !== undefined ? Number(args.budget) : existing.budget ?? undefined,
           timeline: args.timeline !== undefined ? String(args.timeline) : existing.timeline ?? undefined,
           hasNeed: args.has_need !== undefined ? Boolean(args.has_need) : existing.problem_statement ? true : undefined,
-          decisionMaker: (args.decision_maker as DecisionMakerStatus | undefined) ?? existing.decision_maker ?? undefined,
-          urgency: (args.urgency as Urgency | undefined) ?? existing.urgency ?? undefined,
-          buyingIntent: (args.buying_intent as BuyingIntent | undefined) ?? existing.buying_intent ?? undefined,
-          objections: args.objections ? String(args.objections) : existing.objections ?? undefined,
-          currentSolution: args.current_solution ? String(args.current_solution) : existing.current_solution ?? undefined,
-          referralSource: args.referral_source ? String(args.referral_source) : existing.referral_source ?? undefined,
-          sentiment: (args.sentiment as Sentiment | undefined) ?? existing.sentiment ?? undefined,
-          confidence:
-            args.qualification_confidence !== undefined ? Number(args.qualification_confidence) : existing.qualification_confidence ?? undefined,
-          conversationSummary: args.conversation_summary ? String(args.conversation_summary) : existing.conversation_summary ?? undefined,
-          qualificationNotes: args.qualification_notes ? String(args.qualification_notes) : existing.qualification_notes ?? undefined,
+          decisionMaker: signals.decision_maker ?? existing.decision_maker ?? undefined,
+          urgency: signals.urgency ?? existing.urgency ?? undefined,
+          buyingIntent: signals.buying_intent ?? existing.buying_intent ?? undefined,
+          objections: signals.objections ?? existing.objections ?? undefined,
+          currentSolution: signals.current_solution ?? existing.current_solution ?? undefined,
+          referralSource: signals.referral_source ?? existing.referral_source ?? undefined,
+          sentiment: signals.sentiment ?? existing.sentiment ?? undefined,
+          confidence: signals.qualification_confidence ?? existing.qualification_confidence ?? undefined,
+          conversationSummary: signals.conversation_summary ?? existing.conversation_summary ?? undefined,
+          qualificationNotes: signals.qualification_notes ?? existing.qualification_notes ?? undefined,
         });
 
         this.maybeSendColdLeadNurtureEmail(scored, alreadyNurtured, context);

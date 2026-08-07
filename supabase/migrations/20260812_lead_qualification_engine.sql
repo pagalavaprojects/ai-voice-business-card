@@ -22,8 +22,8 @@ ALTER TABLE leads
     ADD COLUMN IF NOT EXISTS qualification_confidence NUMERIC(3, 2), -- 0.00–1.00, the AI's own confidence in this read
     ADD COLUMN IF NOT EXISTS conversation_summary TEXT,
     ADD COLUMN IF NOT EXISTS qualification_notes TEXT,          -- internal-only reasoning, never surfaced to the visitor
-    ADD COLUMN IF NOT EXISTS lead_temperature VARCHAR(4) DEFAULT 'COLD'
-        CHECK (lead_temperature IN ('HOT', 'WARM', 'COLD')),
+    ADD COLUMN IF NOT EXISTS lead_temperature VARCHAR(4)
+        CHECK (lead_temperature IS NULL OR lead_temperature IN ('HOT', 'WARM', 'COLD')),
     ADD COLUMN IF NOT EXISTS cold_reason VARCHAR(20)
         CHECK (cold_reason IS NULL OR cold_reason IN ('BUDGET', 'TIMING', 'AUTHORITY', 'NEED_UNCLEAR', 'RESEARCH_PHASE')),
     ADD COLUMN IF NOT EXISTS nurture_status VARCHAR(12) DEFAULT 'NONE'
@@ -31,6 +31,15 @@ ALTER TABLE leads
     ADD COLUMN IF NOT EXISTS nurture_channel_recommended VARCHAR(10)
         CHECK (nurture_channel_recommended IS NULL OR nurture_channel_recommended IN ('EMAIL', 'WHATSAPP', 'CONTENT')),
     ADD COLUMN IF NOT EXISTS next_followup_date TIMESTAMPTZ;
+
+-- `lead_temperature` deliberately has no DEFAULT on the ADD COLUMN above —
+-- Postgres would apply it retroactively to every existing row, silently
+-- relabeling already-QUALIFIED/HIGH-value leads as COLD before anyone has
+-- re-scored them. Existing rows stay NULL (unclassified under this engine)
+-- until their next `save_lead`/`update_lead_qualification` call. The default
+-- is set here, as a separate step, so it only applies going forward to rows
+-- the application inserts without explicitly setting it.
+ALTER TABLE leads ALTER COLUMN lead_temperature SET DEFAULT 'COLD';
 
 -- The nurture worker (a scheduled job, not built in this migration) needs to
 -- find "cold leads due for a follow-up today" without scanning the whole

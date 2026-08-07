@@ -116,6 +116,22 @@ describe("LeadQualificationService", () => {
       );
     });
 
+    it("an explicit decisionMaker 'no' overrides a high point score and forces COLD", async () => {
+      // budget>=5000 (+40) + urgent timeline (+30) = 70, which alone would be
+      // HOT — but an explicit "I can't approve this" outranks the arithmetic,
+      // same override class as low buying_intent above.
+      await qualificationService.calculateAndSaveLeadScore("lead-123", {
+        budget: 10000,
+        timeline: "ASAP",
+        hasNeed: false,
+        decisionMaker: "no",
+      });
+      expect(mockCrmRepo.updateLeadQualification).toHaveBeenCalledWith(
+        "lead-123",
+        expect.objectContaining({ score: 70, lead_temperature: LeadTemperature.COLD })
+      );
+    });
+
     it("high buying_intent adds to the score", async () => {
       const withoutIntent = await qualificationService.calculateAndSaveLeadScore("lead-123", { budget: 100 });
       mockCrmRepo.updateLeadQualification.mockClear();
@@ -171,6 +187,14 @@ describe("LeadQualificationService", () => {
         expect.objectContaining({ cold_reason: null, nurture_status: NurtureStatus.NONE, next_followup_date: null })
       );
     });
+  });
+
+  it("persists budget and timeline onto the lead, not just into the score reasoning", async () => {
+    await qualificationService.calculateAndSaveLeadScore("lead-123", { budget: 7500, timeline: "next month" });
+    expect(mockCrmRepo.updateLeadQualification).toHaveBeenCalledWith(
+      "lead-123",
+      expect.objectContaining({ budget: 7500, timeline: "next month" })
+    );
   });
 
   it("never writes undefined fields into the patch (would null out a previously-recorded signal)", async () => {

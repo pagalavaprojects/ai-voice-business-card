@@ -232,7 +232,7 @@ export interface Lead extends BaseEntity {
   qualification_confidence?: number | null;
   conversation_summary?: string | null;
   qualification_notes?: string | null;
-  lead_temperature?: LeadTemperature;
+  lead_temperature?: LeadTemperature | null;
   cold_reason?: ColdReason | null;
   nurture_status?: NurtureStatus;
   nurture_channel_recommended?: NurtureChannel | null;

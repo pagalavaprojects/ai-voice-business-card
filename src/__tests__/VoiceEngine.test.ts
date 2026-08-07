@@ -231,6 +231,53 @@ describe("VoiceEngine Tool Execution & Registry", () => {
     expect(mockCrmRepo.updateLeadQualification).not.toHaveBeenCalled();
   });
 
+  it("update_lead_qualification lets has_need be explicitly set to false, not just inferred from problem_statement", async () => {
+    mockCrmRepo.getLeadById.mockResolvedValue({
+      id: "lead-3",
+      company_id: "comp-1",
+      employee_id: "emp-1",
+      name: "Maybe Lead",
+      email: "maybe@example.com",
+      phone: "+15550003333",
+      problem_statement: "Wanted to compare pricing", // would infer hasNeed=true if not overridden
+      tags: [],
+      created_at: "",
+      updated_at: "",
+    } as never);
+    mockCrmRepo.updateLeadQualification.mockResolvedValue({} as never);
+
+    const tool = toolRegistry.getTool("update_lead_qualification")!;
+    await tool.execute({ lead_id: "lead-3", has_need: false }, { companyId: "comp-1", employeeId: "emp-1" });
+
+    const call = mockCrmRepo.updateLeadQualification.mock.calls[0][1] as Record<string, unknown>;
+    expect(call.cold_reason).toBe("NEED_UNCLEAR");
+  });
+
+  it("update_lead_qualification drops a hallucinated enum value instead of persisting or crashing", async () => {
+    mockCrmRepo.getLeadById.mockResolvedValue({
+      id: "lead-4",
+      company_id: "comp-1",
+      employee_id: "emp-1",
+      name: "Odd Lead",
+      email: "odd@example.com",
+      phone: "+15550004444",
+      decision_maker: "yes", // already on file
+      tags: [],
+      created_at: "",
+      updated_at: "",
+    } as never);
+    mockCrmRepo.updateLeadQualification.mockResolvedValue({} as never);
+
+    const tool = toolRegistry.getTool("update_lead_qualification")!;
+    // "maybe" is not a valid decision_maker value — must not overwrite the
+    // real "yes" already on file, and must not throw out of the tool call.
+    const result = await tool.execute({ lead_id: "lead-4", decision_maker: "maybe" }, { companyId: "comp-1", employeeId: "emp-1" });
+
+    expect(result.success).toBe(true);
+    const call = mockCrmRepo.updateLeadQualification.mock.calls[0][1] as Record<string, unknown>;
+    expect(call.decision_maker).toBe("yes");
+  });
+
   describe("cold-lead nurture email", () => {
     let mockNotificationService: { send: jest.Mock };
     let registryWithNotifications: ToolRegistry;
