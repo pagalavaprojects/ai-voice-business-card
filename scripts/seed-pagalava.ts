@@ -27,7 +27,11 @@ async function seedPagalava() {
       id: COMPANY_ID,
       name: "Pagalava Data Analytics",
       website: "https://pagalava.com",
-      logo_url: null,
+      // Deliberately NOT setting logo_url here (it used to be hardcoded
+      // null): the logo is uploaded and managed separately through the
+      // dashboard/storage, and Supabase's upsert only touches columns
+      // present in this object — omitting it entirely leaves whatever's
+      // already stored untouched on every re-run instead of wiping it out.
       settings: {},
     },
     { onConflict: "id" }
