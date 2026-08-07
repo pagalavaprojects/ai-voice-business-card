@@ -7,8 +7,8 @@
 | **Live** | https://ai-voice-business-card.vercel.app |
 | **Repository** | https://github.com/pagalavaprojects/ai-voice-business-card |
 | **Demo card** | [`/33333333…/44444444…`](https://ai-voice-business-card.vercel.app/33333333-3333-3333-3333-333333333333/44444444-4444-4444-4444-444444444444) or the short link [`/c/srinivasan`](https://ai-voice-business-card.vercel.app/c/srinivasan) |
-| **Last updated** | 2026-08-06 |
-| **Completion** | **~99%** — all 13 migrations now applied in production (see §7), founder photo and short-URL slug live, short public URLs, founder photo/logo, HD voice, and a scripted Tamil welcome that now plays to completion uninterrupted (professional-receptionist behavior) with safe playback loudness enhancement all built, tested and live |
+| **Last updated** | 2026-08-07 |
+| **Completion** | **~99%** — all 14 migrations applied in production; enterprise multilingual voice assistant (Tamil default, English, Hindi — architecture supports unlimited more) live alongside short public URLs, founder photo/logo, HD voice, and the professional-receptionist scripted welcome, all built, tested and live |
 
 > This file is refreshed after every completed module. If it looks stale
 > against the repo, trust the repo and raise it.
@@ -40,13 +40,13 @@ inward; repositories abstract Supabase behind interfaces.
 
 | Metric | Value |
 |---|---|
-| Commits | 61 |
-| Source | ~20,900 lines TypeScript |
+| Commits | 64 |
+| Source | ~21,700 lines TypeScript |
 | API routes | 48 |
 | Dashboard pages | 14 |
-| Database | 26 tables · 39 indexes · 43 FKs · 26 RLS policies |
-| Migrations | 13 total, **all applied in production** |
-| Unit/integration tests | **247 passing**, 1 skipped (documented) |
+| Database | 27 tables · 39 indexes · 43 FKs · 26 RLS policies |
+| Migrations | 14 total, **all applied in production** |
+| Unit/integration tests | **273 passing**, 1 skipped (documented) |
 | Browser tests | **42 passing** across 3 viewports |
 | Accessibility | WCAG 2.1 AA — zero violations |
 | Build | Zero warnings, zero build-time error logs |
@@ -550,7 +550,7 @@ tests, `next build`, 42 Playwright e2e tests. Two commits, 18 files, deployed
 and verified live. Full write-up in the session's engineering report
 (rendered as an artifact for this conversation).
 
-### Phase 11 — Voice-only pass: no-barge-in receptionist behavior, loudness, reconnect *(current)*
+### Phase 11 — Voice-only pass: no-barge-in receptionist behavior, loudness, reconnect
 
 Voice-experience-only scope (explicitly not a redesign; backend/auth/
 dashboard/bookings/analytics/lead-capture untouched). Deliberately reverses
@@ -603,6 +603,73 @@ spot-verified live (chips gone, layout re-centered, API healthy). Live-call
 verification (real mic, real WebRTC) was not performed in this environment —
 no audio hardware / non-interactive session — left for the user's own
 hands-on test.
+
+### Phase 12 — Enterprise multilingual voice assistant *(current)*
+
+Visitor-selectable conversation language — Tamil (default), English, Hindi
+at launch, architected for unlimited more with no code duplication (add a
+locale file + a catalog row, not a branch). Everything the language touches
+switches together: voice greeting, AI system-prompt language, speech
+recognition, suggested questions, and every visible UI/ARIA string.
+
+- **New `src/features/language/` module** — `config.ts` (the
+  `SUPPORTED_LANGUAGES` catalog: code, native name, Deepgram speech
+  locale, voice model, RTL flag), `locales/{ta,en,hi}.json` (hand-
+  translated, dynamically imported per language — confirmed real code-
+  splitting via build output, not bundled upfront), `server.ts`
+  (greeting/prompt-directive/suggested-question resolution), `greetings.ts`
+  (generic per-language fallback templates), `hooks/useLanguage.ts`,
+  `components/LanguageSelector.tsx` (a native `<select>` — full keyboard/
+  screen-reader support and a free OS-native bottom-sheet/dialog on mobile,
+  deliberately not a hand-rolled dropdown).
+- **Detection/persistence**: stored preference (localStorage) → browser
+  language → Tamil default (not English — Pagalava primarily serves Tamil
+  Nadu). Every call's `conversations.language` records what was actually
+  used, for analytics.
+- **Speech recognition genuinely switches**: `useVapiSession` passes a
+  Deepgram `transcriber` config — confirmed `'ta'`/`'hi'` are directly
+  supported language codes by reading the installed `@vapi-ai/web` SDK
+  types, not assumed.
+- **System prompt**: a language directive is appended to the *existing*
+  assembled prompt (`PromptAssemblyService`'s output), not forked per
+  language — a company's own prompt-module customizations keep applying
+  in every language, and "add a language" never means "re-author every
+  company's prompt."
+- **Greeting resolution priority**: an explicit per-employee override
+  (`ai_agents.greetings`, new JSONB) → the existing single-language
+  `first_message` (used verbatim only when it matches the requested
+  language, so an already-authored greeting is never silently replaced) →
+  a generic platform template. `?lang=` absent entirely (any existing
+  caller — the webhook, older clients) behaves byte-for-byte as before
+  this phase.
+- **Backward compatibility is load-bearing, not incidental**: confirmed
+  directly against production that omitting `?lang=` still returns the
+  original Tamil script unchanged.
+- Admin: Agents dashboard gained a per-language greetings editor (blank
+  field = platform default for that language, never silence).
+
+**Self-caught regression, fixed same session**: re-running
+`scripts/seed-pagalava.ts` to push the new greetings revealed it
+hardcoded `logo_url: null` on every run — silently wiping the real
+uploaded company logo each time the script executes, unrelated to this
+phase's own changes but triggered by it. Fixed (upsert now omits the
+field entirely, so Supabase's partial-update semantics leave it
+untouched) and the wiped value restored in production directly from the
+still-intact storage file.
+
+Migration `20260810_multilingual_voice_assistant.sql`: `languages` catalog
+table (seeded), `settings.language_settings` (future per-company
+overrides), `ai_agents.greetings`, `conversations.language`. Applied via
+the Supabase session pooler (same IPv6 workaround as Phase 10b/11).
+
+26 new tests (detection/fallback priority, greeting-resolution priority
+chain, transcriber wiring, locale-bundle key-parity across all three JSON
+files). Caught and fixed one real bug before shipping: a race where
+switching language could auto-start a call using the still-stale
+pre-refetch card data. Full gate suite green (tsc/lint/273 unit
+tests/build/42 e2e). Two commits, deployed, and spot-verified live in the
+browser across all three languages (screenshots) with zero console
+errors.
 
 ---
 
