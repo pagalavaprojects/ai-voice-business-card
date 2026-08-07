@@ -9,6 +9,7 @@ import { supabaseAdmin } from "@/shared/lib/supabase";
 import { resolveVoiceProviderConfig } from "@/shared/lib/voice";
 import { SupabaseKnowledgeRepository } from "@/core/infrastructure/database/supabase/SupabaseKnowledgeRepository";
 import { verifyWebhookToken } from "@/shared/lib/webhookToken";
+import { resolveRequestLanguage, resolveGreeting, getLanguageDirective, isSupportedLanguage, DEFAULT_LANGUAGE, getLanguageDefinition } from "@/features/language/server";
 
 // Reads the session cookie and/or query params, so it can never be rendered
 // statically. Declared explicitly to stop Next attempting a static pass that
@@ -90,27 +91,46 @@ async function handleVapiMessage(req: NextRequest, message: VapiMessage): Promis
       return formatApiResponse(null, 400, "companyId and employeeId query params are required");
     }
 
-    const systemPrompt = await promptAssemblyService.assembleSystemPrompt(companyId, employeeId);
     const tools = toolRegistry.getAllToolDefinitions();
 
-    if (message.call?.id) {
-      await conversationRepo.getOrCreateConversationByVapiCallId(companyId, employeeId, message.call.id);
-    }
+    // Same no-?lang=-means-unchanged-behavior rule as the public card route:
+    // only an explicit choice engages multilingual resolution; absent, this
+    // falls back to whatever the agent's greeting is already tagged as.
+    const langParam = req.nextUrl.searchParams.get("lang");
 
     // Vapi speaks this verbatim before the model runs, so a company's
     // scripted opening (e.g. a specific pitch) has to come from the
     // agent record, not the system prompt — see first_message on ai_agents.
-    // The employee is fetched alongside it purely for their voice override, so
-    // a phone call and a browser call sound like the same person.
-    const [agent, employee, settings] = await Promise.all([
+    // The employee/company are fetched alongside it purely for their voice
+    // override and greeting template variables, so a phone call and a
+    // browser call sound like the same person.
+    const [agent, employee, company, settings] = await Promise.all([
       agentRepo.getAgentByEmployee(employeeId).catch(() => null),
       knowledgeRepo.getEmployeeById(employeeId).catch(() => null),
+      knowledgeRepo.getCompanyById(companyId).catch(() => null),
       // The company's default voice from Settings, the last step before the
       // platform default. Degrades to null so a settings outage cannot fail
       // the call — it just falls through to the platform voice.
       settingsRepo.getSettings(companyId).catch(() => null),
     ]);
-    const firstMessage = agent?.first_message?.trim() || "Hello! Thank you for scanning my business card. How can I help you today?";
+
+    const language = langParam
+      ? resolveRequestLanguage(langParam)
+      : isSupportedLanguage(agent?.welcome_message_language)
+        ? agent!.welcome_message_language!
+        : DEFAULT_LANGUAGE;
+
+    const systemPromptBase = await promptAssemblyService.assembleSystemPrompt(companyId, employeeId);
+    const systemPrompt = langParam ? systemPromptBase + getLanguageDirective(language) : systemPromptBase;
+
+    if (message.call?.id) {
+      await conversationRepo.getOrCreateConversationByVapiCallId(companyId, employeeId, message.call.id, langParam ? language : undefined);
+    }
+
+    const firstMessage =
+      langParam && employee && company
+        ? resolveGreeting(agent, company, employee, language)
+        : agent?.first_message?.trim() || "Hello! Thank you for scanning my business card. How can I help you today?";
     const voiceConfig = resolveVoiceProviderConfig(
       employee?.voice_id,
       agent?.voice_model_id,
@@ -141,6 +161,10 @@ async function handleVapiMessage(req: NextRequest, message: VapiMessage): Promis
           voiceConfig.provider === "11labs"
             ? { provider: "11labs" as const, voiceId: voiceConfig.voiceId, model: voiceConfig.model as "eleven_multilingual_v2" }
             : { provider: "openai" as const, voiceId: voiceConfig.voiceId, model: "tts-1-hd" as const },
+        // Same Deepgram language switch as the browser call path — see
+        // useVapiSession.ts for the SDK-source confirmation that 'ta'/'hi'
+        // are directly supported transcriber language codes.
+        ...(langParam ? { transcriber: { provider: "deepgram" as const, language: getLanguageDefinition(language).speechLocale } } : {}),
       },
     });
   }
@@ -169,7 +193,13 @@ async function handleVapiMessage(req: NextRequest, message: VapiMessage): Promis
     // first time a real call tried to save a lead.
     let conversationId: string | undefined;
     if (vapiCallId && companyId && employeeId) {
-      const conversation = await conversationRepo.getOrCreateConversationByVapiCallId(companyId, employeeId, vapiCallId);
+      const lang = req.nextUrl.searchParams.get("lang");
+      const conversation = await conversationRepo.getOrCreateConversationByVapiCallId(
+        companyId,
+        employeeId,
+        vapiCallId,
+        lang ? resolveRequestLanguage(lang) : undefined
+      );
       await conversationRepo.appendToolCalled(conversation.id, name);
       conversationId = conversation.id;
     }
@@ -192,7 +222,13 @@ async function handleVapiMessage(req: NextRequest, message: VapiMessage): Promis
       return formatApiResponse({ status: "processed" }, 200, "Call report acknowledged (no company/employee/call id to correlate)");
     }
 
-    const conversation = await conversationRepo.getOrCreateConversationByVapiCallId(companyId, employeeId, vapiCallId);
+    const endLang = req.nextUrl.searchParams.get("lang");
+    const conversation = await conversationRepo.getOrCreateConversationByVapiCallId(
+      companyId,
+      employeeId,
+      vapiCallId,
+      endLang ? resolveRequestLanguage(endLang) : undefined
+    );
 
     const durationSeconds = Number(message.durationSeconds ?? message.duration ?? 0);
     const summary = message.summary ?? message.analysis?.summary;

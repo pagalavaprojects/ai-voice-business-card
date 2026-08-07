@@ -20,9 +20,31 @@ interface VoiceMicButtonProps {
    * button itself is inert too rather than looking tappable and doing
    * nothing useful. */
   disabled?: boolean;
+  /** Translated announcements for each state — supplied by the caller
+   * (which has the visitor's chosen language) rather than this component
+   * importing the language hook itself, so VoiceMicButton stays a plain,
+   * reusable, language-agnostic control. Falls back to English so any
+   * existing caller that hasn't been updated keeps working unchanged. */
+  ariaLabels?: {
+    idle: string;
+    connecting: string;
+    listening: string;
+    speaking: string;
+    thinking: string;
+    disabled: string;
+  };
 }
 
-export const VoiceMicButton: React.FC<VoiceMicButtonProps> = ({ state, isMuted, onClick, ringActive, disabled }) => {
+const DEFAULT_ARIA_LABELS = {
+  idle: "Start voice conversation with AI Twin",
+  connecting: "Connecting to AI Twin, please wait",
+  listening: "AI Twin is listening — speak now",
+  speaking: "AI Twin is speaking",
+  thinking: "AI Twin is processing your message",
+  disabled: "Playing introduction — please wait",
+};
+
+export const VoiceMicButton: React.FC<VoiceMicButtonProps> = ({ state, isMuted, onClick, ringActive, disabled, ariaLabels = DEFAULT_ARIA_LABELS }) => {
   return (
     <div className="relative flex items-center justify-center py-6">
       {/* Pulsing Concentric Outer Rings for Listening/Speaking State */}
@@ -54,16 +76,16 @@ export const VoiceMicButton: React.FC<VoiceMicButtonProps> = ({ state, isMuted, 
         aria-disabled={disabled || undefined}
         aria-label={
           disabled
-            ? "Playing introduction — please wait"
+            ? ariaLabels.disabled
             : state === "idle"
-            ? "Start voice conversation with AI Twin"
+            ? ariaLabels.idle
             : state === "connecting"
-            ? "Connecting to AI Twin, please wait"
+            ? ariaLabels.connecting
             : state === "listening"
-            ? "AI Twin is listening — speak now"
+            ? ariaLabels.listening
             : state === "speaking"
-            ? "AI Twin is speaking"
-            : "AI Twin is processing your message"
+            ? ariaLabels.speaking
+            : ariaLabels.thinking
         }
         className={`relative z-10 flex h-28 w-28 items-center justify-center rounded-full shadow-2xl backdrop-blur-xl transition-all duration-300 ${
           disabled ? "cursor-not-allowed opacity-60" : ""

@@ -27,6 +27,10 @@ const UpdateAgentSchema = z.object({
     .string()
     .regex(/^[a-z]{2,3}(-[A-Za-z]{2,8})?$/, "Use a language tag like en, ta, or hi")
     .optional(),
+  // Per-language greeting overrides, e.g. { ta: "...", en: "...", hi: "..." }
+  // — see features/language/server.ts's resolveGreeting for how a missing
+  // language here falls back to the platform default template.
+  greetings: z.record(z.string().max(2000)).optional(),
   capabilities: z.array(z.string()).optional(),
   tools: z.array(z.enum(KNOWN_TOOL_NAMES)).optional(),
   prompt_template_id: z.string().uuid().optional().nullable(),

@@ -96,6 +96,30 @@ describe("useVapiSession — scripted intro tracking", () => {
     expect(vapi.started[0]).toMatchObject({ firstMessageInterruptionsEnabled: false });
   });
 
+  it("sets a Deepgram transcriber for the given speechLocale", async () => {
+    const { result } = renderHook(() =>
+      useVapiSession({ companyId: "c1", employeeId: "e1", vapiPublicKey: REAL_KEY, speechLocale: "ta" })
+    );
+
+    await act(async () => {
+      await result.current.startCall();
+    });
+
+    const vapi = fakeVapiInstances[0];
+    expect(vapi.started[0]).toMatchObject({ transcriber: { provider: "deepgram", language: "ta" } });
+  });
+
+  it("omits the transcriber field entirely when no speechLocale is given — zero regression for existing callers", async () => {
+    const { result } = renderHook(() => useVapiSession({ companyId: "c1", employeeId: "e1", vapiPublicKey: REAL_KEY }));
+
+    await act(async () => {
+      await result.current.startCall();
+    });
+
+    const vapi = fakeVapiInstances[0];
+    expect(vapi.started[0]).not.toHaveProperty("transcriber");
+  });
+
   it("defaults to OpenAI when no voiceProvider is passed — zero regression for existing calls", async () => {
     const { result } = renderHook(() => useVapiSession({ companyId: "c1", employeeId: "e1", vapiPublicKey: REAL_KEY, voiceId: "shimmer" }));
 

@@ -12,6 +12,7 @@ import { apiFetch, ApiClientError } from "@/shared/lib/apiClient";
 import { AIAgent, AgentDepartment } from "@/core/domain/agent/AIAgent";
 import { KnowledgeDocument } from "@/core/domain/models/types";
 import { KNOWN_TOOL_NAMES } from "@/core/application/tools/ToolRegistry";
+import { SUPPORTED_LANGUAGES } from "@/features/language/config";
 
 const DEPARTMENTS: AgentDepartment[] = ["SALES", "TECHNICAL_SUPPORT", "RECRUITER", "CUSTOMER_SUCCESS", "SUPERVISOR"];
 
@@ -277,6 +278,7 @@ function EditAgentDialog({
   const [assignedKnowledge, setAssignedKnowledge] = useState<string[]>([]);
   const [firstMessage, setFirstMessage] = useState("");
   const [welcomeLanguage, setWelcomeLanguage] = useState("en");
+  const [greetings, setGreetings] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [readiness, setReadiness] = useState<AgentReadiness | null>(null);
@@ -286,6 +288,7 @@ function EditAgentDialog({
     setTools(agent.tools || []);
     setFirstMessage(agent.first_message || "");
     setWelcomeLanguage(agent.welcome_message_language || "en");
+    setGreetings(agent.greetings || {});
     setReadiness(null);
     apiFetch<{ knowledgeDocumentIds: string[] }>(`/api/admin/agents/${agent.id}?companyId=${companyId}`)
       .then((data) => setAssignedKnowledge(data.knowledgeDocumentIds))
@@ -312,6 +315,10 @@ function EditAgentDialog({
           knowledge_document_ids: assignedKnowledge,
           first_message: firstMessage.trim() || null,
           welcome_message_language: welcomeLanguage.trim() || undefined,
+          // Empty strings are dropped, not saved as blank overrides — an
+          // admin who cleared a field means "use the platform default for
+          // this language again," not "greet visitors with silence."
+          greetings: Object.fromEntries(Object.entries(greetings).filter(([, text]) => text.trim().length > 0)),
         }),
       });
       onUpdated(updated);
@@ -373,6 +380,8 @@ function EditAgentDialog({
           />
         </Field>
         <WelcomeLanguageField value={welcomeLanguage} onChange={setWelcomeLanguage} />
+
+        <MultilingualGreetingsField greetings={greetings} onChange={setGreetings} />
 
         <div>
           <div className="text-slate-500 uppercase tracking-wide text-[10px] mb-2">Tool Assignment</div>
@@ -476,5 +485,40 @@ function WelcomeLanguageField({ value, onChange }: { value: string; onChange: (c
         )}
       </div>
     </Field>
+  );
+}
+
+/** Per-language greeting overrides for the multilingual voice card — one of
+ * these, or none, per supported language. A blank field means "no override
+ * for this language," not "greet visitors with silence": the platform's
+ * own generic per-language template (features/language/greetings.ts) is
+ * what plays instead, so leaving every field blank is a fully valid,
+ * zero-setup state, not a broken one. */
+function MultilingualGreetingsField({
+  greetings,
+  onChange,
+}: {
+  greetings: Record<string, string>;
+  onChange: (next: Record<string, string>) => void;
+}) {
+  return (
+    <div>
+      <div className="text-slate-500 uppercase tracking-wide text-[10px] mb-2">
+        Multilingual greetings (optional — blank uses the platform default for that language)
+      </div>
+      <div className="space-y-3">
+        {SUPPORTED_LANGUAGES.map((lang) => (
+          <Field key={lang.code} label={`${lang.name} (${lang.nativeName})`}>
+            <textarea
+              value={greetings[lang.code] ?? ""}
+              onChange={(e) => onChange({ ...greetings, [lang.code]: e.target.value })}
+              rows={3}
+              className="dashboard-input"
+              placeholder={`Greeting spoken to visitors who choose ${lang.name}…`}
+            />
+          </Field>
+        ))}
+      </div>
+    </div>
   );
 }

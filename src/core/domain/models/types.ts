@@ -202,6 +202,9 @@ export interface Conversation extends BaseEntity {
   transcript?: string | null;
   audio_metadata: Record<string, unknown>;
   appointment_id?: string | null;
+  /** The visitor-chosen language this call was conducted in (e.g. "ta",
+   * "en", "hi") — null for calls that predate multilingual support. */
+  language?: string | null;
 }
 
 export interface ConversationMessage extends BaseEntity {

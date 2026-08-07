@@ -17,6 +17,7 @@ export interface CreateAgentInput {
   personality_prompt: string;
   first_message?: string | null;
   welcome_message_language?: string | null;
+  greetings?: Record<string, string> | null;
   capabilities?: string[];
   tools?: string[];
   prompt_template_id?: string | null;

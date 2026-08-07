@@ -238,6 +238,24 @@ async function seedPagalava() {
       // message_language. Swapping to another language later is a data
       // edit (this value + the text), never a code change.
       welcome_message_language: "ta",
+      // Per-language greeting overrides for the multilingual voice card
+      // (migration 20260810) — the same pitch as first_message above,
+      // faithfully translated rather than left to the platform's generic
+      // per-language template, so switching language on this showcase card
+      // sounds as considered in English/Hindi as the original Tamil script.
+      // ta mirrors first_message exactly (same content, single source of
+      // truth would be nicer, but resolveGreeting already prefers this map
+      // over first_message when both exist, so keeping them in sync here is
+      // what actually keeps the "no language selected yet" behavior and the
+      // "Tamil explicitly selected" behavior identical).
+      greetings: {
+        ta:
+          "வணக்கம்.\n\nPagalava Data Analytics Private Limited சார்பாக எங்களுடைய சேவைகளை உங்களுக்கு தற்பொழுது அறிமுகப்படுத்துகிறோம்.\n\nஇது செயற்கை நுண்ணறிவு மூலம் இயங்கும் எங்களுடைய Smart AI Business Card ஆகும்.\n\nஇந்த AI Business Card-ஐ தங்களுக்கு தேவையான எந்த நேரத்திலும் பயன்படுத்திக்கொள்ளலாம்.\n\nPagalava Data Analytics என்பது ஒரு Women-led Deep Tech Startup நிறுவனம்.\n\nநடுத்தர நிறுவனங்களுக்கு தேவையான செயற்கை நுண்ணறிவு தீர்வுகளை Technology as a Service (TaaS) முறையில் வழங்குகிறோம்.\n\nஎங்களுடைய முக்கிய சேவைகள்:\n\n• Customer Experience Analytics.\n\n• Predictive Business Intelligence.\n\n• Marketing Performance Optimization.\n\n• Operations & Bottleneck Analysis.\n\n• Fraud Detection & Risk Management.\n\nஇந்த AI Business Card-ஐ உங்கள் வாடிக்கையாளர்கள் அல்லது புதிய Leads-களின் மொபைலில் Tap செய்தவுடன், உங்கள் தொடர்பு விவரங்கள் உடனடியாக அவர்களின் Contact List-இல் சேமிக்கப்படும்.\n\nஅதன்பிறகு, இந்த AI Assistant உங்கள் நிறுவனத்தை அவர்களுக்கு விளக்கி கூறும்.\n\nஅவர்கள் கேட்கும் கேள்விகளுக்கு உடனடியாக பதிலளிக்கும்.\n\nதேவையானால் உங்கள் WhatsApp, Email அல்லது Booking வழியாக உங்களை நேரடியாக தொடர்பு கொள்ளவும் உதவும்.\n\nஇப்போது உங்களுக்கு என்ன உதவி செய்யலாம்?",
+        en:
+          "Hello.\n\nOn behalf of Pagalava Data Analytics Private Limited, we warmly welcome you to our services.\n\nThis is our Smart AI Business Card, powered by artificial intelligence.\n\nYou can use this AI Business Card whenever you need it.\n\nPagalava Data Analytics is a Women-led Deep Tech Startup.\n\nWe provide the artificial intelligence solutions mid-sized companies need, delivered as Technology as a Service (TaaS).\n\nOur main services:\n\n• Customer Experience Analytics.\n\n• Predictive Business Intelligence.\n\n• Marketing Performance Optimization.\n\n• Operations & Bottleneck Analysis.\n\n• Fraud Detection & Risk Management.\n\nThe moment your customers or new leads tap this AI Business Card on their mobile, your contact details are instantly saved to their contact list.\n\nAfter that, this AI Assistant will explain your company to them.\n\nIt will answer their questions immediately.\n\nIf needed, it can also help them reach you directly through WhatsApp, Email, or Booking.\n\nNow, how can I help you today?",
+        hi:
+          "नमस्कार।\n\nPagalava Data Analytics Private Limited की ओर से, हम आपका हार्दिक स्वागत करते हैं।\n\nयह कृत्रिम बुद्धिमत्ता (AI) द्वारा संचालित हमारा Smart AI Business Card है।\n\nआप इस AI Business Card का उपयोग जब भी आवश्यक हो, कर सकते हैं।\n\nPagalava Data Analytics एक Women-led Deep Tech Startup है।\n\nहम मध्यम आकार की कंपनियों को ज़रूरी कृत्रिम बुद्धिमत्ता समाधान, Technology as a Service (TaaS) के रूप में प्रदान करते हैं।\n\nहमारी मुख्य सेवाएं:\n\n• Customer Experience Analytics.\n\n• Predictive Business Intelligence.\n\n• Marketing Performance Optimization.\n\n• Operations & Bottleneck Analysis.\n\n• Fraud Detection & Risk Management.\n\nजैसे ही आपके ग्राहक या नए Leads इस AI Business Card को अपने मोबाइल पर Tap करते हैं, आपकी संपर्क जानकारी तुरंत उनकी Contact List में सहेज दी जाती है।\n\nउसके बाद, यह AI Assistant आपकी कंपनी के बारे में उन्हें बताएगा।\n\nयह उनके सवालों का तुरंत जवाब देगा।\n\nआवश्यकता होने पर, यह उन्हें WhatsApp, Email या Booking के ज़रिए सीधे आपसे जुड़ने में भी मदद करेगा।\n\nअब, मैं आपकी क्या मदद कर सकता हूँ?",
+      },
       capabilities: ["lead_qualification", "appointment_booking", "product_qna"],
       escalation_threshold: 0.7,
       is_active: true,

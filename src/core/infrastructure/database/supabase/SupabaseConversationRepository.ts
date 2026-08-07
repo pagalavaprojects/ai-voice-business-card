@@ -17,7 +17,7 @@ function toIntOrNull(value: number | null | undefined): number | null {
 }
 
 export class SupabaseConversationRepository implements IConversationRepository {
-  async createConversation(companyId: string, employeeId: string, vapiCallId?: string): Promise<Conversation> {
+  async createConversation(companyId: string, employeeId: string, vapiCallId?: string, language?: string): Promise<Conversation> {
     const { data, error } = await supabaseAdmin
       .from("conversations")
       .insert({
@@ -26,6 +26,7 @@ export class SupabaseConversationRepository implements IConversationRepository {
         vapi_call_id: vapiCallId,
         status: "ACTIVE",
         started_at: new Date().toISOString(),
+        language: language || null,
       })
       .select()
       .single();
@@ -40,7 +41,7 @@ export class SupabaseConversationRepository implements IConversationRepository {
     return (data as Conversation) || null;
   }
 
-  async getOrCreateConversationByVapiCallId(companyId: string, employeeId: string, vapiCallId: string): Promise<Conversation> {
+  async getOrCreateConversationByVapiCallId(companyId: string, employeeId: string, vapiCallId: string, language?: string): Promise<Conversation> {
     const { data: existing, error: lookupError } = await supabaseAdmin
       .from("conversations")
       .select()
@@ -50,7 +51,7 @@ export class SupabaseConversationRepository implements IConversationRepository {
     if (lookupError) throw new Error(`getOrCreateConversationByVapiCallId failed: ${lookupError.message}`);
     if (existing) return existing as Conversation;
 
-    return this.createConversation(companyId, employeeId, vapiCallId);
+    return this.createConversation(companyId, employeeId, vapiCallId, language);
   }
 
   async appendToolCalled(id: string, toolName: string): Promise<Conversation> {

@@ -8,6 +8,15 @@ import { resolveVoiceProviderConfig } from "@/shared/lib/voice";
 import { resolvePublicBaseUrl } from "@/shared/lib/publicUrl";
 import { createWebhookToken } from "@/shared/lib/webhookToken";
 import { isEmployeeCardVisible } from "@/shared/lib/employeeVisibility";
+import {
+  resolveRequestLanguage,
+  resolveGreeting,
+  getLanguageDirective,
+  resolveSuggestedQuestions,
+  isSupportedLanguage,
+  DEFAULT_LANGUAGE,
+  getLanguageDefinition,
+} from "@/features/language/server";
 import QRCode from "qrcode";
 
 // Reads the session cookie and/or query params, so it can never be rendered
@@ -104,7 +113,20 @@ export async function GET(req: NextRequest, { params }: { params: { companyId: s
     const configuredBookingUrl = (settings?.calendar_settings as Record<string, unknown> | undefined)?.booking_url;
     const bookingUrl = typeof configuredBookingUrl === "string" && configuredBookingUrl.startsWith("http") ? configuredBookingUrl : null;
 
-    const [systemPrompt] = await Promise.all([
+    // No ?lang= at all (an older client, a direct API caller, this project's
+    // own webhook/tests) must behave byte-for-byte like before multilingual
+    // support existed — so it resolves to whatever the agent's greeting is
+    // already tagged as, not the platform's Tamil default. Only an EXPLICIT
+    // ?lang= choice (the visitor actually opening the language selector)
+    // engages real per-language resolution.
+    const langParam = req.nextUrl.searchParams.get("lang");
+    const language = langParam
+      ? resolveRequestLanguage(langParam)
+      : isSupportedLanguage(agent?.welcome_message_language)
+        ? agent!.welcome_message_language!
+        : DEFAULT_LANGUAGE;
+
+    const [systemPromptBase] = await Promise.all([
       promptAssemblyService.assembleSystemPrompt(companyId, employeeId).catch((err) => {
         Logger.warn("System prompt assembly failed, live call will run without one", {
           companyId,
@@ -114,6 +136,10 @@ export async function GET(req: NextRequest, { params }: { params: { companyId: s
         return null;
       }),
     ]);
+    // The language directive is appended, not cached with the base prompt —
+    // the assembled prompt itself is identical regardless of language, so
+    // there's no need to cache a variant per language, only to suffix it.
+    const systemPrompt = systemPromptBase ? systemPromptBase + getLanguageDirective(language) : systemPromptBase;
 
     // Vapi delivers tool-calls from its own cloud, so a localhost callback is
     // unreachable and every save_lead / book_appointment would silently never
@@ -129,6 +155,7 @@ export async function GET(req: NextRequest, { params }: { params: { companyId: s
     const webhookToken = createWebhookToken(companyId, employeeId);
     const serverUrl = publicBaseUrl
       ? `${publicBaseUrl}/api/vapi/webhook?companyId=${encodeURIComponent(companyId)}&employeeId=${encodeURIComponent(employeeId)}` +
+        `&lang=${encodeURIComponent(language)}` +
         (webhookToken ? `&token=${encodeURIComponent(webhookToken)}` : "")
       : undefined;
 
@@ -200,10 +227,11 @@ export async function GET(req: NextRequest, { params }: { params: { companyId: s
         cta: p.cta_label && p.cta_url ? { label: p.cta_label, url: p.cta_url } : null,
       })),
       // The visitor's opening problem is "what do I even ask a voice AI?".
-      // Reusing real FAQ questions gives concrete starting points that the
-      // assistant is provably able to answer, rather than invented prompts
-      // that might miss the knowledge base entirely.
-      suggestedQuestions: faqs.slice(0, 4).map((f) => f.question),
+      // Real FAQ questions (provably answerable) are used when the
+      // conversation language matches how they're authored; otherwise a
+      // curated, hand-translated fallback list ships per language — see
+      // resolveSuggestedQuestions.
+      suggestedQuestions: resolveSuggestedQuestions(language, faqs.slice(0, 4).map((f) => f.question)),
       socialLinks: employee.social_links ?? {},
       // Rendered server-side into an inline SVG so the QR library never
       // reaches the client bundle — the card is the first thing a visitor
@@ -212,7 +240,9 @@ export async function GET(req: NextRequest, { params }: { params: { companyId: s
       // Derived, not stored: a wa.me link needs the number stripped to digits.
       whatsappUrl: toWhatsappUrl(employee.phone),
       bookingUrl,
-      firstMessage: agent?.first_message?.trim() || DEFAULT_FIRST_MESSAGE,
+      firstMessage: langParam
+        ? resolveGreeting(agent, company, employee, language)
+        : agent?.first_message?.trim() || DEFAULT_FIRST_MESSAGE,
       systemPrompt,
       tools: serverUrl ? toolRegistry.getAllToolDefinitions() : [],
       toolsEnabled: Boolean(serverUrl),
@@ -220,6 +250,12 @@ export async function GET(req: NextRequest, { params }: { params: { companyId: s
       voiceId: voiceConfig.voiceId,
       voiceProvider: voiceConfig.provider,
       voiceModel: voiceConfig.model,
+      // Echoes back what was actually resolved (not just what was
+      // requested) — the effective language even when ?lang= was absent,
+      // and the Deepgram transcriber code the client should pass to
+      // useVapiSession for speech recognition to match.
+      language,
+      speechLocale: getLanguageDefinition(language).speechLocale,
     });
   } catch (err) {
     // Supabase unreachable/unconfigured (e.g. placeholder credentials) is

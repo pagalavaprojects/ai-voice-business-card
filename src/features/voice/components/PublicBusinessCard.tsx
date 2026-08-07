@@ -10,6 +10,9 @@ import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
 import { Dialog } from "@/shared/ui/dialog";
 import { downloadVCard, imageUrlToDataUri } from "@/features/voice/lib/vcard";
+import { useLanguage } from "@/features/language/hooks/useLanguage";
+import { LanguageSelector } from "@/features/language/components/LanguageSelector";
+import { getLanguageDefinition } from "@/features/language/config";
 
 interface PublicCardData {
   company: { name: string; website: string; logoUrl: string | null };
@@ -58,6 +61,8 @@ interface PublicCardData {
   voiceId?: string;
   voiceProvider?: "openai" | "11labs";
   voiceModel?: string;
+  language?: string;
+  speechLocale?: string;
 }
 
 function formatTimer(secs: number): string {
@@ -83,6 +88,8 @@ function initialsOf(name: string): string {
  * can never drift into two different card experiences.
  */
 export function PublicBusinessCard({ companyId, employeeId }: { companyId: string; employeeId: string }) {
+  const { language, setLanguage, t } = useLanguage();
+
   // No demo/fallback identity: a business card that silently renders someone
   // else's name and speaks their pitch is worse than one that admits it
   // couldn't load. Every field below comes from the database or nothing does.
@@ -92,9 +99,16 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
   const [qrOpen, setQrOpen] = useState(false);
   const [savingContact, setSavingContact] = useState(false);
 
+  // Refetches whenever the visitor's language changes (including the one
+  // extra fetch on first load once useLanguage resolves the real starting
+  // language past its synchronous Tamil default — a small, one-time,
+  // accepted cost for not having to coordinate two hooks' init timing) —
+  // ?lang= drives the server-resolved greeting, system-prompt language
+  // directive, and suggested questions all switching together.
   useEffect(() => {
     let cancelled = false;
-    fetch(`/api/public/${companyId}/${employeeId}`)
+    setCardLoading(true);
+    fetch(`/api/public/${companyId}/${employeeId}?lang=${encodeURIComponent(language)}`)
       .then(async (res) => {
         if (res.ok) return (await res.json()) as PublicCardData;
         throw new Error(res.status === 404 ? "notfound" : "unavailable");
@@ -115,7 +129,7 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
     return () => {
       cancelled = true;
     };
-  }, [companyId, employeeId]);
+  }, [companyId, employeeId, language]);
 
   const { voiceState, isMuted, messages, durationSeconds, error, isPlayingIntro, isDemoMode, startCall, endCall, toggleMute } = useVapiSession({
     companyId,
@@ -127,6 +141,7 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
     voiceId: card?.voiceId,
     voiceProvider: card?.voiceProvider,
     voiceModel: card?.voiceModel,
+    speechLocale: card?.speechLocale,
   });
 
   const isCallActive = voiceState !== "idle";
@@ -161,16 +176,33 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
   // otherwise leave every automated visit (including this project's own
   // e2e suite) stuck waiting on a live Vapi WebRTC handshake that only
   // exists to be interacted with by a human.
-  // Holds the `companyId:employeeId` this effect already auto-started a call
-  // for, rather than a plain boolean — so if this same component instance is
-  // ever reused for a different card (client-side navigation between two
-  // public cards without a full remount), the new identity is recognized as
-  // not-yet-attempted instead of being silently skipped because *some* card
-  // already auto-started once.
+  // Holds the `companyId:employeeId:language` this effect already
+  // auto-started a call for, rather than a plain boolean — so if this same
+  // component instance is ever reused for a different card (client-side
+  // navigation between two public cards without a full remount), OR the
+  // visitor switches language, the new identity is recognized as
+  // not-yet-attempted instead of being silently skipped because *some*
+  // identity already auto-started once. This is what makes a language
+  // switch auto-restart the call in the new language, reusing all of this
+  // effect's existing autoplay/demo-mode/automated-browser handling rather
+  // than duplicating it.
   const hasAutoAttemptedForRef = useRef<string | null>(null);
   const voiceStateRef = useRef(voiceState);
   const [hasAutoStartFailed, setHasAutoStartFailed] = useState(false);
-  const cardIdentity = `${companyId}:${employeeId}`;
+  const cardIdentity = `${companyId}:${employeeId}:${language}`;
+
+  // A language switch mid-call ends the current call rather than trying to
+  // hot-swap its transcriber/voice language — Vapi has no API for changing
+  // either on a live WebRTC session. Ending it here (before the auto-start
+  // effect below sees the new cardIdentity) is what lets that effect treat
+  // the language change exactly like a fresh page load in the new language.
+  const previousLanguageRef = useRef(language);
+  useEffect(() => {
+    if (previousLanguageRef.current !== language) {
+      previousLanguageRef.current = language;
+      if (voiceStateRef.current !== "idle") endCall();
+    }
+  }, [language, endCall]);
 
   useEffect(() => {
     voiceStateRef.current = voiceState;
@@ -178,7 +210,15 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
 
   useEffect(() => {
     const isAutomatedBrowser = typeof navigator !== "undefined" && navigator.webdriver === true;
-    if (!card || isDemoMode || isAutomatedBrowser || hasAutoAttemptedForRef.current === cardIdentity) return;
+    // cardLoading specifically (not just !card): a language switch keeps the
+    // previous (now stale) card object in state while the new-language
+    // fetch is in flight, only replacing it once that resolves — without
+    // this check, cardIdentity already reflects the new language the
+    // instant it changes, and this effect would immediately auto-start a
+    // call using the OLD language's firstMessage/systemPrompt/speechLocale,
+    // then never get a second chance to restart once the right data
+    // actually arrives (hasAutoAttemptedForRef would already be set).
+    if (!card || cardLoading || isDemoMode || isAutomatedBrowser || hasAutoAttemptedForRef.current === cardIdentity) return;
     hasAutoAttemptedForRef.current = cardIdentity;
 
     startCall();
@@ -205,7 +245,7 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
     // whenever `card` changes (including the companyId/employeeId-keyed
     // fetch's null -> loaded transition on a card switch).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [card, cardIdentity]);
+  }, [card, cardLoading, cardIdentity]);
 
   // A real tap always clears the fallback prompt, whether or not this
   // particular call succeeds — the point was only to stop suggesting a tap
@@ -229,14 +269,19 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
   // later reply). "Available now" is a distinct resting state for when
   // there is no active call at all — none of the six above apply then.
   const statusLabel = useMemo(() => {
-    if (voiceState === "idle") return "Available now";
-    if (voiceState === "connecting") return "Preparing Voice…";
-    if (voiceState === "speaking") return isPlayingIntro ? "Playing Introduction…" : "Speaking…";
-    if (voiceState === "thinking") return "Thinking…";
-    return "Listening…";
-  }, [voiceState, isPlayingIntro]);
+    if (voiceState === "idle") return t("status.availableNow");
+    if (voiceState === "connecting") return t("status.preparingVoice");
+    if (voiceState === "speaking") return isPlayingIntro ? t("status.playingIntroduction") : t("status.speaking");
+    if (voiceState === "thinking") return t("status.thinking");
+    return t("status.listening");
+  }, [voiceState, isPlayingIntro, t]);
 
   if (cardLoading) {
+    // Kept static/language-neutral rather than routed through t(): this can
+    // render before the language bundle (or even the visitor's detected
+    // language) has resolved, and a raw translation key flashing on screen
+    // would look broken. A bare spinner at this stage is a reasonable,
+    // deliberate scoping call, not an oversight.
     return (
       <main className="min-h-screen bg-[#070b12] flex items-center justify-center p-4">
         <div role="status" aria-live="polite" className="flex flex-col items-center gap-3">
@@ -252,12 +297,10 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
       <main className="min-h-screen bg-[#070b12] flex items-center justify-center p-4">
         <Card className="glass-panel border-white/[0.08] p-8 rounded-3xl max-w-sm text-center space-y-3">
           <h1 className="text-lg font-bold text-slate-100">
-            {loadError === "notfound" ? "Business card not found" : "Card temporarily unavailable"}
+            {loadError === "notfound" ? t("cardNotFound") : t("cardUnavailable")}
           </h1>
           <p className="text-xs text-slate-400">
-            {loadError === "notfound"
-              ? "This link doesn't match an active business card. Please check the QR code or link and try again."
-              : "We couldn't load this business card right now. Please try again in a moment."}
+            {loadError === "notfound" ? t("cardNotFoundBody") : t("cardUnavailableBody")}
           </p>
         </Card>
       </main>
@@ -281,7 +324,12 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
   };
 
   return (
-    <main className="min-h-screen bg-[#070b12] text-slate-100 py-6 px-4 sm:py-10">
+    // lang + dir on the document root of this card's own content: the
+    // visitor's chosen language, and the RTL flag ready for a future
+    // Arabic/Hebrew addition — every string below already flows through
+    // t(), so an RTL language needs no further code change here, only its
+    // own locale file and this flag flipping true for it.
+    <main lang={language} dir={getLanguageDefinition(language).isRtl ? "rtl" : "ltr"} className="min-h-screen bg-[#070b12] text-slate-100 py-6 px-4 sm:py-10">
       <div className="fixed inset-0 pointer-events-none overflow-hidden" aria-hidden="true">
         <div className="absolute -top-24 left-1/2 -translate-x-1/2 w-[34rem] h-[34rem] bg-sky-500/10 blur-[140px] rounded-full" />
         <div className="absolute bottom-0 right-0 w-96 h-96 bg-indigo-500/[0.07] blur-[130px] rounded-full" />
@@ -289,7 +337,14 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
 
       <div className="relative z-10 w-full max-w-lg mx-auto space-y-4 motion-safe:animate-[card-rise_0.5s_ease-out]">
         {/* ---------- Identity ---------- */}
-        <Card className="glass-panel border-white/[0.08] shadow-2xl rounded-3xl p-6 sm:p-8 space-y-6">
+        <Card className="relative glass-panel border-white/[0.08] shadow-2xl rounded-3xl p-6 sm:p-8 space-y-6">
+          <LanguageSelector
+            language={language}
+            onChange={setLanguage}
+            label={t("aria.chooseLanguage")}
+            className="absolute right-4 top-4 sm:right-5 sm:top-5"
+          />
+
           {company.logoUrl ? (
             // Most uploaded brand marks (this one included) are designed for a
             // light background — dark wordmark text, no transparency — and go
@@ -364,7 +419,7 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
               {durationSeconds > 0 && (
                 <span
                   className="text-xs font-mono text-slate-300 font-semibold tabular-nums"
-                  aria-label={`Call duration ${formatTimer(durationSeconds)}`}
+                  aria-label={t("aria.callDuration", { duration: formatTimer(durationSeconds) })}
                 >
                   {formatTimer(durationSeconds)}
                 </span>
@@ -382,33 +437,46 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
               // interactive but does nothing, or that could end the intro
               // early by racing the End Call action against it.
               disabled={isPlayingIntro}
+              ariaLabels={{
+                idle: t("aria.startCall"),
+                connecting: t("aria.connecting"),
+                listening: t("aria.listening"),
+                speaking: t("aria.speaking"),
+                thinking: t("aria.thinking"),
+                disabled: t("aria.introPlaying"),
+              }}
             />
 
             <p className="text-sm text-slate-200 text-center font-semibold mt-4">
               {isPlayingIntro
-                ? "Playing Introduction…"
+                ? t("status.playingIntroduction")
                 : voiceState === "connecting"
-                  ? "Preparing Voice…"
+                  ? t("status.preparingVoice")
                   : isCallActive
-                    ? "Tap to Speak"
+                    ? t("mic.tapToSpeak")
                     : hasAutoStartFailed
-                      ? "Tap to begin"
-                      : `Talk with ${employee.name.split(" ")[0]}'s AI`}
+                      ? t("mic.tapToBegin")
+                      : t("mic.talkWithAI", { name: employee.name.split(" ")[0] })}
             </p>
             <p className="text-xs text-slate-400 text-center mt-1 max-w-xs">
               {isPlayingIntro
-                ? "Please wait for the introduction to finish — the microphone opens automatically right after."
+                ? t("mic.introHelper")
                 : voiceState === "connecting"
-                  ? "Setting up a secure voice connection…"
+                  ? t("mic.connectingHelper")
                   : voiceState === "thinking"
-                    ? "Working on your answer…"
+                    ? t("mic.thinkingHelper")
                     : voiceState === "speaking"
-                      ? "Responses stream in real time."
+                      ? t("mic.speakingHelper")
                       : voiceState === "listening"
-                        ? "Speak naturally — I'm listening. Tap the microphone to end."
+                        ? // Exactly once per call — the moment the mic first opens
+                          // (no messages yet) — before settling into the more
+                          // detailed ongoing-conversation helper text below.
+                          messages.length === 0
+                          ? t("mic.nowYouCanAsk")
+                          : t("mic.listeningHelper")
                         : hasAutoStartFailed
-                          ? "Your browser needs a tap before it will turn on the microphone."
-                          : "Ask anything about what we do. Your browser will ask for microphone access."}
+                          ? t("mic.tapRequiredHelper")
+                          : t("mic.idleHelper")}
             </p>
 
             {error && (
@@ -428,11 +496,11 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
                     invite a tap that fights it. */}
                 {!isPlayingIntro && (
                   <Button variant="outline" size="sm" onClick={toggleMute} className="text-xs">
-                    {isMuted ? "Unmute" : "Mute"}
+                    {isMuted ? t("buttons.unmute") : t("buttons.mute")}
                   </Button>
                 )}
                 <Button variant="outline" size="sm" onClick={endCall} className="text-xs">
-                  End call
+                  {t("buttons.endCall")}
                 </Button>
               </div>
             )}
@@ -442,7 +510,7 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
           {!isCallActive && card.suggestedQuestions && card.suggestedQuestions.length > 0 && (
             <section aria-labelledby="try-asking" className="border-t border-white/[0.06] pt-4">
               <h2 id="try-asking" className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-2.5">
-                Try asking
+                {t("sections.tryAsking")}
               </h2>
               <ul className="space-y-1.5">
                 {card.suggestedQuestions.map((q) => (
@@ -470,7 +538,7 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
         {card.services && card.services.length > 0 && (
           <Card className="glass-panel border-white/[0.08] rounded-3xl p-6" aria-labelledby="services-heading">
             <h2 id="services-heading" className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-3">
-              What we do
+              {t("sections.whatWeDo")}
             </h2>
             <ul className="space-y-4">
               {card.services.map((s) => (
@@ -490,7 +558,7 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
                       {s.name}
                       {s.featured && (
                         <span className="ml-2 text-[9px] uppercase tracking-wide text-amber-300 bg-amber-400/10 border border-amber-400/25 rounded-full px-1.5 py-0.5 align-middle">
-                          Featured
+                          {t("sections.featured")}
                         </span>
                       )}
                     </p>
@@ -533,7 +601,7 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
         {card.products && card.products.length > 0 && (
           <Card className="glass-panel border-white/[0.08] rounded-3xl p-6" aria-labelledby="products-heading">
             <h2 id="products-heading" className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-3">
-              Products
+              {t("sections.products")}
             </h2>
             <ul className="space-y-4">
               {card.products.map((p) => (
@@ -598,7 +666,7 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
               className="w-full flex items-center justify-center gap-2 text-xs"
             >
               <Calendar className="h-4 w-4" aria-hidden="true" />
-              Book a meeting
+              {t("buttons.bookMeeting")}
             </Button>
           )}
 
@@ -624,7 +692,7 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
               className="w-full flex items-center justify-center gap-2 text-xs"
             >
               {savingContact ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Download className="h-4 w-4" aria-hidden="true" />}
-              Save contact
+              {t("buttons.saveContact")}
             </Button>
             <Button
               variant="glass"
@@ -633,7 +701,7 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
               className="w-full flex items-center justify-center gap-2 text-xs"
             >
               <QrCode className="h-4 w-4" aria-hidden="true" />
-              Share QR
+              {t("buttons.shareQR")}
             </Button>
           </div>
 
@@ -645,7 +713,7 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
             )}
             {linkedIn && <ContactLink href={linkedIn} icon={<Linkedin className="h-3.5 w-3.5" />} label="LinkedIn" external />}
             {company.website && (
-              <ContactLink href={company.website} icon={<Globe className="h-3.5 w-3.5" />} label="Website" external />
+              <ContactLink href={company.website} icon={<Globe className="h-3.5 w-3.5" />} label={t("contact.website")} external />
             )}
             {otherLinks.map(([label, url]) => (
               <ContactLink key={label} href={url} icon={<Link2 className="h-3.5 w-3.5" />} label={label} external />
@@ -656,7 +724,7 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
         <p className="text-center text-[11px] text-slate-400 font-mono pb-4">AI Integrated. Growth Automated.</p>
       </div>
 
-      <Dialog open={qrOpen} onClose={() => setQrOpen(false)} title="Scan to open this card" size="sm">
+      <Dialog open={qrOpen} onClose={() => setQrOpen(false)} title={t("qr.title")} size="sm">
         <div className="flex flex-col items-center gap-4">
           {card.qrSvg && (
             <div
@@ -666,10 +734,10 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
               dangerouslySetInnerHTML={{ __html: card.qrSvg }}
             />
           )}
-          <p className="text-xs text-slate-400 text-center">Point a phone camera here to open {employee.name}&apos;s AI business card.</p>
+          <p className="text-xs text-slate-400 text-center">{t("qr.instructions", { name: employee.name })}</p>
           <Button variant="outline" size="sm" onClick={() => setQrOpen(false)} className="text-xs">
             <X className="h-3.5 w-3.5 mr-1.5" aria-hidden="true" />
-            Close
+            {t("buttons.close")}
           </Button>
         </div>
       </Dialog>

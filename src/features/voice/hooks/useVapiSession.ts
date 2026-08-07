@@ -46,6 +46,12 @@ export interface UseVapiSessionOptions {
    * (webhook route) can never disagree about which provider is active. */
   voiceProvider?: "openai" | "11labs";
   voiceModel?: string;
+  /** Deepgram transcriber language code for the visitor's chosen
+   * conversation language (e.g. "ta", "en", "hi") — confirmed supported
+   * directly by Vapi's Deepgram transcriber, not assumed. Omitted entirely
+   * when unset, which keeps Vapi's own default (English) transcriber
+   * behavior for any caller that hasn't opted into multilingual support. */
+  speechLocale?: string;
 }
 
 export function useVapiSession({
@@ -59,6 +65,7 @@ export function useVapiSession({
   voiceProvider,
   voiceModel,
   serverUrl,
+  speechLocale,
 }: UseVapiSessionOptions) {
   const [voiceState, setVoiceState] = useState<VoiceState>("idle");
   const [isMuted, setIsMuted] = useState(false);
@@ -416,6 +423,13 @@ export function useVapiSession({
           voiceProvider === "11labs" && voiceId
             ? { provider: "11labs" as const, voiceId, model: (voiceModel || "eleven_multilingual_v2") as "eleven_multilingual_v2" }
             : { provider: "openai" as const, voiceId: voiceId || DEFAULT_VOICE_ID, model: "tts-1-hd" as const },
+        // Switches speech recognition to the visitor's chosen conversation
+        // language — confirmed against the installed @vapi-ai/web SDK's own
+        // DeepgramTranscriber type that 'ta' and 'hi' are directly supported
+        // language codes, not assumed or guessed. Omitted when unset so a
+        // caller that never opts into multilingual support keeps Vapi's own
+        // default transcriber behavior exactly as before.
+        ...(speechLocale ? { transcriber: { provider: "deepgram" as const, language: speechLocale } } : {}),
         // Routes tool-calls and the end-of-call report back to our
         // webhook for this specific company/employee during the call.
         ...(serverUrl ? { server: { url: serverUrl } } : {}),
@@ -429,7 +443,7 @@ export function useVapiSession({
       setVoiceState("idle");
       stopTimer();
     }
-  }, [voiceState, startTimer, stopTimer, firstMessage, systemPrompt, tools, serverUrl, voiceId, voiceProvider, voiceModel, clearDemoTimeouts]);
+  }, [voiceState, startTimer, stopTimer, firstMessage, systemPrompt, tools, serverUrl, voiceId, voiceProvider, voiceModel, speechLocale, clearDemoTimeouts]);
 
   // Always call the latest startCall from the stable error handler
   // registered once inside the init effect (see reconnect logic above).

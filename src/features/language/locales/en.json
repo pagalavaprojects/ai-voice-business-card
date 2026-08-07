@@ -1,0 +1,65 @@
+{
+  "loading": "Loading…",
+  "cardNotFound": "Business card not found",
+  "cardNotFoundBody": "This link doesn't match an active business card. Please check the QR code or link and try again.",
+  "cardUnavailable": "Card temporarily unavailable",
+  "cardUnavailableBody": "We couldn't load this business card right now. Please try again in a moment.",
+  "status": {
+    "availableNow": "Available now",
+    "preparingVoice": "Preparing Voice…",
+    "playingIntroduction": "Playing Introduction…",
+    "speaking": "Speaking…",
+    "thinking": "Thinking…",
+    "listening": "Listening…"
+  },
+  "mic": {
+    "talkWithAI": "Talk with {name}'s AI",
+    "tapToBegin": "Tap to begin",
+    "tapToSpeak": "Tap to Speak",
+    "introHelper": "Please wait for the introduction to finish — the microphone opens automatically right after.",
+    "connectingHelper": "Setting up a secure voice connection…",
+    "thinkingHelper": "Working on your answer…",
+    "speakingHelper": "Responses stream in real time.",
+    "listeningHelper": "Speak naturally — I'm listening. Tap the microphone to end.",
+    "tapRequiredHelper": "Your browser needs a tap before it will turn on the microphone.",
+    "idleHelper": "Ask anything about what we do. Your browser will ask for microphone access.",
+    "nowYouCanAsk": "Now you can ask your questions"
+  },
+  "buttons": {
+    "mute": "Mute",
+    "unmute": "Unmute",
+    "endCall": "End call",
+    "bookMeeting": "Book a meeting",
+    "saveContact": "Save contact",
+    "shareQR": "Share QR",
+    "close": "Close"
+  },
+  "sections": {
+    "tryAsking": "Try asking",
+    "whatWeDo": "What we do",
+    "products": "Products",
+    "featured": "Featured"
+  },
+  "contact": {
+    "website": "Website"
+  },
+  "qr": {
+    "title": "Scan to open this card",
+    "instructions": "Point a phone camera here to open {name}'s AI business card."
+  },
+  "aria": {
+    "callDuration": "Call duration {duration}",
+    "startCall": "Start voice conversation with AI Twin",
+    "introPlaying": "Playing introduction — please wait",
+    "connecting": "Connecting to AI Twin, please wait",
+    "listening": "AI Twin is listening — speak now",
+    "speaking": "AI Twin is speaking",
+    "thinking": "AI Twin is processing your message",
+    "chooseLanguage": "Choose conversation language"
+  },
+  "suggestedQuestions": [
+    "What services do you offer?",
+    "How can AI reduce costs?",
+    "Can I schedule a demo?"
+  ]
+}
