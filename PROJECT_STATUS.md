@@ -893,6 +893,81 @@ configured — exactly the honest answer, not a fake one.
 
 ---
 
+### Phase 15 — Multilingual QA fixes + founder contact info update
+
+**Critical bug found and fixed**: switching language (via the pre-call gate
+or the header selector) silently reverted to English. Root cause: the
+card-fetch `useEffect` compared each response's `language` field against the
+live `language` state to detect company-side clamping — but a fast switch
+could let an OLDER, now-superseded fetch's response resolve after the state
+had already moved on, and that stale response's `language` (still the old
+value) no longer matched the new state, so the effect "corrected" the switch
+right back to what the stale fetch had originally requested. Fixed by
+comparing each fetch's response only against the language *that specific
+fetch itself requested* (`PublicBusinessCard.tsx`). Verified end-to-end with
+a standalone Playwright script driving a real browser through the full
+gate → Tamil selection → rendered card flow.
+
+**Localization gaps closed**: `LanguageGate` (the language-picker screen
+itself was English-only — the exact irony this audit exists to catch),
+`TranscriptViewer`, `AppointmentModal`'s entire booking flow, and
+`useVapiSession`'s fallback strings (demo greeting, connection/start-call
+errors) now all route through `t()`. Added `appointment.*`, `gate.*`,
+`transcript.*`, and a `tagline` key across all 6 locale files; fixed two
+`LocaleBundle` type gaps (`buttons.contactSaved`, `sections.actionsHeading`)
+that were already used in the JSON but missing from the TypeScript
+interface. Booking-confirmation emails are now localized per visitor
+language too (`language` threaded through the public booking route and the
+Vapi webhook's tool-call context into `ToolRegistry`'s `book_appointment`),
+instead of always English regardless of who booked. `VoiceMicButton`'s
+`ariaLabels` prop is now required, not defaulted to hardcoded English.
+
+**Voice quality**: not independently re-verified by ear this phase (no
+audio playback in this environment, per earlier phases) — Telugu/Malayalam
+speech recognition remains unconfirmed in production (Deepgram has no
+Telugu/Malayalam support; the Azure Speech fallback exists in code but is
+env-gated off, per Phase 14's research). This is an external-provider
+limitation, not something fixable in this repo.
+
+**Test suite**: `e2e/multilingual.spec.ts` (new) drives a real Chromium
+browser through all 6 languages — leaked-key detection, WCAG 2.1 AA,
+localStorage persistence, header-selector switching, browser Back, and the
+booking modal. Discovered and fixed a second bug along the way: the spec's
+own "card finished loading" signal was an English-only aria-label/button-text
+match, which only ever "worked" because the language-switch bug above meant
+non-English selections silently stayed in English. Fixed by adding stable
+`data-testid`s (`voice-mic-button`, `book-meeting-button`) instead of
+matching translated text. Full runs are 17–20/20 green depending on local
+system load — remaining flakes are timeout races under 8-parallel-worker
+load on this dev machine, not reproduced as functional failures in any
+single-test or manual check; worth re-running in a cleaner CI environment
+before treating as fully proven.
+
+**Founder contact info updated**: phone/WhatsApp were placeholder data
+(`+1 (555) 010-4477`); email was already correct. Replaced with
+`+91 94431 25639` in seed data and vCard tests. WhatsApp is derived from
+phone (`wa.me` digits-only), so it now resolves to `wa.me/919443125639`
+automatically. Fixed the public card's `tel:` link, which previously
+embedded the phone's display formatting (spaces) directly in the URI, to
+strip to `tel:+919443125639`. Verified live: API response, rendered `tel:`/
+`mailto:`/WhatsApp hrefs, and the downloaded vCard's `TEL`/`EMAIL` lines all
+checked via a real browser session.
+
+Full gate suite green: tsc, lint, 310 unit/integration tests (1 pre-existing
+skip), production build. Two commits, not yet pushed.
+
+**Same concurrent-modification situation as Phase 14** (§4, Phase 14 note):
+`globals.css`, `layout.tsx`, `robots.ts`, `sitemap.ts`, `Sidebar.tsx`,
+`LanguageSelector.tsx`, `cardMetadata.ts`, `logger.ts`, and `next.config.mjs`
+all changed further during this session without this phase touching them,
+alongside continued growth of the untracked Enterprise CMS module. One
+genuine bug from that concurrent activity was caught and fixed in passing:
+`PublicBusinessCard.tsx` had three `useMemo` calls placed after conditional
+early returns — a real Rules of Hooks violation ESLint caught. Only files
+this phase actually intended to change were staged and committed.
+
+---
+
 ## 5. Recurring theme
 
 The defects that mattered most were not crashes. They were **things that
