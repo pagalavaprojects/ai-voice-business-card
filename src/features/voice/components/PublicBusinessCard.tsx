@@ -11,6 +11,7 @@ import { Button } from "@/shared/ui/button";
 import { Dialog } from "@/shared/ui/dialog";
 import { downloadVCard, imageUrlToDataUri } from "@/features/voice/lib/vcard";
 import { speakPitchWithBrowserTts, stopBrowserTts } from "@/features/voice/lib/pitchFallback";
+import { DEMO_COMPANY_ID } from "@/shared/lib/demoCard";
 import { useLanguage } from "@/features/language/hooks/useLanguage";
 import { LanguageSelector } from "@/features/language/components/LanguageSelector";
 import { LanguageGate } from "@/features/language/components/LanguageGate";
@@ -706,7 +707,11 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
             <div className="grid grid-cols-3 gap-2">
               {(
                 [
-                  { type: "elevator" as const, label: t("pitch.elevator"), duration: "30s" },
+                  // Pagalava's authored Tamil elevator script (see
+                  // pitchScripts.ts) runs ~90s; every other card/language
+                  // keeps the ~30s composed script, so the chip must not
+                  // change for them.
+                  { type: "elevator" as const, label: t("pitch.elevator"), duration: language === "ta" && companyId === DEMO_COMPANY_ID ? "90s" : "30s" },
                   { type: "product" as const, label: t("pitch.product"), duration: "40s" },
                   { type: "usp" as const, label: t("pitch.usp"), duration: "5s" },
                 ]
