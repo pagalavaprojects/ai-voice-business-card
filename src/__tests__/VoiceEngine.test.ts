@@ -253,6 +253,36 @@ describe("VoiceEngine Tool Execution & Registry", () => {
     expect(call.cold_reason).toBe("NEED_UNCLEAR");
   });
 
+  it("update_lead_qualification preserves the existing has_need signal when a later call omits it entirely", async () => {
+    // Second-stage call refining decision_maker only — has_need is not part
+    // of this tool call's args at all (not even explicitly false), unlike
+    // the test above. The lead already has a problem_statement on file from
+    // save_lead, so hasNeed must still be inferred true and keep
+    // contributing its +30, rather than silently reverting to "unknown".
+    mockCrmRepo.getLeadById.mockResolvedValue({
+      id: "lead-6",
+      company_id: "comp-1",
+      employee_id: "emp-1",
+      name: "Returning Lead",
+      email: "returning@example.com",
+      phone: "+15550006666",
+      problem_statement: "Needs a voice AI for lead intake",
+      tags: [],
+      created_at: "",
+      updated_at: "",
+    } as never);
+    mockCrmRepo.updateLeadQualification.mockResolvedValue({} as never);
+
+    const tool = toolRegistry.getTool("update_lead_qualification")!;
+    await tool.execute({ lead_id: "lead-6", decision_maker: "yes" }, { companyId: "comp-1", employeeId: "emp-1" });
+
+    const call = mockCrmRepo.updateLeadQualification.mock.calls[0][1] as Record<string, unknown>;
+    // +30 (need) + 10 (decision_maker yes) = 40 — only reachable if hasNeed
+    // survived being merged from problem_statement, not dropped to undefined.
+    expect(call.score).toBe(40);
+    expect(call.decision_maker).toBe("yes");
+  });
+
   it("update_lead_qualification drops a hallucinated enum value instead of persisting or crashing", async () => {
     mockCrmRepo.getLeadById.mockResolvedValue({
       id: "lead-4",

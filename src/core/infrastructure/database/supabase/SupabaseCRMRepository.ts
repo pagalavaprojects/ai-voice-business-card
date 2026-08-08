@@ -2,9 +2,45 @@ import { ICRMRepository, LeadFilter } from "@/core/domain/repositories/ICRMRepos
 import { Lead, CreateLeadSchema, LeadScoreCategory, LeadStatus, LeadActivity } from "@/core/domain/models/types";
 import { supabaseAdmin } from "@/shared/lib/supabase";
 import { isPlaceholderCredential } from "@/shared/lib/security";
+import { Logger } from "@/shared/lib/logger";
 import { z } from "zod";
 
 const SUPABASE_UNCONFIGURED = isPlaceholderCredential(process.env.NEXT_PUBLIC_SUPABASE_URL);
+
+/** Columns added by the 20260812 lead-qualification-engine migration. Kept as
+ * an explicit list (not derived from the Lead type) so updateLeadQualification
+ * can strip exactly these — and only these — when the migration hasn't been
+ * applied to the connected database yet. */
+const QUALIFICATION_ENGINE_COLUMNS = new Set<string>([
+  "current_solution",
+  "decision_maker",
+  "urgency",
+  "buying_intent",
+  "objections",
+  "referral_source",
+  "sentiment",
+  "qualification_confidence",
+  "conversation_summary",
+  "qualification_notes",
+  "lead_temperature",
+  "cold_reason",
+  "nurture_status",
+  "nurture_channel_recommended",
+  "next_followup_date",
+]);
+
+/** PostgREST rejects an entire `.update()` payload if ANY key doesn't match a
+ * known column — it validates against its schema cache before ever reaching
+ * Postgres, so this fails atomically rather than partially applying. It
+ * reports this as `PGRST204` ("Could not find the '<col>' column ... in the
+ * schema cache"); the raw Postgres `42703` (undefined_column) is matched too
+ * in case a request reaches Postgres directly instead of through PostgREST's
+ * cache check. */
+function isMissingColumnError(error: { code?: string; message?: string }): boolean {
+  if (error.code === "PGRST204" || error.code === "42703") return true;
+  const message = error.message?.toLowerCase() ?? "";
+  return message.includes("schema cache") || message.includes("does not exist");
+}
 
 export class SupabaseCRMRepository implements ICRMRepository {
   async createLead(data: z.infer<typeof CreateLeadSchema>): Promise<Lead> {
@@ -103,10 +139,37 @@ export class SupabaseCRMRepository implements ICRMRepository {
     return lead as Lead;
   }
 
+  /** The qualification engine's patch always includes core, pre-existing
+   * columns (score, status, ...) alongside the 15 columns the 20260812
+   * migration adds. If that migration hasn't reached this database yet,
+   * PostgREST rejects the whole update — without this fallback, every
+   * save_lead/update_lead_qualification call would throw, breaking lead
+   * capture entirely rather than just degrading qualification. Retrying with
+   * the qualification-only keys stripped keeps the core lead record (and the
+   * visitor's contact details) saving correctly either way. */
   async updateLeadQualification(id: string, patch: Partial<Lead>): Promise<Lead> {
     const { data: lead, error } = await supabaseAdmin.from("leads").update(patch).eq("id", id).select().single();
-    if (error) throw new Error(`SupabaseCRMRepository.updateLeadQualification failed: ${error.message}`);
-    return lead as Lead;
+    if (!error) return lead as Lead;
+
+    if (!isMissingColumnError(error)) {
+      throw new Error(`SupabaseCRMRepository.updateLeadQualification failed: ${error.message}`);
+    }
+
+    const safePatch = Object.fromEntries(
+      Object.entries(patch).filter(([key]) => !QUALIFICATION_ENGINE_COLUMNS.has(key))
+    );
+    Logger.warn("Lead qualification columns missing (migration not applied yet) — saving core fields only", {
+      leadId: id,
+      droppedKeys: Object.keys(patch).filter((key) => QUALIFICATION_ENGINE_COLUMNS.has(key)),
+    });
+    const { data: fallbackLead, error: fallbackError } = await supabaseAdmin
+      .from("leads")
+      .update(safePatch)
+      .eq("id", id)
+      .select()
+      .single();
+    if (fallbackError) throw new Error(`SupabaseCRMRepository.updateLeadQualification failed: ${fallbackError.message}`);
+    return fallbackLead as Lead;
   }
 
   async updateLeadStatus(id: string, status: Lead["status"], actorUserId?: string): Promise<Lead> {

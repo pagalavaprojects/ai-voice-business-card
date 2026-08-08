@@ -1021,7 +1021,7 @@ stale.
   now explicitly instruct the AI never to speak a score, temperature, or
   internal label to the visitor — these exist for the AI's own reasoning
   only.
-- New migration `20260812_lead_qualification_engine.sql`: 14 columns on
+- New migration `20260812_lead_qualification_engine.sql`: 15 columns on
   `leads` (`decision_maker`, `urgency`, `buying_intent`, `objections`,
   `current_solution`, `referral_source`, `sentiment`,
   `qualification_confidence`, `conversation_summary`, `qualification_notes`,
