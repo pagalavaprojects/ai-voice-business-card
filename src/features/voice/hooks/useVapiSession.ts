@@ -381,11 +381,15 @@ export function useVapiSession({
     };
   }, []);
 
-  const startCall = useCallback(async () => {
+  const startCall = useCallback(async (overrides?: { firstMessage?: string }) => {
     // Only one active session at a time — guards against a double-invoke
     // (a rapid double-tap, or the auto-start effect racing a manual tap
     // before its own guard ref has committed).
     if (voiceState !== "idle") return;
+    // Per-call opening line: the booking flow's qualification call speaks
+    // the authored qualification intro instead of the card greeting; a plain
+    // mic tap keeps the normal greeting.
+    const effectiveFirstMessage = overrides?.firstMessage || firstMessage;
 
     setError(null);
 
@@ -405,7 +409,7 @@ export function useVapiSession({
         setMessages([
           {
             role: "assistant",
-            content: firstMessage || defaultFirstMessage,
+            content: effectiveFirstMessage || defaultFirstMessage,
           },
         ]);
         const listeningTimeout = setTimeout(() => {
@@ -427,7 +431,7 @@ export function useVapiSession({
       setVoiceState("connecting");
 
       const assistantConfig = {
-        firstMessage: firstMessage || defaultFirstMessage,
+        firstMessage: effectiveFirstMessage || defaultFirstMessage,
         // Explicitly false (Vapi's own default): the scripted opening must
         // play to completion, uninterrupted, like a professional
         // receptionist's fixed announcement — a deliberate reversal of an

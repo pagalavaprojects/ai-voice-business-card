@@ -123,14 +123,14 @@
     "preferredTimeLabel": "Preferred time:",
     "done": "Done",
     "stepQualify": "Qualify",
-    "qualifyTitle": "A quick word with the AI first",
-    "qualifyIntro": "Before you pick a time, {employeeName}'s AI will ask a few quick questions by voice so the meeting is a great fit. You can skip this at any point.",
-    "qualifyStart": "Start voice qualification",
-    "qualifySkip": "Skip and pick a time instead",
+    "qualifyTitle": "Let's understand your needs",
+    "qualifyIntro": "A few quick questions so we can understand whether we're a good fit. You can skip at any point.",
+    "qualifyStart": "Start AI Qualification",
+    "qualifySkip": "Skip and choose a time",
     "qualifyInProgress": "Answer naturally — the AI is listening and will guide you.",
     "qualifyDoneCold": "Thanks — that's everything we need. Let's pick your time.",
     "qualifyDoneWarm": "Great fit so far! Keep talking to answer a couple more questions, or continue to pick your time now.",
-    "qualifyContinue": "Continue to choose a time"
+    "qualifyContinue": "Continue"
   },
   "gate": {
     "title": "Choose your preferred language",

@@ -12,6 +12,7 @@ import { Dialog } from "@/shared/ui/dialog";
 import { downloadVCard, imageUrlToDataUri } from "@/features/voice/lib/vcard";
 import { speakPitchWithBrowserTts, stopBrowserTts, pauseBrowserTts, resumeBrowserTts } from "@/features/voice/lib/pitchFallback";
 import { DEMO_COMPANY_ID } from "@/shared/lib/demoCard";
+import { TAMIL_QUALIFICATION_INTRO } from "@/features/voice/lib/qualificationScript";
 import { useLanguage } from "@/features/language/hooks/useLanguage";
 import { LanguageSelector } from "@/features/language/components/LanguageSelector";
 import { LanguageGate } from "@/features/language/components/LanguageGate";
@@ -994,7 +995,15 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
         externalBookingUrl={card.bookingUrl}
         language={language}
         t={t}
-        voice={{ voiceState, callId, startCall, endCall }}
+        voice={{
+          voiceState,
+          callId,
+          // The qualification call opens with the authored Tamil intro (for
+          // Tamil sessions) instead of the card greeting; other languages
+          // keep their greeting. The mic button elsewhere is unaffected.
+          startCall: () => startCall(language === "ta" ? { firstMessage: TAMIL_QUALIFICATION_INTRO } : undefined),
+          endCall,
+        }}
       />
     </main>
   );

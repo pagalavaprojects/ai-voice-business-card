@@ -21,6 +21,7 @@ import {
   isSupportedLanguage,
   DEFAULT_LANGUAGE,
 } from "@/features/language/server";
+import { getTamilQualificationDirective } from "@/features/voice/lib/qualificationScript";
 import QRCode from "qrcode";
 
 // Reads the session cookie and/or query params, so it can never be rendered
@@ -162,7 +163,12 @@ export async function GET(req: NextRequest, { params }: { params: { companyId: s
     // The language directive is appended, not cached with the base prompt —
     // the assembled prompt itself is identical regardless of language, so
     // there's no need to cache a variant per language, only to suffix it.
-    const systemPrompt = systemPromptBase ? systemPromptBase + getLanguageDirective(language) : systemPromptBase;
+    // Tamil sessions additionally carry the founder-authored qualification
+    // script (exact questions, exact order) — layered on top of the
+    // existing sales/booking modules, not replacing them.
+    const systemPrompt = systemPromptBase
+      ? systemPromptBase + getLanguageDirective(language) + (language === "ta" ? getTamilQualificationDirective() : "")
+      : systemPromptBase;
 
     // Vapi delivers tool-calls from its own cloud, so a localhost callback is
     // unreachable and every save_lead / book_appointment would silently never
