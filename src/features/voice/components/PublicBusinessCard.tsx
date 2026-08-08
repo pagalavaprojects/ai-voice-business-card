@@ -526,7 +526,10 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
         <div className="absolute bottom-0 right-0 w-96 h-96 bg-indigo-500/[0.07] blur-[130px] rounded-full" />
       </div>
 
-      <div className="relative z-10 w-full max-w-lg mx-auto space-y-4 motion-safe:animate-[card-rise_0.5s_ease-out]">
+      {/* Single centered column at every size — slightly wider on desktop so
+          the card reads as a deliberate desktop layout rather than a
+          stretched phone screen. */}
+      <div className="relative z-10 w-full max-w-lg lg:max-w-xl mx-auto space-y-4 motion-safe:animate-[card-rise_0.5s_ease-out]">
         {/* ---------- Identity ---------- */}
         <Card className="relative glass-panel border-white/[0.08] shadow-2xl rounded-3xl p-6 sm:p-8 space-y-6">
           <LanguageSelector
@@ -752,32 +755,79 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
             )}
           </section>
 
-          {/* ---------- Try asking ---------- */}
-          {!isCallActive && card.suggestedQuestions && card.suggestedQuestions.length > 0 && (
-            <section aria-labelledby="try-asking" className="border-t border-white/[0.06] pt-4">
-              <h2 id="try-asking" className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-2.5">
-                {t("sections.tryAsking")}
-              </h2>
-              <ul className="space-y-1.5">
-                {card.suggestedQuestions.map((q) => (
-                  <li key={q}>
-                    {/* Starts the call and leaves the question on screen to read
-                        aloud. The opening line is fixed by the voice provider,
-                        so pretending to "ask it for you" would be a lie. */}
-                    <button
-                      type="button"
-                      onClick={startCall}
-                      className="w-full text-left text-xs text-slate-200 bg-white/[0.04] hover:bg-white/[0.08] active:scale-[0.99] border border-white/[0.08] hover:border-sky-400/40 rounded-xl px-3 py-2.5 transition-all duration-150 focus:outline-none focus:ring-2 focus:ring-sky-500"
-                    >
-                      &ldquo;{q}&rdquo;
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          )}
-
           <TranscriptViewer messages={messages} t={t} />
+        </Card>
+
+        {/* ---------- Actions ---------- */}
+        <Card className="glass-panel border-white/[0.08] rounded-3xl p-6 space-y-3" aria-labelledby="actions-heading">
+          <h2 id="actions-heading" className="sr-only">
+            {t("sections.actionsHeading")}
+          </h2>
+
+          <Button
+            variant="default"
+            data-testid="book-meeting-button"
+            onClick={() => setAppointmentOpen(true)}
+            className="w-full flex items-center justify-center gap-2 text-xs font-semibold shadow-lg shadow-sky-500/20"
+          >
+            <Calendar className="h-4 w-4" aria-hidden="true" />
+            {t("buttons.bookMeeting")}
+          </Button>
+
+          <div className="grid grid-cols-2 gap-3">
+            <Button
+              variant="glass"
+              disabled={savingContact}
+              onClick={async () => {
+                setSavingContact(true);
+                try {
+                  const [photoDataUri, logoDataUri] = await Promise.all([
+                    employee.avatarUrl ? imageUrlToDataUri(employee.avatarUrl) : Promise.resolve(null),
+                    company.logoUrl ? imageUrlToDataUri(company.logoUrl) : Promise.resolve(null),
+                  ]);
+                  downloadVCard({ ...contact, photoDataUri, logoDataUri });
+                  setSavedContactSuccess(true);
+                  setTimeout(() => setSavedContactSuccess(false), 3000);
+                } finally {
+                  setSavingContact(false);
+                }
+              }}
+              className="w-full flex items-center justify-center gap-2 text-xs"
+            >
+              {savingContact ? (
+                <Loader2 className="h-4 w-4 animate-spin text-sky-400" aria-hidden="true" />
+              ) : savedContactSuccess ? (
+                <CheckCircle2 className="h-4 w-4 text-emerald-400" aria-hidden="true" />
+              ) : (
+                <Download className="h-4 w-4 text-slate-300" aria-hidden="true" />
+              )}
+              {savedContactSuccess ? t("buttons.contactSaved") : t("buttons.saveContact")}
+            </Button>
+            <Button
+              variant="glass"
+              onClick={() => setQrOpen(true)}
+              disabled={!card.qrSvg}
+              className="w-full flex items-center justify-center gap-2 text-xs"
+            >
+              <QrCode className="h-4 w-4 text-slate-300" aria-hidden="true" />
+              {t("buttons.shareQR")}
+            </Button>
+          </div>
+
+          <ul className="grid grid-cols-2 gap-2 pt-1">
+            <ContactLink href={`mailto:${employee.email}`} icon={<Mail className="h-3.5 w-3.5" />} label={employee.email} />
+            <ContactLink href={toTelHref(employee.phone)} icon={<Phone className="h-3.5 w-3.5" />} label={employee.phone} />
+            {card.whatsappUrl && (
+              <ContactLink href={card.whatsappUrl} icon={<MessageCircle className="h-3.5 w-3.5" />} label="WhatsApp" external />
+            )}
+            {linkedIn && <ContactLink href={linkedIn} icon={<Linkedin className="h-3.5 w-3.5" />} label="LinkedIn" external />}
+            {company.website && (
+              <ContactLink href={company.website} icon={<Globe className="h-3.5 w-3.5" />} label={t("contact.website")} external />
+            )}
+            {otherLinks.map(([label, url]) => (
+              <ContactLink key={label} href={url} icon={<Link2 className="h-3.5 w-3.5" />} label={label} external />
+            ))}
+          </ul>
         </Card>
 
         {/* ---------- Services ---------- */}
@@ -899,77 +949,6 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
           </Card>
         )}
 
-        {/* ---------- Actions ---------- */}
-        <Card className="glass-panel border-white/[0.08] rounded-3xl p-6 space-y-3" aria-labelledby="actions-heading">
-          <h2 id="actions-heading" className="sr-only">
-            {t("sections.actionsHeading")}
-          </h2>
-
-          <Button
-            variant="default"
-            data-testid="book-meeting-button"
-            onClick={() => setAppointmentOpen(true)}
-            className="w-full flex items-center justify-center gap-2 text-xs font-semibold shadow-lg shadow-sky-500/20"
-          >
-            <Calendar className="h-4 w-4" aria-hidden="true" />
-            {t("buttons.bookMeeting")}
-          </Button>
-
-          <div className="grid grid-cols-2 gap-3">
-            <Button
-              variant="glass"
-              disabled={savingContact}
-              onClick={async () => {
-                setSavingContact(true);
-                try {
-                  const [photoDataUri, logoDataUri] = await Promise.all([
-                    employee.avatarUrl ? imageUrlToDataUri(employee.avatarUrl) : Promise.resolve(null),
-                    company.logoUrl ? imageUrlToDataUri(company.logoUrl) : Promise.resolve(null),
-                  ]);
-                  downloadVCard({ ...contact, photoDataUri, logoDataUri });
-                  setSavedContactSuccess(true);
-                  setTimeout(() => setSavedContactSuccess(false), 3000);
-                } finally {
-                  setSavingContact(false);
-                }
-              }}
-              className="w-full flex items-center justify-center gap-2 text-xs"
-            >
-              {savingContact ? (
-                <Loader2 className="h-4 w-4 animate-spin text-sky-400" aria-hidden="true" />
-              ) : savedContactSuccess ? (
-                <CheckCircle2 className="h-4 w-4 text-emerald-400" aria-hidden="true" />
-              ) : (
-                <Download className="h-4 w-4 text-slate-300" aria-hidden="true" />
-              )}
-              {savedContactSuccess ? t("buttons.contactSaved") : t("buttons.saveContact")}
-            </Button>
-            <Button
-              variant="glass"
-              onClick={() => setQrOpen(true)}
-              disabled={!card.qrSvg}
-              className="w-full flex items-center justify-center gap-2 text-xs"
-            >
-              <QrCode className="h-4 w-4 text-slate-300" aria-hidden="true" />
-              {t("buttons.shareQR")}
-            </Button>
-          </div>
-
-          <ul className="grid grid-cols-2 gap-2 pt-1">
-            <ContactLink href={`mailto:${employee.email}`} icon={<Mail className="h-3.5 w-3.5" />} label={employee.email} />
-            <ContactLink href={toTelHref(employee.phone)} icon={<Phone className="h-3.5 w-3.5" />} label={employee.phone} />
-            {card.whatsappUrl && (
-              <ContactLink href={card.whatsappUrl} icon={<MessageCircle className="h-3.5 w-3.5" />} label="WhatsApp" external />
-            )}
-            {linkedIn && <ContactLink href={linkedIn} icon={<Linkedin className="h-3.5 w-3.5" />} label="LinkedIn" external />}
-            {company.website && (
-              <ContactLink href={company.website} icon={<Globe className="h-3.5 w-3.5" />} label={t("contact.website")} external />
-            )}
-            {otherLinks.map(([label, url]) => (
-              <ContactLink key={label} href={url} icon={<Link2 className="h-3.5 w-3.5" />} label={label} external />
-            ))}
-          </ul>
-        </Card>
 
         <p className="text-center text-[11px] text-slate-400 font-mono pb-4">{t("tagline")}</p>
       </div>

@@ -288,7 +288,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                     value={formData.name}
                     onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                     placeholder={t("appointment.fullNamePlaceholder")}
-                    className="dashboard-input pl-9 w-full"
+                    className="dashboard-input !pl-9 w-full"
                   />
                 </div>
               </div>
@@ -304,7 +304,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                     value={formData.email}
                     onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                     placeholder={t("appointment.emailPlaceholder")}
-                    className="dashboard-input pl-9 w-full"
+                    className="dashboard-input !pl-9 w-full"
                   />
                 </div>
               </div>
@@ -320,7 +320,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                     value={formData.phone}
                     onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
                     placeholder={t("appointment.phonePlaceholder")}
-                    className="dashboard-input pl-9 w-full"
+                    className="dashboard-input !pl-9 w-full"
                   />
                 </div>
               </div>
