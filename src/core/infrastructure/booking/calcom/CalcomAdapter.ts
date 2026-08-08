@@ -58,19 +58,28 @@ export class CalcomAdapter {
       });
     }
 
+    // API v2 — v1 was decommissioned by Cal.com (verified live: every v1
+    // endpoint now returns "API v1 has been decommissioned"). v2
+    // authenticates with a Bearer key and versions each endpoint through a
+    // cal-api-version header.
     const params = new URLSearchParams({
-      apiKey: this.apiKey,
       eventTypeId: String(eventTypeId),
-      startTime: dateFrom,
-      endTime: dateTo,
+      start: dateFrom,
+      end: dateTo,
       timeZone,
     });
-    const response = await fetch(`https://api.cal.com/v1/slots?${params.toString()}`);
+    const response = await fetch(`https://api.cal.com/v2/slots?${params.toString()}`, {
+      headers: { Authorization: `Bearer ${this.apiKey}`, "cal-api-version": "2024-09-04" },
+    });
     if (!response.ok) throw new Error(`CalcomAdapter.getAvailableSlots failed: ${response.status} ${await response.text()}`);
 
+    // Shape (verified against the live API): { data: { "YYYY-MM-DD":
+    // [{ start: ISO }] } }
     const json = await response.json();
-    const slotsByDate = json.slots as Record<string, CalcomSlot[]>;
-    return Object.values(slotsByDate).flat();
+    const slotsByDate = (json.data ?? {}) as Record<string, Array<{ start: string }>>;
+    return Object.values(slotsByDate)
+      .flat()
+      .map((s) => ({ time: s.start }));
   }
 
   async createBooking(request: CalcomBookingRequest): Promise<CalcomBookingResponse> {
@@ -88,17 +97,21 @@ export class CalcomAdapter {
       throw new CalcomUnavailableError();
     }
 
-    const response = await fetch("https://api.cal.com/v1/bookings", {
+    const response = await fetch("https://api.cal.com/v2/bookings", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${this.apiKey}`,
+        "cal-api-version": "2024-08-13",
       },
       body: JSON.stringify({
         eventTypeId: request.eventTypeId,
         start: request.start,
-        responses: request.responses,
-        timeZone: request.timeZone,
+        attendee: {
+          name: request.responses.name,
+          email: request.responses.email,
+          timeZone: request.timeZone,
+        },
       }),
     });
 
@@ -108,12 +121,14 @@ export class CalcomAdapter {
     }
 
     const json = await response.json();
+    const booking = json.data ?? {};
+    const location = typeof booking.location === "string" && booking.location.startsWith("http") ? booking.location : undefined;
     return {
-      id: json.booking.id,
-      uid: json.booking.uid,
-      title: json.booking.title,
-      meetingUrl: json.booking.meetingUrl || `https://cal.com/m/${json.booking.uid}`,
-      status: json.booking.status,
+      id: booking.id,
+      uid: booking.uid,
+      title: booking.title,
+      meetingUrl: booking.meetingUrl || location || `https://app.cal.com/booking/${booking.uid}`,
+      status: booking.status,
     };
   }
 
@@ -122,31 +137,33 @@ export class CalcomAdapter {
       return { id: 0, uid: bookingUid, title: "Rescheduled meeting (demo)", meetingUrl: "https://cal.com/demo-meeting", status: "ACCEPTED" };
     }
 
-    const response = await fetch(`https://api.cal.com/v1/bookings/${bookingUid}/reschedule`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${this.apiKey}` },
-      body: JSON.stringify({ start: newStart, end: newEnd }),
+    const response = await fetch(`https://api.cal.com/v2/bookings/${bookingUid}/reschedule`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${this.apiKey}`, "cal-api-version": "2024-08-13" },
+      // v2 derives the new end from the event type's own duration.
+      body: JSON.stringify({ start: newStart }),
     });
 
-    if (!response.ok) throw new Error(`CalcomAdapter.rescheduleBooking failed: ${response.status} ${await response.text()}`);
+    if (!response.ok) throw new Error(`CalcomAdapter.rescheduleBooking failed: ${response.status} ${await response.text()} (requested end ${newEnd} is derived by Cal.com)`);
 
     const json = await response.json();
+    const booking = json.data ?? {};
     return {
-      id: json.booking.id,
-      uid: json.booking.uid,
-      title: json.booking.title,
-      meetingUrl: json.booking.meetingUrl,
-      status: json.booking.status,
+      id: booking.id,
+      uid: booking.uid,
+      title: booking.title,
+      meetingUrl: booking.meetingUrl,
+      status: booking.status,
     };
   }
 
   async cancelBooking(bookingUid: string, reason?: string): Promise<void> {
     if (!this.isConfigured()) return;
 
-    const response = await fetch(`https://api.cal.com/v1/bookings/${bookingUid}/cancel`, {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${this.apiKey}` },
-      body: JSON.stringify({ reason }),
+    const response = await fetch(`https://api.cal.com/v2/bookings/${bookingUid}/cancel`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${this.apiKey}`, "cal-api-version": "2024-08-13" },
+      body: JSON.stringify({ cancellationReason: reason }),
     });
 
     if (!response.ok) throw new Error(`CalcomAdapter.cancelBooking failed: ${response.status} ${await response.text()}`);
