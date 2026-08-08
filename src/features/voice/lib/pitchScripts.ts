@@ -1,4 +1,43 @@
 import { LanguageCode } from "@/features/language/config";
+import { DEMO_COMPANY_ID } from "@/shared/lib/demoCard";
+
+/**
+ * Pagalava's own AUTHORED Tamil elevator pitch — supplied verbatim by the
+ * founder as source-of-truth content and deliberately NOT routed through
+ * the composed templates below. Per-company: gated on the company id so
+ * every other tenant keeps the data-composed script. (The one authoring
+ * deviation: the supplied text closed with a markdown heading "## நன்றிகள்."
+ * — the "##" is formatting, not speech, so only the words are kept.)
+ * When per-company pitch authoring gets a real CMS field, this constant
+ * is the content that should seed it.
+ */
+export const PAGALAVA_TAMIL_ELEVATOR_PITCH = `இந்த மாசம் எத்தனை பேர் உங்க பிசினஸ் கார்டை கொடுத்திருப்பீங்க… ஆனா திரும்பி ஒரு காலும் வரலையா?
+
+அது உங்க தப்பு இல்ல — அந்த கார்டோட தப்பு.
+
+ஒரு பேப்பர் கார்டு உங்க நம்பரை மட்டும்தான் கொடுக்கும். அது உங்களை பிட்ச் பண்ணாது. அவங்க ஒரு நல்ல லீட்டா இல்லையான்னு தெரிஞ்சுக்காது. அப்பாயின்ட்மென்ட் புக் பண்ணாது. நீங்க பின்னாடி கூப்பிடும்போதைக்கு, அவங்களுக்கு ஏன் அந்த கார்டை வாங்கினோம்னே மறந்திருக்கும்.
+
+நான் அதுக்கு வேற ஒரு solution கொண்டு வந்திருக்கேன் — ஒரு AI Voice Business Card.
+
+இது ஒரு NFC கார்டு — வெறும் ஒரு டேப் அல்லது QR ஸ்கேன் போதும் — அப்புறம் நான் எதுவும் செய்யாம இது தானா செய்யும்:
+
+முதல்ல உங்களோட 30 செகண்ட் எலிவேட்டர் பிட்ச் ப்ளே ஆகும்.
+அப்புறம் புராடக்ட் பிட்ச்.
+அப்புறம் உங்களோட USP — AI குரலில, ஒவ்வொரு தடவையும் அதே மாதிரி.
+
+அப்புறம் இது ஒரு பேப்பர் கார்டால் ஒரு நாளும் செய்ய முடியாத ஒரு காரியம் செய்யும் — அது உங்க லீட்ஸ் கூட உரையாடும்.
+
+அங்கயே, AI voice மூலமா பேசி — அவங்க ஒரு உண்மையான ப்ராஸ்பெக்ட்டா இல்லையான்னும், அவங்க எவ்ளோ close ஆயிருக்காங்கன்னும் கண்டுபிடிக்கும்.
+
+அவங்க qualify ஆனா, உடனே அப்பாயின்ட்மென்ட் புக் ஆகிடும் — அப்புறம் WhatsApp-ல உங்க ரெண்டு பேருக்கும் reminder போயிடும், so no-show குறையும்.
+
+அதனால நான் கார்டு குவியல வச்சு பின்னாடி ஓடிக்கிட்டு இருக்கிறதுக்கு பதிலா...
+
+நீங்க தூங்கி எழுந்திருக்கும்போதே உங்களுக்கு qualify ஆன, பேச ரெடியா இருக்குற லீட்ஸ் லிஸ்ட் கிடைச்சிருக்கும் — ஏற்கனவே உங்க பிட்ச் கேட்டு, மீட்டிங்குக்கு 'yes' சொல்லிட்டு.
+
+இந்த கார்டை நேர்ல டேப் பண்ணி நீங்களே கேளுங்க...
+
+நன்றிகள்.`;
 
 /** The three fixed, speak-only recordings a card offers. These are PRE-
  * RECORDED pitches in the product sense: a fixed script rendered to audio
@@ -14,6 +53,9 @@ export function isPitchType(value: string | null | undefined): value is PitchTyp
 }
 
 export interface PitchSourceData {
+  /** Enables per-company authored overrides (see
+   * PAGALAVA_TAMIL_ELEVATOR_PITCH); composition is unaffected when absent. */
+  companyId?: string;
   companyName: string;
   employeeName: string;
   designation: string;
@@ -45,6 +87,13 @@ function speakList(items: string[], andWord: string): string {
  * which would produce jarring mid-sentence language switches.
  */
 export function composePitchScript(type: PitchType, lang: LanguageCode, data: PitchSourceData): string {
+  // Authored override wins over composition — currently only Pagalava's own
+  // Tamil elevator pitch. Every other (company, type, language) keeps the
+  // data-composed script below.
+  if (type === "elevator" && lang === "ta" && data.companyId === DEMO_COMPANY_ID) {
+    return PAGALAVA_TAMIL_ELEVATOR_PITCH;
+  }
+
   const servicesSpoken = speakList(
     data.serviceNames.length > 0 ? data.serviceNames : data.products.map((p) => p.name),
     { en: "and", ta: "மற்றும்", hi: "और", te: "మరియు", ml: "കൂടാതെ", kn: "ಮತ್ತು" }[lang]

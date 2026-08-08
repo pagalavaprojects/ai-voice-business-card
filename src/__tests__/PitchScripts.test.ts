@@ -6,8 +6,9 @@
  * artifact), and each type stays in its duration band (elevator ≈30s,
  * product ≈40s, USP ≈5s at typical TTS pace) in every supported language.
  */
-import { composePitchScript, isPitchType, PITCH_TYPES, PitchSourceData } from "@/features/voice/lib/pitchScripts";
+import { composePitchScript, isPitchType, PITCH_TYPES, PitchSourceData, PAGALAVA_TAMIL_ELEVATOR_PITCH } from "@/features/voice/lib/pitchScripts";
 import { SUPPORTED_LANGUAGES } from "@/features/language/config";
+import { DEMO_COMPANY_ID } from "@/shared/lib/demoCard";
 
 const fullData: PitchSourceData = {
   companyName: "Pagalava Data Analytics",
@@ -105,5 +106,30 @@ describe("composePitchScript", () => {
     expect(script).toContain("Pagalava Data Analytics");
     // And the frame itself is Tamil, not English:
     expect(script).toMatch(/வணக்கம்/);
+  });
+
+  describe("Pagalava's authored Tamil elevator pitch (per-company override)", () => {
+    const pagalavaData: PitchSourceData = { ...fullData, companyId: DEMO_COMPANY_ID };
+
+    it("returns the founder-supplied script VERBATIM for (elevator, ta, Pagalava)", () => {
+      const script = composePitchScript("elevator", "ta", pagalavaData);
+      expect(script).toBe(PAGALAVA_TAMIL_ELEVATOR_PITCH);
+      // Anchor a few exact supplied phrases so any future "improvement" of
+      // the founder's wording fails loudly:
+      expect(script).toContain("அது உங்க தப்பு இல்ல — அந்த கார்டோட தப்பு.");
+      expect(script).toContain("ஒரு AI Voice Business Card");
+      expect(script).toContain("so no-show குறையும்");
+      expect(script.endsWith("நன்றிகள்.")).toBe(true);
+      // The supplied markdown "##" heading marker is formatting, not speech:
+      expect(script).not.toContain("##");
+    });
+
+    it("does NOT leak the authored pitch to other companies, other languages, or other pitch types", () => {
+      expect(composePitchScript("elevator", "ta", fullData)).not.toBe(PAGALAVA_TAMIL_ELEVATOR_PITCH);
+      expect(composePitchScript("elevator", "ta", { ...fullData, companyId: "99999999-9999-9999-9999-999999999999" })).not.toBe(PAGALAVA_TAMIL_ELEVATOR_PITCH);
+      expect(composePitchScript("elevator", "en", pagalavaData)).not.toBe(PAGALAVA_TAMIL_ELEVATOR_PITCH);
+      expect(composePitchScript("product", "ta", pagalavaData)).not.toBe(PAGALAVA_TAMIL_ELEVATOR_PITCH);
+      expect(composePitchScript("usp", "ta", pagalavaData)).not.toBe(PAGALAVA_TAMIL_ELEVATOR_PITCH);
+    });
   });
 });

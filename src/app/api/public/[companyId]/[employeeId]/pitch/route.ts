@@ -76,6 +76,7 @@ export async function GET(req: NextRequest, { params }: { params: { companyId: s
     ]);
 
     const source: PitchSourceData = {
+      companyId,
       companyName: company.name,
       employeeName: employee.name,
       designation: employee.designation,
