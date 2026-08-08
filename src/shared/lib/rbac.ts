@@ -44,7 +44,9 @@ export type Permission =
   | "manage:settings"
   | "manage:api_keys"
   | "manage:members"
-  | "manage:branding";
+  | "manage:branding"
+  | "read:cms"
+  | "write:cms";
 
 const rolePermissions: Record<UserRole, Permission[]> = {
   OWNER: [
@@ -57,6 +59,7 @@ const rolePermissions: Record<UserRole, Permission[]> = {
     "read:services", "write:services", "delete:services",
     "read:employees", "write:employees", "delete:employees",
     "read:settings", "manage:settings", "manage:api_keys", "manage:members", "manage:branding",
+    "read:cms", "write:cms",
   ],
   ADMIN: [
     "read:leads", "write:leads", "delete:leads",
@@ -68,6 +71,7 @@ const rolePermissions: Record<UserRole, Permission[]> = {
     "read:services", "write:services", "delete:services",
     "read:employees", "write:employees", "delete:employees",
     "read:settings", "manage:settings", "manage:api_keys", "manage:members", "manage:branding",
+    "read:cms", "write:cms",
   ],
   MANAGER: [
     "read:leads", "write:leads",
@@ -81,6 +85,7 @@ const rolePermissions: Record<UserRole, Permission[]> = {
     // manager curates the roster, only OWNER/ADMIN can remove someone from it.
     "read:employees", "write:employees",
     "read:settings",
+    "read:cms", "write:cms",
   ],
   EMPLOYEE: [
     "read:leads", "write:leads",
@@ -92,6 +97,7 @@ const rolePermissions: Record<UserRole, Permission[]> = {
     "read:services",
     "read:employees",
     "read:settings",
+    "read:cms",
   ],
   VIEWER: [
     "read:leads",
@@ -103,6 +109,7 @@ const rolePermissions: Record<UserRole, Permission[]> = {
     "read:services",
     "read:employees",
     "read:settings",
+    "read:cms",
   ],
 };
 
