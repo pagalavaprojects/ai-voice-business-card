@@ -1,5 +1,7 @@
 import { NextRequest } from "next/server";
+import { z } from "zod";
 import { formatApiResponse, validateCalcomWebhookSignature } from "@/shared/lib/security";
+import { handleApiError } from "@/shared/lib/apiHandler";
 import { SupabaseBookingRepository } from "@/core/infrastructure/database/supabase/SupabaseBookingRepository";
 import { Logger } from "@/shared/lib/logger";
 import { supabaseAdmin } from "@/shared/lib/supabase";
@@ -14,14 +16,20 @@ export const dynamic = "force-dynamic";
 
 const bookingRepo = new SupabaseBookingRepository();
 
-interface CalcomWebhookPayload {
-  triggerEvent: string;
-  payload: {
-    uid: string;
-    startTime?: string;
-    endTime?: string;
-  };
-}
+// A valid HMAC signature only proves the body wasn't tampered with in
+// transit — it says nothing about its shape. Cal.com's own API can (and
+// has) changed field shapes across versions, so this still validates
+// structure before any field reaches business logic, the same as every
+// other webhook/tool-call boundary in this codebase (see
+// LeadQualificationSignalsSchema, BookRequestSchema).
+const CalcomWebhookPayloadSchema = z.object({
+  triggerEvent: z.string().min(1),
+  payload: z.object({
+    uid: z.string().min(1),
+    startTime: z.string().optional(),
+    endTime: z.string().optional(),
+  }),
+});
 
 /** Cal.com webhook synchronization: keeps our `appointments` row in sync
  * with booking-status changes made directly in Cal.com (e.g. the visitor
@@ -36,9 +44,8 @@ export async function POST(req: NextRequest) {
       return formatApiResponse(null, 401, "Unauthorized: invalid webhook signature", ["Invalid signature"]);
     }
 
-    const event = JSON.parse(rawBody) as CalcomWebhookPayload;
-    const bookingUid = event.payload?.uid;
-    if (!bookingUid) return formatApiResponse(null, 400, "Missing booking uid in payload");
+    const event = CalcomWebhookPayloadSchema.parse(JSON.parse(rawBody));
+    const bookingUid = event.payload.uid;
 
     const { data: appointment } = await supabaseAdmin.from("appointments").select().eq("calcom_booking_id", bookingUid).maybeSingle();
     if (!appointment) {
@@ -64,8 +71,6 @@ export async function POST(req: NextRequest) {
 
     return formatApiResponse({ status: "processed" }, 200, "Webhook processed successfully");
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "Unknown server error";
-    Logger.error("Cal.com webhook error", { error: message });
-    return formatApiResponse(null, 500, "Internal Server Error", [message]);
+    return handleApiError(error);
   }
 }

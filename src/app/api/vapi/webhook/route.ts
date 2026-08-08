@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { formatApiResponse, validateVapiWebhookSignature, isPlaceholderCredential } from "@/shared/lib/security";
 import { SupabaseConversationRepository } from "@/core/infrastructure/database/supabase/SupabaseConversationRepository";
 import { SupabaseStorageAdapter } from "@/core/infrastructure/storage/SupabaseStorageAdapter";
@@ -191,7 +192,21 @@ async function handleVapiMessage(req: NextRequest, message: VapiMessage): Promis
       return formatApiResponse(null, 400, "No tool call provided");
     }
 
-    const { name, arguments: args } = toolCall.function;
+    // Vapi is authenticated (verifyWebhookToken/validateVapiWebhookSignature
+    // above), but a valid signature only proves the request came from a call
+    // we provisioned — it says nothing about the shape of what it sent. This
+    // is the one field in the payload this route destructures without any
+    // optional chaining; a malformed toolCall.function (an API change on
+    // Vapi's side, a transport bug) previously threw straight through to the
+    // outer catch as an opaque 500 instead of a controlled 400.
+    const toolCallShape = z
+      .object({ function: z.object({ name: z.string().min(1), arguments: z.record(z.unknown()) }) })
+      .safeParse(toolCall);
+    if (!toolCallShape.success) {
+      return formatApiResponse(null, 400, "Malformed tool call payload");
+    }
+
+    const { name, arguments: args } = toolCallShape.data.function;
     const tool = toolRegistry.getTool(name);
 
     if (!tool) {
