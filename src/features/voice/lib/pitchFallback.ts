@@ -59,3 +59,18 @@ export function stopBrowserTts(): void {
     window.speechSynthesis.cancel();
   }
 }
+
+/** True pause/resume for the browser-TTS pitch path — the utterance keeps
+ * its position, so Resume continues mid-sentence rather than restarting.
+ * (cancel() above is the full stop; these two are the Pause control.) */
+export function pauseBrowserTts(): void {
+  if (typeof window !== "undefined" && "speechSynthesis" in window) {
+    window.speechSynthesis.pause();
+  }
+}
+
+export function resumeBrowserTts(): void {
+  if (typeof window !== "undefined" && "speechSynthesis" in window) {
+    window.speechSynthesis.resume();
+  }
+}

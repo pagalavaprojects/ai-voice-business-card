@@ -33,11 +33,13 @@
     "mute": "म्यूट करें",
     "unmute": "अनम्यूट करें",
     "endCall": "कॉल समाप्त करें",
-    "bookMeeting": "मीटिंग बुक करें",
+    "bookMeeting": "अपॉइंटमेंट बुक करें",
     "saveContact": "संपर्क सहेजें",
     "contactSaved": "संपर्क सहेजा गया!",
     "shareQR": "QR साझा करें",
-    "close": "बंद करें"
+    "close": "बंद करें",
+    "pauseVoice": "रोकें",
+    "resumeVoice": "जारी रखें"
   },
   "sections": {
     "tryAsking": "यह पूछ कर देखें",
@@ -52,8 +54,9 @@
     "product": "उत्पाद पिच",
     "usp": "हमारी खासियत",
     "playAria": "{label} चलाएँ",
-    "stopAria": "{label} रोकें",
-    "error": "पिच चलाई नहीं जा सकी — कृपया फिर से कोशिश करें।"
+    "error": "पिच चलाई नहीं जा सकी — कृपया फिर से कोशिश करें।",
+    "pauseAria": "{label} रोकें",
+    "resumeAria": "{label} जारी रखें"
   },
   "contact": {
     "website": "वेबसाइट"
@@ -70,7 +73,9 @@
     "listening": "AI Twin सुन रहा है — अभी बोलें",
     "speaking": "AI Twin बोल रहा है",
     "thinking": "AI Twin आपका संदेश प्रोसेस कर रहा है",
-    "chooseLanguage": "बातचीत की भाषा चुनें"
+    "chooseLanguage": "बातचीत की भाषा चुनें",
+    "pauseVoice": "आवाज़ रोकें",
+    "resumeVoice": "आवाज़ जारी रखें"
   },
   "suggestedQuestions": [
     "आप कौन-कौन सी सेवाएं प्रदान करते हैं?",
@@ -116,7 +121,16 @@
     "requestedTitle": "अनुरोध प्राप्त हुआ!",
     "requestedMessage": "आपका पसंदीदा समय दर्ज कर लिया गया है। जल्द ही ईमेल द्वारा पुष्टि भेजी जाएगी।",
     "preferredTimeLabel": "पसंदीदा समय:",
-    "done": "पूर्ण"
+    "done": "पूर्ण",
+    "stepQualify": "परिचय",
+    "qualifyTitle": "पहले AI से एक छोटी बातचीत",
+    "qualifyIntro": "समय चुनने से पहले, {employeeName} का AI आवाज़ में कुछ छोटे सवाल पूछेगा। आप कभी भी इसे छोड़ सकते हैं।",
+    "qualifyStart": "आवाज़ बातचीत शुरू करें",
+    "qualifySkip": "छोड़ें और समय चुनें",
+    "qualifyInProgress": "सहज रूप से जवाब दें — AI सुन रहा है।",
+    "qualifyDoneCold": "धन्यवाद — अब आप अपना समय चुन सकते हैं।",
+    "qualifyDoneWarm": "बढ़िया! कुछ और सवालों के जवाब दें, या अभी समय चुनें।",
+    "qualifyContinue": "समय चुनने के लिए आगे बढ़ें"
   },
   "gate": {
     "title": "अपनी पसंदीदा भाषा चुनें",

@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
-import { Mail, Phone, Globe, Calendar, Download, QrCode, MessageCircle, Linkedin, Link2, X, Loader2, CheckCircle2, Play, Square, Volume2 } from "lucide-react";
+import { Mail, Phone, Globe, Calendar, Download, QrCode, MessageCircle, Linkedin, Link2, X, Loader2, CheckCircle2, Play, Pause as PauseIcon, Volume2 } from "lucide-react";
 import { useVapiSession } from "@/features/voice/hooks/useVapiSession";
 import { VoiceMicButton } from "@/features/voice/components/VoiceMicButton";
 import { Card } from "@/shared/ui/card";
@@ -10,7 +10,7 @@ import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
 import { Dialog } from "@/shared/ui/dialog";
 import { downloadVCard, imageUrlToDataUri } from "@/features/voice/lib/vcard";
-import { speakPitchWithBrowserTts, stopBrowserTts } from "@/features/voice/lib/pitchFallback";
+import { speakPitchWithBrowserTts, stopBrowserTts, pauseBrowserTts, resumeBrowserTts } from "@/features/voice/lib/pitchFallback";
 import { DEMO_COMPANY_ID } from "@/shared/lib/demoCard";
 import { useLanguage } from "@/features/language/hooks/useLanguage";
 import { LanguageSelector } from "@/features/language/components/LanguageSelector";
@@ -149,15 +149,36 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
   // spinner instead of appearing dead while TTS renders on a cold cache.
   const [pitchPlaying, setPitchPlaying] = useState<"elevator" | "product" | "usp" | null>(null);
   const [pitchLoading, setPitchLoading] = useState<"elevator" | "product" | "usp" | null>(null);
+  const [pitchPaused, setPitchPaused] = useState(false);
   const [pitchError, setPitchError] = useState(false);
   const pitchAudioRef = useRef<HTMLAudioElement | null>(null);
+  // Which engine is voicing the current pitch — the HD MP3 <audio> element
+  // or the browser's speech synthesis — so Pause/Resume drives the right one.
+  const pitchSourceRef = useRef<"audio" | "tts" | null>(null);
 
   const stopPitch = () => {
     pitchAudioRef.current?.pause();
     pitchAudioRef.current = null;
     stopBrowserTts();
+    pitchSourceRef.current = null;
     setPitchPlaying(null);
     setPitchLoading(null);
+    setPitchPaused(false);
+  };
+
+  // Real Pause/Resume, not stop-and-restart: the audio element keeps its
+  // currentTime and speechSynthesis keeps its utterance position, so Resume
+  // continues exactly where the visitor paused.
+  const togglePitchPause = () => {
+    if (pitchPaused) {
+      if (pitchSourceRef.current === "audio") pitchAudioRef.current?.play().catch(() => stopPitch());
+      else resumeBrowserTts();
+      setPitchPaused(false);
+    } else {
+      if (pitchSourceRef.current === "audio") pitchAudioRef.current?.pause();
+      else pauseBrowserTts();
+      setPitchPaused(true);
+    }
   };
 
   // Unmount must not leave a detached audio element (or a browser-TTS
@@ -219,7 +240,7 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
     };
   }, [companyId, employeeId, language, setLanguage]);
 
-  const { voiceState, isMuted, messages, durationSeconds, error, isPlayingIntro, isDemoMode, startCall, endCall, toggleMute } = useVapiSession({
+  const { voiceState, isMuted, messages, durationSeconds, error, isPlayingIntro, isDemoMode, callId, startCall, endCall, toggleMute } = useVapiSession({
     companyId,
     employeeId,
     firstMessage: card?.firstMessage,
@@ -235,49 +256,24 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
 
   const isCallActive = voiceState !== "idle";
 
-  // Auto-start the moment the card is ready, so the introduction plays
-  // without the visitor having to find and tap the microphone button.
+  // Opening the card must NOT start an AI conversation anymore — no
+  // microphone permission, no Vapi/WebRTC session, no getUserMedia prompt
+  // merely because someone scanned the QR. The interactive AI voice now
+  // starts only from an explicit tap (the mic button, or the booking
+  // flow's "Start voice qualification"). What the card attempts instead,
+  // once per identity, is the SPEAK-ONLY pre-recorded introduction (the
+  // elevator pitch): every major browser requires a user gesture before
+  // audible autoplay, so this is a best-effort attempt that fails
+  // completely silently — no error banner, no fallback TTS (speech
+  // synthesis is gesture-gated too), no permission prompt. When blocked,
+  // the always-visible Listen controls are the manual path, exactly as the
+  // autoplay policy intends.
   //
-  // This cannot be a guarantee: every major browser requires a user gesture
-  // before it will autoplay audio, and getUserMedia's own permission prompt
-  // needs a response neither of us controls (confirmed against Chrome's
-  // documented autoplay policy, WebKit's autoplay policy post, and a Vapi
-  // community report of this exact "play() can only be initiated by a user
-  // gesture" error — not assumed). So this attempts the real thing first;
-  // if the browser silently refuses it, hasAutoStartFailed flips true and
-  // the existing microphone button below becomes an explicit "tap to begin"
-  // prompt instead of a wasted, invisible failure.
-  //
-  // Skipped in demo mode (no live Vapi key configured — local dev without
-  // credentials): demo mode simulates the whole call client-side with no
-  // real mic/WebRTC involved, so there is no autoplay policy to attempt
-  // working around, and auto-firing the simulated conversation would remove
-  // the one thing demo mode exists for — a developer manually previewing
-  // the flow one step at a time.
-  //
-  // Also skipped for automated browsers (navigator.webdriver — the standard
-  // signal every mainstream WebDriver/Playwright/Puppeteer-controlled
-  // browser sets deliberately for exactly this kind of case). This is not
-  // about showing different content to bots — the card renders identically
-  // either way — it's specifically that a real getUserMedia prompt has no
-  // one able to answer it in an automated context, and MDN documents that
-  // an unanswered prompt's promise can hang rather than reject, which would
-  // otherwise leave every automated visit (including this project's own
-  // e2e suite) stuck waiting on a live Vapi WebRTC handshake that only
-  // exists to be interacted with by a human.
-  // Holds the `companyId:employeeId:language` this effect already
-  // auto-started a call for, rather than a plain boolean — so if this same
-  // component instance is ever reused for a different card (client-side
-  // navigation between two public cards without a full remount), OR the
-  // visitor switches language, the new identity is recognized as
-  // not-yet-attempted instead of being silently skipped because *some*
-  // identity already auto-started once. This is what makes a language
-  // switch auto-restart the call in the new language, reusing all of this
-  // effect's existing autoplay/demo-mode/automated-browser handling rather
-  // than duplicating it.
+  // Skipped for automated browsers (navigator.webdriver) and demo mode —
+  // same reasoning as the old auto-call: automation has no one listening,
+  // and demo mode exists for manual step-by-step previewing.
   const hasAutoAttemptedForRef = useRef<string | null>(null);
   const voiceStateRef = useRef(voiceState);
-  const [hasAutoStartFailed, setHasAutoStartFailed] = useState(false);
   const cardIdentity = `${companyId}:${employeeId}:${language}`;
 
   // A language switch mid-call ends the current call rather than trying to
@@ -301,47 +297,33 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
     const isAutomatedBrowser = typeof navigator !== "undefined" && navigator.webdriver === true;
     // cardLoading specifically (not just !card): a language switch keeps the
     // previous (now stale) card object in state while the new-language
-    // fetch is in flight, only replacing it once that resolves — without
-    // this check, cardIdentity already reflects the new language the
-    // instant it changes, and this effect would immediately auto-start a
-    // call using the OLD language's firstMessage/systemPrompt/speechLocale,
-    // then never get a second chance to restart once the right data
-    // actually arrives (hasAutoAttemptedForRef would already be set).
+    // fetch is in flight — attempting with the old language's pitch would
+    // then permanently consume this identity's one attempt.
     if (!card || cardLoading || !languageConfirmed || isDemoMode || isAutomatedBrowser || hasAutoAttemptedForRef.current === cardIdentity) return;
     hasAutoAttemptedForRef.current = cardIdentity;
 
-    startCall();
-
-    // "idle" this long after attempting means the browser refused outright
-    // (blocked autoplay, or start() itself rejected). "connecting" this long
-    // after attempting is treated the same way rather than given more time:
-    // MDN documents that an unanswered getUserMedia prompt can leave its
-    // promise neither resolved nor rejected indefinitely, so a call stuck
-    // waiting on a native permission dialog the visitor hasn't (or won't)
-    // answer looks identical, from here, to one that silently failed. Either
-    // way the honest thing is to offer the manual tap — if the visitor does
-    // then answer the still-pending native prompt, isCallActive flips true
-    // and clears this on its own, so offering it early never actually costs
-    // anything.
-    const timer = setTimeout(() => {
-      if (voiceStateRef.current === "idle" || voiceStateRef.current === "connecting") setHasAutoStartFailed(true);
-    }, 3500);
-    return () => clearTimeout(timer);
-    // startCall is intentionally omitted: it's a new function identity on
-    // every render (it closes over card's fields), and re-including it here
-    // would fight the hasAutoAttemptedForRef guard whose entire job is
-    // "exactly once per card identity." The effect already re-evaluates
-    // whenever `card` changes (including the companyId/employeeId-keyed
-    // fetch's null -> loaded transition on a card switch).
+    // Best-effort, silent-on-block: play the pre-recorded elevator pitch as
+    // the card's introduction. Browsers that block audible autoplay reject
+    // play() — nothing else happens, no fallback chain, no error state.
+    const audio = new Audio(`/api/public/${companyId}/${employeeId}/pitch?type=elevator&lang=${encodeURIComponent(language)}`);
+    audio
+      .play()
+      .then(() => {
+        stopPitch();
+        pitchAudioRef.current = audio;
+        pitchSourceRef.current = "audio";
+        audio.onended = () => stopPitch();
+        setPitchPlaying("elevator");
+      })
+      .catch(() => {
+        // Autoplay blocked or audio unavailable — the Listen buttons are the
+        // manual path, exactly as the browser's policy intends.
+        audio.src = "";
+      });
+    // playPitch/stopPitch identities change per render; the ref guard makes
+    // this run exactly once per card identity.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [card, cardLoading, cardIdentity, languageConfirmed]);
-
-  // A real tap always clears the fallback prompt, whether or not this
-  // particular call succeeds — the point was only to stop suggesting a tap
-  // is still needed once one has happened.
-  useEffect(() => {
-    if (isCallActive) setHasAutoStartFailed(false);
-  }, [isCallActive]);
+  }, [card, cardLoading, cardIdentity, languageConfirmed, isDemoMode]);
 
   // The live conversation and a pre-recorded pitch are two different audio
   // sources — never let them talk over each other. A call starting (mic
@@ -357,7 +339,13 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
   }, [isCallActive]);
 
   const playPitch = (type: "elevator" | "product" | "usp") => {
-    if (pitchPlaying === type || pitchLoading === type) {
+    // Tapping the pitch that's already voicing toggles Pause/Resume; a
+    // still-loading tap cancels. Tapping a different pitch switches to it.
+    if (pitchPlaying === type) {
+      togglePitchPause();
+      return;
+    }
+    if (pitchLoading === type) {
       stopPitch();
       return;
     }
@@ -378,6 +366,7 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
         .then(({ script }: { script: string }) => {
           const started = speakPitchWithBrowserTts(script, language, {
             onStart: () => {
+              pitchSourceRef.current = "tts";
               setPitchLoading(null);
               setPitchPlaying(type);
             },
@@ -406,8 +395,10 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
     pitchAudioRef.current = audio;
     setPitchLoading(type);
     audio.onplaying = () => {
+      pitchSourceRef.current = "audio";
       setPitchLoading(null);
       setPitchPlaying(type);
+      setPitchPaused(false);
     };
     audio.onended = () => stopPitch();
     audio.onerror = () => {
@@ -625,7 +616,7 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
               state={voiceState}
               isMuted={isMuted}
               onClick={isCallActive ? endCall : startCall}
-              ringActive={hasAutoStartFailed}
+              ringActive={false}
               // The mic is force-muted at the SDK level for the whole
               // scripted opening (see useVapiSession.ts) — disabling the
               // button too means there is no control on screen that looks
@@ -649,9 +640,7 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
                   ? t("status.preparingVoice")
                   : isCallActive
                     ? t("mic.tapToSpeak")
-                    : hasAutoStartFailed
-                      ? t("mic.tapToBegin")
-                      : t("mic.talkWithAI", { name: employee.name.split(" ")[0] })}
+                    : t("mic.talkWithAI", { name: employee.name.split(" ")[0] })}
             </p>
             <p className="text-xs text-slate-400 text-center mt-1 max-w-xs">
               {isPlayingIntro
@@ -669,9 +658,7 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
                           messages.length === 0
                           ? t("mic.nowYouCanAsk")
                           : t("mic.listeningHelper")
-                        : hasAutoStartFailed
-                          ? t("mic.tapRequiredHelper")
-                          : t("mic.idleHelper")}
+                        : t("mic.idleHelper")}
             </p>
 
             {error && (
@@ -687,11 +674,24 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
               <div className="flex gap-2 mt-4">
                 {/* Hidden, not just disabled, during the intro: the mic is
                     system-muted for that whole window (see
-                    useVapiSession.ts), and a visible "Unmute" control would
-                    invite a tap that fights it. */}
+                    useVapiSession.ts), and a visible "Resume" control would
+                    invite a tap that fights it.
+
+                    "Pause" here pauses YOUR side of the conversation — the
+                    microphone stops sending — which is the only pause Vapi's
+                    live WebRTC session actually supports (there is no
+                    SDK-level whole-session freeze). The label and aria text
+                    say pause/resume; the session itself stays alive, exactly
+                    as rendered. */}
                 {!isPlayingIntro && (
-                  <Button variant="outline" size="sm" onClick={toggleMute} className="text-xs">
-                    {isMuted ? t("buttons.unmute") : t("buttons.mute")}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={toggleMute}
+                    aria-label={isMuted ? t("aria.resumeVoice") : t("aria.pauseVoice")}
+                    className="text-xs"
+                  >
+                    {isMuted ? t("buttons.resumeVoice") : t("buttons.pauseVoice")}
                   </Button>
                 )}
                 <Button variant="outline" size="sm" onClick={endCall} className="text-xs">
@@ -721,13 +721,20 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
               ).map(({ type, label, duration }) => {
                 const isActive = pitchPlaying === type;
                 const isBuffering = pitchLoading === type;
+                const isPausedHere = isActive && pitchPaused;
                 return (
                   <button
                     key={type}
                     type="button"
                     data-testid={`pitch-${type}`}
                     onClick={() => playPitch(type)}
-                    aria-label={isActive || isBuffering ? t("pitch.stopAria", { label }) : t("pitch.playAria", { label })}
+                    aria-label={
+                      isPausedHere
+                        ? t("pitch.resumeAria", { label })
+                        : isActive || isBuffering
+                          ? t("pitch.pauseAria", { label })
+                          : t("pitch.playAria", { label })
+                    }
                     aria-pressed={isActive}
                     className={`flex flex-col items-center gap-1.5 rounded-xl border px-2 py-3 text-center transition-all duration-150 focus:outline-none focus:ring-2 focus:ring-sky-500 active:scale-[0.98] ${
                       isActive || isBuffering
@@ -737,8 +744,10 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
                   >
                     {isBuffering ? (
                       <Loader2 className="h-4 w-4 animate-spin text-sky-400" aria-hidden="true" />
+                    ) : isPausedHere ? (
+                      <Play className="h-4 w-4 text-sky-400" aria-hidden="true" />
                     ) : isActive ? (
-                      <Square className="h-4 w-4 text-sky-400" aria-hidden="true" />
+                      <PauseIcon className="h-4 w-4 text-sky-400" aria-hidden="true" />
                     ) : (
                       <Play className="h-4 w-4 text-sky-400" aria-hidden="true" />
                     )}
@@ -767,8 +776,12 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
           <Button
             variant="default"
             data-testid="book-meeting-button"
-            onClick={() => setAppointmentOpen(true)}
-            className="w-full flex items-center justify-center gap-2 text-xs font-semibold shadow-lg shadow-sky-500/20"
+            onClick={() => {
+              // A speaking pitch must not talk over the booking flow.
+              stopPitch();
+              setAppointmentOpen(true);
+            }}
+            className="w-full flex items-center justify-center gap-2 text-sm font-semibold py-3 rounded-xl bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 shadow-lg shadow-sky-500/25"
           >
             <Calendar className="h-4 w-4" aria-hidden="true" />
             {t("buttons.bookMeeting")}
@@ -981,6 +994,7 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
         externalBookingUrl={card.bookingUrl}
         language={language}
         t={t}
+        voice={{ voiceState, callId, startCall, endCall }}
       />
     </main>
   );

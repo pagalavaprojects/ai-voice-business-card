@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
-import { Clock, User, Mail, Phone, CheckCircle2, ArrowRight, Loader2, AlertTriangle, Globe } from "lucide-react";
+import React, { useEffect, useRef, useState } from "react";
+import { Clock, User, Mail, Phone, CheckCircle2, ArrowRight, Loader2, AlertTriangle, Globe, Mic } from "lucide-react";
 import { Dialog } from "@/shared/ui/dialog";
 import { Button } from "@/shared/ui/button";
 import { Skeleton } from "@/shared/ui/skeleton";
@@ -21,6 +21,24 @@ interface AppointmentModalProps {
    * never drift from the rest of the card's. */
   language: LanguageCode;
   t: (key: string, vars?: Record<string, string>) => string;
+  /** The card's live AI voice session, lent to this modal for the
+   * qualification-first booking flow. When present, "Book an Appointment"
+   * opens on a voice-qualification step BEFORE slot selection: the visitor
+   * explicitly starts the AI conversation (microphone/Vapi are never
+   * initialized merely by opening the modal), the conversation qualifies
+   * them through the existing save_lead/update_lead_qualification tools,
+   * and this modal polls the qualification-status endpoint (keyed by the
+   * live callId) for the resulting temperature. HOT/WARM are invited to
+   * keep talking through the conversion-assessment questions; COLD skips
+   * straight to slot selection — either way the visitor is never trapped:
+   * a skip control is always available. Absent (older callers/tests), the
+   * modal behaves exactly as before, opening directly on slot selection. */
+  voice?: {
+    voiceState: string;
+    callId: string | null;
+    startCall: () => void;
+    endCall: () => void;
+  };
 }
 
 interface CalcomSlot {
@@ -60,8 +78,15 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   externalBookingUrl,
   language,
   t,
+  voice,
 }) => {
-  const [step, setStep] = useState<1 | 2 | 3>(1);
+  // Step 0 (voice qualification) exists only when a live session was lent
+  // to us; without one the flow starts on slot selection as it always did.
+  const [step, setStep] = useState<0 | 1 | 2 | 3>(voice ? 0 : 1);
+  const [qualStage, setQualStage] = useState<"intro" | "active">("intro");
+  const [temperature, setTemperature] = useState<"HOT" | "WARM" | "COLD" | null>(null);
+  const qualStageRef = useRef(qualStage);
+  qualStageRef.current = qualStage;
   const [slots, setSlots] = useState<CalcomSlot[]>([]);
   const [slotsLoading, setSlotsLoading] = useState(false);
   // Distinguishes WHY the slot list is empty — "unconfigured" (this company
@@ -158,8 +183,36 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
     }
   };
 
-  const handleReset = () => {
+  // Polls the lead's temperature while the qualification conversation is
+  // live. The interval is modest (3s) and stops itself the moment the modal
+  // closes, the step advances, or a temperature arrives — the HOT/WARM
+  // invitation to keep talking doesn't need continued polling; routing only
+  // needs the first classification.
+  useEffect(() => {
+    if (!open || step !== 0 || qualStage !== "active" || !voice?.callId || temperature) return;
+    const timer = setInterval(() => {
+      fetch(`/api/public/${companyId}/${employeeId}/qualification-status?callId=${encodeURIComponent(voice.callId!)}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data: { qualified?: boolean; temperature?: "HOT" | "WARM" | "COLD" | null } | null) => {
+          if (data?.qualified && data.temperature) setTemperature(data.temperature);
+        })
+        .catch(() => undefined);
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [open, step, qualStage, voice?.callId, temperature, companyId, employeeId]);
+
+  const advanceToSlots = () => {
+    // The visitor is done talking (or never wanted to) — the mic must not
+    // stay hot while they read slots and type contact details.
+    if (qualStageRef.current === "active") voice?.endCall();
     setStep(1);
+  };
+
+  const handleReset = () => {
+    if (qualStageRef.current === "active") voice?.endCall();
+    setStep(voice ? 0 : 1);
+    setQualStage("intro");
+    setTemperature(null);
     setFormData({ name: "", email: "", phone: "", notes: "" });
     setOutcome(null);
     setSubmitErrorKey(null);
@@ -169,23 +222,113 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   return (
     <Dialog open={open} onClose={handleReset} title={t("appointment.title")} size="md">
       <div className="space-y-6">
-        {/* Progress Bar */}
-        <div className="flex items-center justify-between border-b border-white/[0.08] pb-4">
-          <div className="flex items-center gap-2">
-            <span className={`h-6 w-6 rounded-full text-xs font-bold flex items-center justify-center ${step >= 1 ? "bg-sky-500 text-white" : "bg-slate-800 text-slate-400"}`}>1</span>
-            <span className={`text-xs font-semibold ${step >= 1 ? "text-slate-200" : "text-slate-500"}`}>{t("appointment.stepSelectTime")}</span>
-          </div>
-          <div className="h-0.5 w-8 bg-slate-800" />
-          <div className="flex items-center gap-2">
-            <span className={`h-6 w-6 rounded-full text-xs font-bold flex items-center justify-center ${step >= 2 ? "bg-sky-500 text-white" : "bg-slate-800 text-slate-400"}`}>2</span>
-            <span className={`text-xs font-semibold ${step >= 2 ? "text-slate-200" : "text-slate-500"}`}>{t("appointment.stepYourDetails")}</span>
-          </div>
-          <div className="h-0.5 w-8 bg-slate-800" />
-          <div className="flex items-center gap-2">
-            <span className={`h-6 w-6 rounded-full text-xs font-bold flex items-center justify-center ${step === 3 ? "bg-emerald-500 text-white" : "bg-slate-800 text-slate-400"}`}>3</span>
-            <span className={`text-xs font-semibold ${step === 3 ? "text-emerald-400" : "text-slate-500"}`}>{t("appointment.stepDone")}</span>
-          </div>
+        {/* Progress Bar — the Qualify step appears only when this modal was
+            lent a live voice session. */}
+        <div className="flex items-center justify-between border-b border-white/[0.08] pb-4 overflow-x-auto">
+          {(voice
+            ? ([
+                { at: 0 as const, label: t("appointment.stepQualify") },
+                { at: 1 as const, label: t("appointment.stepSelectTime") },
+                { at: 2 as const, label: t("appointment.stepYourDetails") },
+                { at: 3 as const, label: t("appointment.stepDone") },
+              ])
+            : ([
+                { at: 1 as const, label: t("appointment.stepSelectTime") },
+                { at: 2 as const, label: t("appointment.stepYourDetails") },
+                { at: 3 as const, label: t("appointment.stepDone") },
+              ])
+          ).map((s, i, arr) => (
+            <React.Fragment key={s.at}>
+              <div className="flex items-center gap-2 shrink-0">
+                <span
+                  className={`h-6 w-6 rounded-full text-xs font-bold flex items-center justify-center ${
+                    s.at === 3 ? (step === 3 ? "bg-emerald-500 text-white" : "bg-slate-800 text-slate-400") : step >= s.at ? "bg-sky-500 text-white" : "bg-slate-800 text-slate-400"
+                  }`}
+                >
+                  {i + 1}
+                </span>
+                <span className={`text-xs font-semibold ${s.at === 3 ? (step === 3 ? "text-emerald-400" : "text-slate-500") : step >= s.at ? "text-slate-200" : "text-slate-500"}`}>
+                  {s.label}
+                </span>
+              </div>
+              {i < arr.length - 1 && <div className="h-0.5 w-6 bg-slate-800 shrink-0 mx-1" />}
+            </React.Fragment>
+          ))}
         </div>
+
+        {/* Step 0: Voice qualification — interactive AI, started only by an
+            explicit tap; opening the modal never touches the microphone. */}
+        {step === 0 && voice && (
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <h3 className="text-sm font-bold text-slate-100">{t("appointment.qualifyTitle")}</h3>
+              <p className="text-xs text-slate-400">{t("appointment.qualifyIntro", { employeeName })}</p>
+            </div>
+
+            {qualStage === "intro" && (
+              <Button
+                variant="default"
+                data-testid="start-qualification"
+                onClick={() => {
+                  setQualStage("active");
+                  voice.startCall();
+                }}
+                className="w-full flex items-center justify-center gap-2 text-xs font-semibold"
+              >
+                <Mic className="h-4 w-4" aria-hidden="true" />
+                {t("appointment.qualifyStart")}
+              </Button>
+            )}
+
+            {qualStage === "active" && (
+              <div className="p-4 rounded-xl bg-white/[0.04] border border-white/[0.08] space-y-3">
+                <div className="flex items-center gap-2.5">
+                  <span className={`h-2.5 w-2.5 rounded-full ${voice.voiceState === "idle" ? "bg-slate-500" : "bg-sky-400 animate-pulse"}`} aria-hidden="true" />
+                  <span className="text-xs font-semibold text-slate-200" aria-live="polite">
+                    {voice.voiceState === "connecting"
+                      ? t("status.preparingVoice")
+                      : voice.voiceState === "speaking"
+                        ? t("status.speaking")
+                        : voice.voiceState === "thinking"
+                          ? t("status.thinking")
+                          : voice.voiceState === "listening"
+                            ? t("status.listening")
+                            : t("status.availableNow")}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400">
+                  {temperature === null
+                    ? t("appointment.qualifyInProgress")
+                    : temperature === "COLD"
+                      ? t("appointment.qualifyDoneCold")
+                      : t("appointment.qualifyDoneWarm")}
+                </p>
+                {temperature !== null && (
+                  <Button
+                    variant="default"
+                    data-testid="qualification-continue"
+                    onClick={advanceToSlots}
+                    className="w-full flex items-center justify-center gap-2 text-xs font-semibold"
+                  >
+                    {t("appointment.qualifyContinue")} <ArrowRight className="h-4 w-4" aria-hidden="true" />
+                  </Button>
+                )}
+              </div>
+            )}
+
+            {/* The escape hatch: nobody is ever trapped in the questionnaire.
+                A visitor who skips still books; the lead simply carries no
+                voice qualification. */}
+            <button
+              type="button"
+              data-testid="skip-qualification"
+              onClick={advanceToSlots}
+              className="w-full text-center text-[11px] text-slate-400 hover:text-slate-200 underline underline-offset-2 focus:outline-none focus:ring-2 focus:ring-sky-500 rounded py-1"
+            >
+              {t("appointment.qualifySkip")}
+            </button>
+          </div>
+        )}
 
         {/* Step 1: Slot Selection */}
         {step === 1 && (

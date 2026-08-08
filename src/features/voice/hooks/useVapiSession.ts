@@ -110,6 +110,7 @@ export function useVapiSession({
   const [messages, setMessages] = useState<MessageItem[]>([]);
   const [durationSeconds, setDurationSeconds] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [callId, setCallId] = useState<string | null>(null);
   // True only while the call's very first assistant utterance (the scripted
   // first_message) is being spoken — lets the UI say "Introducing…" instead
   // of the generic "Speaking" label for just that opening line, then never
@@ -483,7 +484,12 @@ export function useVapiSession({
         ...(serverUrl ? { server: { url: serverUrl } } : {}),
       } as VapiStartParam;
 
-      await vapiRef.current.start(assistantConfig);
+      const call = await vapiRef.current.start(assistantConfig);
+      // The Vapi call id is what links this browser session to the
+      // server-side conversation/lead the webhook writes (conversations.
+      // vapi_call_id -> leads.conversation_id) — it's how the booking
+      // flow's qualification step can poll for the lead's temperature.
+      setCallId((call as { id?: string } | null)?.id ?? null);
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : startCallErrorText;
       setError(errorMessage);
@@ -553,6 +559,7 @@ export function useVapiSession({
     error,
     isPlayingIntro,
     isDemoMode,
+    callId,
     startCall,
     endCall,
     toggleMute,
