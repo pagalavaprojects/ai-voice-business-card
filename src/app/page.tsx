@@ -49,7 +49,7 @@ const stats = [
 
 export default function HomePage() {
   return (
-    <main className="min-h-screen bg-[#090d16] text-slate-100 relative overflow-hidden">
+    <main id="main-content" className="min-h-screen bg-[#090d16] text-slate-100 relative overflow-hidden">
       {/* Glow Background */}
       <div className="fixed inset-0 pointer-events-none" aria-hidden="true">
         <div className="absolute top-0 left-1/4 w-[600px] h-[600px] bg-sky-500/5 blur-[150px] rounded-full" />

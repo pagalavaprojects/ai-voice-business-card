@@ -354,7 +354,7 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
 
   if (!card) {
     return (
-      <main className="min-h-screen bg-[#070b12] flex items-center justify-center p-4">
+      <main id="main-content" className="min-h-screen bg-[#070b12] flex items-center justify-center p-4">
         <Card className="glass-panel border-white/[0.08] p-8 rounded-3xl max-w-sm text-center space-y-3">
           <h1 className="text-lg font-bold text-slate-100">
             {loadError === "notfound" ? t("cardNotFound") : t("cardUnavailable")}

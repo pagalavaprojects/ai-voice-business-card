@@ -8,7 +8,7 @@ import { Skeleton } from "@/shared/ui/skeleton";
  */
 export const BusinessCardSkeleton: React.FC = () => {
   return (
-    <main className="min-h-screen bg-[#070b12] text-slate-100 py-6 px-4 sm:py-10">
+    <main id="main-content" className="min-h-screen bg-[#070b12] text-slate-100 py-6 px-4 sm:py-10">
       <div className="fixed inset-0 pointer-events-none overflow-hidden" aria-hidden="true">
         <div className="absolute -top-24 left-1/2 -translate-x-1/2 w-[34rem] h-[34rem] bg-sky-500/10 blur-[140px] rounded-full" />
         <div className="absolute bottom-0 right-0 w-96 h-96 bg-indigo-500/[0.07] blur-[130px] rounded-full" />
