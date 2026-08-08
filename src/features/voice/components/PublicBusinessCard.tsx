@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
-import { Mail, Phone, Globe, Calendar, Download, QrCode, MessageCircle, Linkedin, Link2, X, Loader2, CheckCircle2 } from "lucide-react";
+import { Mail, Phone, Globe, Calendar, Download, QrCode, MessageCircle, Linkedin, Link2, X, Loader2, CheckCircle2, Play, Square, Volume2 } from "lucide-react";
 import { useVapiSession } from "@/features/voice/hooks/useVapiSession";
 import { VoiceMicButton } from "@/features/voice/components/VoiceMicButton";
 import { Card } from "@/shared/ui/card";
@@ -79,8 +79,7 @@ interface PublicCardData {
   voiceProvider?: "openai" | "11labs";
   voiceModel?: string;
   language?: string;
-  speechLocale?: string | null;
-  transcriberProvider?: "deepgram" | "azure" | null;
+  transcriber?: { provider: string; model?: string; language: string } | null;
   enabledLanguages?: LanguageCode[];
 }
 
@@ -141,6 +140,26 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
   const [appointmentOpen, setAppointmentOpen] = useState(false);
   const [savedContactSuccess, setSavedContactSuccess] = useState(false);
 
+  // ---- Pre-recorded pitches (speak-only; entirely separate from the live
+  // AI conversation). One shared <audio> element plays server-rendered MP3s
+  // from the pitch route — no microphone, no Vapi session, no permissions.
+  // "loading" covers the fetch+decode window so the tapped button shows a
+  // spinner instead of appearing dead while TTS renders on a cold cache.
+  const [pitchPlaying, setPitchPlaying] = useState<"elevator" | "product" | "usp" | null>(null);
+  const [pitchLoading, setPitchLoading] = useState<"elevator" | "product" | "usp" | null>(null);
+  const [pitchError, setPitchError] = useState(false);
+  const pitchAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  const stopPitch = () => {
+    pitchAudioRef.current?.pause();
+    pitchAudioRef.current = null;
+    setPitchPlaying(null);
+    setPitchLoading(null);
+  };
+
+  // Unmount must not leave a detached audio element narrating to nobody.
+  useEffect(() => () => pitchAudioRef.current?.pause(), []);
+
   // Refetches whenever the visitor's language changes (including the one
   // extra fetch on first load once useLanguage resolves the real starting
   // language past its synchronous Tamil default — a small, one-time,
@@ -200,8 +219,7 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
     voiceId: card?.voiceId,
     voiceProvider: card?.voiceProvider,
     voiceModel: card?.voiceModel,
-    speechLocale: card?.speechLocale ?? undefined,
-    transcriberProvider: card?.transcriberProvider ?? undefined,
+    transcriber: card?.transcriber ?? undefined,
     t,
   });
 
@@ -314,6 +332,48 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
   useEffect(() => {
     if (isCallActive) setHasAutoStartFailed(false);
   }, [isCallActive]);
+
+  // The live conversation and a pre-recorded pitch are two different audio
+  // sources — never let them talk over each other. A call starting (mic
+  // tap, suggested-question tap, or the auto-start) silences any playing
+  // pitch; playPitch below does the reverse by ending an active call first.
+  useEffect(() => {
+    if (isCallActive) {
+      pitchAudioRef.current?.pause();
+      pitchAudioRef.current = null;
+      setPitchPlaying(null);
+      setPitchLoading(null);
+    }
+  }, [isCallActive]);
+
+  const playPitch = (type: "elevator" | "product" | "usp") => {
+    if (pitchPlaying === type || pitchLoading === type) {
+      stopPitch();
+      return;
+    }
+    stopPitch();
+    setPitchError(false);
+    if (voiceStateRef.current !== "idle") endCall();
+
+    const audio = new Audio(
+      `/api/public/${companyId}/${employeeId}/pitch?type=${type}&lang=${encodeURIComponent(language)}`
+    );
+    pitchAudioRef.current = audio;
+    setPitchLoading(type);
+    audio.onplaying = () => {
+      setPitchLoading(null);
+      setPitchPlaying(type);
+    };
+    audio.onended = () => stopPitch();
+    audio.onerror = () => {
+      stopPitch();
+      setPitchError(true);
+    };
+    audio.play().catch(() => {
+      stopPitch();
+      setPitchError(true);
+    });
+  };
 
   // "Online" reflects whether the AI can actually take a call right now, which
   // is always — it is not gated on the human's working hours. Those are shown
@@ -592,6 +652,56 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
               </div>
             )}
           </div>
+
+          {/* ---------- Pre-recorded pitches (speak-only, no mic) ---------- */}
+          <section aria-labelledby="pitch-heading" className="border-t border-white/[0.06] pt-4">
+            <h2 id="pitch-heading" className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-2.5 flex items-center gap-1.5">
+              <Volume2 className="h-3 w-3" aria-hidden="true" />
+              {t("pitch.sectionTitle")}
+            </h2>
+            <div className="grid grid-cols-3 gap-2">
+              {(
+                [
+                  { type: "elevator" as const, label: t("pitch.elevator"), duration: "30s" },
+                  { type: "product" as const, label: t("pitch.product"), duration: "40s" },
+                  { type: "usp" as const, label: t("pitch.usp"), duration: "5s" },
+                ]
+              ).map(({ type, label, duration }) => {
+                const isActive = pitchPlaying === type;
+                const isBuffering = pitchLoading === type;
+                return (
+                  <button
+                    key={type}
+                    type="button"
+                    data-testid={`pitch-${type}`}
+                    onClick={() => playPitch(type)}
+                    aria-label={isActive || isBuffering ? t("pitch.stopAria", { label }) : t("pitch.playAria", { label })}
+                    aria-pressed={isActive}
+                    className={`flex flex-col items-center gap-1.5 rounded-xl border px-2 py-3 text-center transition-all duration-150 focus:outline-none focus:ring-2 focus:ring-sky-500 active:scale-[0.98] ${
+                      isActive || isBuffering
+                        ? "bg-sky-500/15 border-sky-400/50 text-sky-300"
+                        : "bg-white/[0.04] hover:bg-white/[0.08] border-white/[0.08] hover:border-sky-400/40 text-slate-200"
+                    }`}
+                  >
+                    {isBuffering ? (
+                      <Loader2 className="h-4 w-4 animate-spin text-sky-400" aria-hidden="true" />
+                    ) : isActive ? (
+                      <Square className="h-4 w-4 text-sky-400" aria-hidden="true" />
+                    ) : (
+                      <Play className="h-4 w-4 text-sky-400" aria-hidden="true" />
+                    )}
+                    <span className="text-[11px] font-semibold leading-tight">{label}</span>
+                    <span className="text-[9px] font-mono text-slate-400">~{duration}</span>
+                  </button>
+                );
+              })}
+            </div>
+            {pitchError && (
+              <p role="alert" className="mt-2 text-[11px] text-rose-300 text-center">
+                {t("pitch.error")}
+              </p>
+            )}
+          </section>
 
           {/* ---------- Try asking ---------- */}
           {!isCallActive && card.suggestedQuestions && card.suggestedQuestions.length > 0 && (

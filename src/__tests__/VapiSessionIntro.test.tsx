@@ -120,6 +120,51 @@ describe("useVapiSession — scripted intro tracking", () => {
     expect(vapi.started[0]).not.toHaveProperty("transcriber");
   });
 
+  it("passes a full transcriber spec (provider+model+language) through verbatim — the Tamil/Kannada OpenAI path", async () => {
+    // Regression for the live Tamil outage: the server resolves
+    // { provider: "openai", model: "gpt-4o-mini-transcribe", language: "ta" }
+    // and this hook must send it whole — dropping `model` (which the legacy
+    // speechLocale/transcriberProvider pair could not carry) makes Vapi
+    // reject the call with a validation 400 before any audio flows.
+    const { result } = renderHook(() =>
+      useVapiSession({
+        companyId: "c1",
+        employeeId: "e1",
+        vapiPublicKey: REAL_KEY,
+        transcriber: { provider: "openai", model: "gpt-4o-mini-transcribe", language: "ta" },
+      })
+    );
+
+    await act(async () => {
+      await result.current.startCall();
+    });
+
+    const vapi = fakeVapiInstances[0];
+    expect(vapi.started[0]).toMatchObject({
+      transcriber: { provider: "openai", model: "gpt-4o-mini-transcribe", language: "ta" },
+    });
+  });
+
+  it("the transcriber object wins over the legacy speechLocale pair when both are given", async () => {
+    const { result } = renderHook(() =>
+      useVapiSession({
+        companyId: "c1",
+        employeeId: "e1",
+        vapiPublicKey: REAL_KEY,
+        speechLocale: "en",
+        transcriberProvider: "deepgram",
+        transcriber: { provider: "azure", language: "te-IN" },
+      })
+    );
+
+    await act(async () => {
+      await result.current.startCall();
+    });
+
+    const vapi = fakeVapiInstances[0];
+    expect(vapi.started[0]).toMatchObject({ transcriber: { provider: "azure", language: "te-IN" } });
+  });
+
   it("defaults to OpenAI when no voiceProvider is passed — zero regression for existing calls", async () => {
     const { result } = renderHook(() => useVapiSession({ companyId: "c1", employeeId: "e1", vapiPublicKey: REAL_KEY, voiceId: "shimmer" }));
 

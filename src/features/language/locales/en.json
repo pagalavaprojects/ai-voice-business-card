@@ -46,6 +46,15 @@
     "featured": "Featured",
     "actionsHeading": "Contact and actions"
   },
+  "pitch": {
+    "sectionTitle": "Listen",
+    "elevator": "Elevator Pitch",
+    "product": "Product Pitch",
+    "usp": "Why Us",
+    "playAria": "Play {label}",
+    "stopAria": "Stop {label}",
+    "error": "Could not play the pitch — please try again."
+  },
   "contact": {
     "website": "Website"
   },

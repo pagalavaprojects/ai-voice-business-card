@@ -100,34 +100,19 @@ describe("resolveSuggestedQuestions", () => {
 });
 
 describe("resolveTranscriberConfig", () => {
-  const originalAzureFlag = process.env.VAPI_AZURE_SPEECH_ENABLED;
-  afterEach(() => {
-    if (originalAzureFlag === undefined) delete process.env.VAPI_AZURE_SPEECH_ENABLED;
-    else process.env.VAPI_AZURE_SPEECH_ENABLED = originalAzureFlag;
-  });
-
-  it("resolves Deepgram with the confirmed locale for en/ta/hi/kn", () => {
+  it("resolves Deepgram for the two languages nova-2 actually supports (en/hi)", () => {
     expect(resolveTranscriberConfig("en")).toEqual({ provider: "deepgram", language: "en" });
-    expect(resolveTranscriberConfig("ta")).toEqual({ provider: "deepgram", language: "ta" });
     expect(resolveTranscriberConfig("hi")).toEqual({ provider: "deepgram", language: "hi" });
-    expect(resolveTranscriberConfig("kn")).toEqual({ provider: "deepgram", language: "kn" });
   });
 
-  it("omits the transcriber override for Telugu/Malayalam when Azure Speech is not confirmed linked", () => {
-    delete process.env.VAPI_AZURE_SPEECH_ENABLED;
-    expect(resolveTranscriberConfig("te")).toBeNull();
-    expect(resolveTranscriberConfig("ml")).toBeNull();
+  it("resolves the OpenAI transcriber (with model) for Tamil/Kannada — Deepgram nova-2 rejects both with a Vapi validation 400", () => {
+    expect(resolveTranscriberConfig("ta")).toEqual({ provider: "openai", model: "gpt-4o-mini-transcribe", language: "ta" });
+    expect(resolveTranscriberConfig("kn")).toEqual({ provider: "openai", model: "gpt-4o-mini-transcribe", language: "kn" });
   });
 
-  it("resolves Azure with the Indian locale for Telugu/Malayalam once explicitly enabled", () => {
-    process.env.VAPI_AZURE_SPEECH_ENABLED = "true";
+  it("resolves Azure with the Indian locale for Telugu/Malayalam — validated against the live Vapi account, no env gate needed anymore", () => {
     expect(resolveTranscriberConfig("te")).toEqual({ provider: "azure", language: "te-IN" });
     expect(resolveTranscriberConfig("ml")).toEqual({ provider: "azure", language: "ml-IN" });
-  });
-
-  it("does not flip Deepgram languages over to Azure just because the flag is set", () => {
-    process.env.VAPI_AZURE_SPEECH_ENABLED = "true";
-    expect(resolveTranscriberConfig("en")).toEqual({ provider: "deepgram", language: "en" });
   });
 });
 

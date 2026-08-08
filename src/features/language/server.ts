@@ -66,37 +66,24 @@ export function getLanguageDirective(language: LanguageCode): string {
   );
 }
 
-export interface TranscriberConfig {
-  provider: "deepgram" | "azure";
-  language: string;
-}
+export type { TranscriberSpec as TranscriberConfig } from "./config";
 
 /**
- * Resolves which speech-recognition provider/language a live call should
- * request, per the visitor's chosen language. Deepgram covers English/
- * Tamil/Hindi/Kannada directly (confirmed against the installed
- * @vapi-ai/web SDK's own type definitions). Telugu and Malayalam are not in
- * Deepgram's supported-language list at all — Azure's transcriber does
- * support both ('te-IN'/'ml-IN', also verified against the SDK types), but
- * requires Azure Speech to be linked as a provider key in Vapi's own
- * dashboard, which this app has no way to detect or verify.
- *
- * Gated behind VAPI_AZURE_SPEECH_ENABLED so the unconfigured (default)
- * state is the SAFE one: requesting a transcriber provider Vapi doesn't
- * actually have credentials for is more likely to fail the call outright
- * than to gracefully degrade, so until an admin confirms Azure Speech is
- * linked and sets this env var, Telugu/Malayalam calls omit the
- * transcriber override entirely and fall back to Vapi's platform default
- * rather than risk a broken call. Same env-gated-opt-in shape as
- * resolveVoiceProviderConfig's ElevenLabs override.
+ * Resolves which speech-recognition provider/model/language a live call
+ * should request, per the visitor's chosen language. The mapping itself
+ * lives on each language's definition in config.ts, where every entry was
+ * validated against the live Vapi account — this replaced the old
+ * speechLocale/azureSpeechLocale pair after Vapi's server was observed
+ * rejecting deepgram+ta/kn with a validation 400 (Deepgram's default
+ * nova-2 model supports fewer languages than the SDK's type union claims),
+ * which surfaced to Tamil visitors as an immediate "Voice connection
+ * error". The former VAPI_AZURE_SPEECH_ENABLED gate is gone for the same
+ * reason: Azure te-IN/ml-IN call creation was verified working on this
+ * account, so the "unverified provider" risk the gate defended against no
+ * longer exists.
  */
-export function resolveTranscriberConfig(language: LanguageCode): TranscriberConfig | null {
-  const def = getLanguageDefinition(language);
-  if (def.speechLocale) return { provider: "deepgram", language: def.speechLocale };
-  if (def.azureSpeechLocale && process.env.VAPI_AZURE_SPEECH_ENABLED === "true") {
-    return { provider: "azure", language: def.azureSpeechLocale };
-  }
-  return null;
+export function resolveTranscriberConfig(language: LanguageCode) {
+  return getLanguageDefinition(language).transcriber ?? null;
 }
 
 /**

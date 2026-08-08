@@ -46,6 +46,15 @@
     "featured": "ವಿಶೇಷತೆಗಳು",
     "actionsHeading": "ಸಂಪರ್ಕ ಮತ್ತು ಕ್ರಿಯೆಗಳು"
   },
+  "pitch": {
+    "sectionTitle": "ಕೇಳಿ",
+    "elevator": "ಪರಿಚಯ ಪಿಚ್",
+    "product": "ಉತ್ಪನ್ನ ಪಿಚ್",
+    "usp": "ನಮ್ಮ ವಿಶೇಷತೆ",
+    "playAria": "{label} ಪ್ಲೇ ಮಾಡಿ",
+    "stopAria": "{label} ನಿಲ್ಲಿಸಿ",
+    "error": "ಪಿಚ್ ಪ್ಲೇ ಆಗಲಿಲ್ಲ — ದಯವಿಟ್ಟು ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ."
+  },
   "contact": {
     "website": "ವೆಬ್‌ಸೈಟ್"
   },

@@ -22,6 +22,9 @@ const DEFAULT_FIRST_MESSAGE = "Hello, thank you for scanning my business card. H
 // domain types into a client-side voice hook, which isn't worth doing
 // for a shape Vapi's own API validates at runtime regardless.
 type VapiStartParam = Parameters<InstanceType<typeof Vapi>["start"]>[0];
+/** The assistant-object form of VapiStartParam (it's a string | object
+ * union — the object member is what this hook always builds). */
+type VapiAssistantParam = Exclude<VapiStartParam, string | undefined>;
 
 /** Demo mode (no real Vapi key configured — local dev without credentials,
  * or this exact env in the test suite) simulates the call entirely client
@@ -54,11 +57,16 @@ export interface UseVapiSessionOptions {
    * multilingual support. */
   speechLocale?: string;
   /** Which transcriber provider speechLocale belongs to. Defaults to
-   * "deepgram" — the only provider used before Telugu/Malayalam support was
+   * "deepgram" — the only provider used before multilingual support was
    * added, so an existing caller that only ever passed speechLocale keeps
-   * behaving identically. "azure" is used for the two languages Deepgram
-   * doesn't support (see features/language/config.ts's azureSpeechLocale). */
+   * behaving identically. */
   transcriberProvider?: "deepgram" | "azure";
+  /** The full transcriber spec resolved server-side (provider + optional
+   * model + language). Takes precedence over the legacy speechLocale/
+   * transcriberProvider pair when present — needed because the OpenAI
+   * transcriber (Tamil/Kannada) requires a `model` field the legacy pair
+   * cannot express. */
+  transcriber?: { provider: string; model?: string; language: string };
   /** Translator for this hook's own fallback strings (demo-mode greeting,
    * connection-error text) — resolved by the caller against the visitor's
    * chosen language, same t-as-prop convention as LanguageGate/
@@ -81,6 +89,7 @@ export function useVapiSession({
   serverUrl,
   speechLocale,
   transcriberProvider = "deepgram",
+  transcriber,
   t,
 }: UseVapiSessionOptions) {
   const defaultFirstMessage = t ? t("mic.defaultFirstMessage") : DEFAULT_FIRST_MESSAGE;
@@ -453,17 +462,22 @@ export function useVapiSession({
             ? { provider: "11labs" as const, voiceId, model: (voiceModel || "eleven_multilingual_v2") as "eleven_multilingual_v2" }
             : { provider: "openai" as const, voiceId: voiceId || DEFAULT_VOICE_ID, model: "tts-1-hd" as const },
         // Switches speech recognition to the visitor's chosen conversation
-        // language — confirmed against the installed @vapi-ai/web SDK's own
-        // transcriber types that Deepgram directly supports 'en'/'ta'/'hi'/
-        // 'kn', and that Azure supports 'te-IN'/'ml-IN' (Deepgram does not
-        // support Telugu/Malayalam at all — not assumed or guessed, verified
-        // by reading both closed union types). Which provider speechLocale
-        // belongs to is resolved server-side (resolveTranscriberConfig) and
-        // handed down via transcriberProvider; this hook doesn't re-derive
-        // it. Omitted entirely when speechLocale is unset, so a caller that
-        // never opts into multilingual support keeps Vapi's own default
-        // transcriber behavior exactly as before.
-        ...(speechLocale ? { transcriber: { provider: transcriberProvider, language: speechLocale } as const } : {}),
+        // language. The full spec (provider + model + language) is resolved
+        // server-side (resolveTranscriberConfig) and passed down whole via
+        // `transcriber` — this hook doesn't re-derive provider choice. The
+        // SDK's type unions proved untrustworthy here (they accept
+        // deepgram+ta, which Vapi's server rejects with a 400 because
+        // Deepgram's nova-2 supports fewer languages than the union
+        // claims), so the mapping is validated per-account instead — see
+        // features/language/config.ts. The legacy speechLocale/
+        // transcriberProvider pair is kept for existing callers; omitted
+        // entirely when neither is set, keeping Vapi's own default
+        // transcriber behavior.
+        ...(transcriber
+          ? { transcriber: transcriber as VapiAssistantParam["transcriber"] }
+          : speechLocale
+            ? { transcriber: { provider: transcriberProvider, language: speechLocale } as const }
+            : {}),
         // Routes tool-calls and the end-of-call report back to our
         // webhook for this specific company/employee during the call.
         ...(serverUrl ? { server: { url: serverUrl } } : {}),
@@ -477,7 +491,7 @@ export function useVapiSession({
       setVoiceState("idle");
       stopTimer();
     }
-  }, [voiceState, startTimer, stopTimer, firstMessage, systemPrompt, tools, serverUrl, voiceId, voiceProvider, voiceModel, speechLocale, transcriberProvider, clearDemoTimeouts, defaultFirstMessage, startCallErrorText]);
+  }, [voiceState, startTimer, stopTimer, firstMessage, systemPrompt, tools, serverUrl, voiceId, voiceProvider, voiceModel, speechLocale, transcriberProvider, transcriber, clearDemoTimeouts, defaultFirstMessage, startCallErrorText]);
 
   // Always call the latest startCall from the stable error handler
   // registered once inside the init effect (see reconnect logic above).

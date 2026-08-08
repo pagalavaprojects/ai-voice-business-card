@@ -275,14 +275,14 @@ export async function GET(req: NextRequest, { params }: { params: { companyId: s
       voiceModel: voiceConfig.model,
       // Echoes back what was actually resolved (not just what was
       // requested) — the effective language even when ?lang= was absent,
-      // and which transcriber provider/locale the client should pass to
-      // useVapiSession for speech recognition to match. null for a
-      // language with no confirmed-working transcriber right now (Telugu/
-      // Malayalam without Azure Speech linked) — useVapiSession already
-      // treats an absent speechLocale as "keep Vapi's platform default."
+      // and the full transcriber spec (provider + model + locale) the
+      // client should pass to useVapiSession for speech recognition to
+      // match. A single object rather than parallel fields because the
+      // OpenAI transcriber (Tamil/Kannada) additionally requires its
+      // `model` — splitting three coupled values across loose fields is
+      // how the deepgram/ta mismatch shipped in the first place.
       language,
-      speechLocale: resolveTranscriberConfig(language)?.language ?? null,
-      transcriberProvider: resolveTranscriberConfig(language)?.provider ?? null,
+      transcriber: resolveTranscriberConfig(language),
       // The company's actual enabled-language set (or every platform
       // language when unrestricted) — the header selector and the
       // pre-conversation gate both only ever offer what's in this list, so

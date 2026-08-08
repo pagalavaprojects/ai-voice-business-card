@@ -7,8 +7,8 @@
 | **Live** | https://maylaanai.com (primary) · https://ai-voice-business-card.vercel.app (still live, unchanged) |
 | **Repository** | https://github.com/pagalavaprojects/ai-voice-business-card |
 | **Demo card** | [`/33333333…/44444444…`](https://maylaanai.com/33333333-3333-3333-3333-333333333333/44444444-4444-4444-4444-444444444444) or the short link [`/c/srinivasan`](https://maylaanai.com/c/srinivasan) |
-| **Last updated** | 2026-08-07 |
-| **Completion** | **~99%** — all 15 migrations applied in production; production domain migrated to maylaanai.com; the public "Book an Appointment" flow now performs a real Cal.com booking (previously a UI mockup that always claimed success); enterprise multilingual voice assistant spans **six** languages (Tamil default, English, Hindi, Telugu, Malayalam, Kannada) behind a dedicated pre-conversation language-selection screen, with per-company language settings in the dashboard, alongside short public URLs, founder photo/logo, HD voice, and the professional-receptionist scripted welcome, all built, tested and live |
+| **Last updated** | 2026-08-08 |
+| **Completion** | **~99%** — the Phase 16 lead-qualification migration is now APPLIED in production (15/15 columns + both indexes verified against the live schema, existing leads untouched); Tamil (and Kannada) live voice fixed — Vapi was rejecting `deepgram+ta/kn` with a validation 400 (nova-2 doesn't support them), now routed through the OpenAI transcriber, with Telugu/Malayalam upgraded to Azure (`te-IN`/`ml-IN`), all validated against the live Vapi account; NEW pre-recorded voice pitches on the public card (Elevator ≈30s, Product ≈40s, USP ≈5s — speak-only, no mic, OpenAI TTS server-side, CDN-cached, all six languages); production voice live-verified via real browser automation. Remaining external blockers: real Cal.com credentials (`CALCOM_API_KEY` + `CALCOM_EVENT_TYPE_ID`) for live bookings, and a WhatsApp Business provider + credentials for booking/reminder notifications (no sending architecture or credentials exist — only wa.me deep links) |
 
 > This file is refreshed after every completed module. If it looks stale
 > against the repo, trust the repo and raise it.
@@ -45,7 +45,7 @@ inward; repositories abstract Supabase behind interfaces.
 | API routes | 49 |
 | Dashboard pages | 14 |
 | Database | 27 tables · 39 indexes · 43 FKs · 26 RLS policies |
-| Migrations | 16 total, 15 applied in production, **1 pending** (Phase 16's qualification-engine migration — see §7) |
+| Migrations | 16 tracked, **all 16 applied in production** (the Phase 16 qualification-engine migration was applied 2026-08-08 via `supabase db push` and verified column-by-column against the live schema) |
 | Unit/integration tests | **328 passing**, 1 skipped (documented) |
 | Browser tests | **47 passing** across 3 viewports, 1 pre-existing unrelated finding (§4, Phase 13) |
 | Accessibility | WCAG 2.1 AA — zero violations on every surface this phase touched |

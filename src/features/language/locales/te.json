@@ -46,6 +46,15 @@
     "featured": "ప్రత్యేకమైనవి",
     "actionsHeading": "సంపర్కం మరియు చేయాలు"
   },
+  "pitch": {
+    "sectionTitle": "వినండి",
+    "elevator": "పరిచయ పిచ్",
+    "product": "ఉత్పత్తుల పిచ్",
+    "usp": "మా ప్రత్యేకత",
+    "playAria": "{label} ప్లే చేయండి",
+    "stopAria": "{label} ఆపండి",
+    "error": "పిచ్ ప్లే కాలేదు — దయచేసి మళ్లీ ప్రయత్నించండి."
+  },
   "contact": {
     "website": "వెబ్‌సైట్"
   },

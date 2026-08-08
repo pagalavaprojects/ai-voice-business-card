@@ -46,6 +46,15 @@
     "featured": "विशेष",
     "actionsHeading": "संपर्क और कार्रवाईयाँ"
   },
+  "pitch": {
+    "sectionTitle": "सुनें",
+    "elevator": "परिचय पिच",
+    "product": "उत्पाद पिच",
+    "usp": "हमारी खासियत",
+    "playAria": "{label} चलाएँ",
+    "stopAria": "{label} रोकें",
+    "error": "पिच चलाई नहीं जा सकी — कृपया फिर से कोशिश करें।"
+  },
   "contact": {
     "website": "वेबसाइट"
   },

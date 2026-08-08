@@ -55,34 +55,58 @@ describe("language config", () => {
     });
   });
 
-  it("getLanguageDefinition returns the matching Deepgram speech locale for the four Deepgram-supported languages", () => {
-    expect(getLanguageDefinition("ta").speechLocale).toBe("ta");
-    expect(getLanguageDefinition("en").speechLocale).toBe("en");
-    expect(getLanguageDefinition("hi").speechLocale).toBe("hi");
-    expect(getLanguageDefinition("kn").speechLocale).toBe("kn");
+  describe("per-language transcriber specs", () => {
+    // Regression for the live Tamil outage: the SDK's DeepgramTranscriber
+    // type union accepts "ta"/"kn", but Vapi's server rejects them with a
+    // validation 400 ("must be one of the following values for the default
+    // nova-2 model: …") — which surfaced to every Tamil visitor as an
+    // instant "Voice connection error" banner. This list is Vapi's own
+    // enumeration from that 400 response, so the assertion below fails the
+    // build if any language is ever mapped back onto Deepgram with a
+    // language nova-2 cannot actually transcribe.
+    const DEEPGRAM_NOVA2_LANGUAGES = new Set([
+      "en", "bg", "ca", "zh", "zh-CN", "zh-HK", "zh-Hans", "zh-TW", "zh-Hant", "cs", "da", "da-DK",
+      "nl", "en-US", "en-AU", "en-GB", "en-NZ", "en-IN", "et", "fi", "nl-BE", "fr", "fr-CA", "de",
+      "de-CH", "el", "hi", "hu", "id", "it", "ja", "ko", "ko-KR", "lv", "lt", "ms", "multi", "no",
+      "pl", "pt", "pt-BR", "ro", "ru", "sk", "es", "es-419", "sv", "sv-SE", "th", "th-TH", "tr", "uk", "vi",
+    ]);
+
+    it("never maps a language to Deepgram outside nova-2's actual supported set", () => {
+      for (const lang of SUPPORTED_LANGUAGES) {
+        if (lang.transcriber.provider === "deepgram") {
+          expect(DEEPGRAM_NOVA2_LANGUAGES.has(lang.transcriber.language)).toBe(true);
+        }
+      }
+    });
+
+    it("routes Tamil and Kannada through the OpenAI transcriber with its required model field", () => {
+      expect(getLanguageDefinition("ta").transcriber).toEqual({ provider: "openai", model: "gpt-4o-mini-transcribe", language: "ta" });
+      expect(getLanguageDefinition("kn").transcriber).toEqual({ provider: "openai", model: "gpt-4o-mini-transcribe", language: "kn" });
+    });
+
+    it("routes Telugu and Malayalam through Azure with Indian locales", () => {
+      expect(getLanguageDefinition("te").transcriber).toEqual({ provider: "azure", language: "te-IN" });
+      expect(getLanguageDefinition("ml").transcriber).toEqual({ provider: "azure", language: "ml-IN" });
+    });
+
+    it("keeps English and Hindi on Deepgram (unchanged, live-verified behavior)", () => {
+      expect(getLanguageDefinition("en").transcriber).toEqual({ provider: "deepgram", language: "en" });
+      expect(getLanguageDefinition("hi").transcriber).toEqual({ provider: "deepgram", language: "hi" });
+    });
+
+    it("the OpenAI provider always carries its model — Vapi requires it", () => {
+      for (const lang of SUPPORTED_LANGUAGES) {
+        if (lang.transcriber.provider === "openai") {
+          expect(lang.transcriber.model).toBeTruthy();
+        }
+      }
+    });
   });
 
   describe("hasConfirmedSpeechRecognition", () => {
-    it("is true for the four languages Deepgram supports directly", () => {
-      expect(hasConfirmedSpeechRecognition("en")).toBe(true);
-      expect(hasConfirmedSpeechRecognition("ta")).toBe(true);
-      expect(hasConfirmedSpeechRecognition("hi")).toBe(true);
-      expect(hasConfirmedSpeechRecognition("kn")).toBe(true);
-    });
-
-    it("is false for Telugu/Malayalam — not in Deepgram's supported-language list", () => {
-      // Verified against the installed @vapi-ai/web SDK's own type
-      // definitions (a closed union with no 'te'/'ml' and no string escape
-      // hatch), not assumed. These two route through Azure instead, gated
-      // on Azure Speech actually being linked in Vapi's dashboard — see
-      // resolveTranscriberConfig.
-      expect(hasConfirmedSpeechRecognition("te")).toBe(false);
-      expect(hasConfirmedSpeechRecognition("ml")).toBe(false);
-    });
-
-    it("every language still has an Azure or Deepgram locale defined, so none is silently unreachable", () => {
+    it("is true for every shipped language — each transcriber spec was validated against the live Vapi account", () => {
       for (const lang of SUPPORTED_LANGUAGES) {
-        expect(lang.speechLocale || lang.azureSpeechLocale).toBeTruthy();
+        expect(hasConfirmedSpeechRecognition(lang.code)).toBe(true);
       }
     });
   });
