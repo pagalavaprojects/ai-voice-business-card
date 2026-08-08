@@ -6,6 +6,7 @@
  */
 import {
   TAMIL_QUALIFICATION_INTRO,
+  TAMIL_QUALIFICATION_CALL_OPENING,
   TAMIL_QUALIFICATION_SET1,
   TAMIL_QUALIFICATION_SET2,
   getTamilQualificationDirective,
@@ -31,8 +32,24 @@ describe("authored Tamil qualification content", () => {
   it("keeps all 10 Set-2 questions verbatim and in order", () => {
     expect(TAMIL_QUALIFICATION_SET2).toHaveLength(10);
     expect(TAMIL_QUALIFICATION_SET2[0]).toBe("இந்தத் தீர்வு உங்களுக்குக் கிடைத்தால், உங்கள் வணிகத்தில் என்ன மாற்றத்தை எதிர்பார்க்கிறீர்கள்?");
-    expect(TAMIL_QUALIFICATION_SET2[6]).toBe("இதைப் பற்றி தங்களுக்கு யார் தெரிவித்தார்கள்?");
+    expect(TAMIL_QUALIFICATION_SET2[6]).toBe("இதைக் குறித்து தங்களுக்கு யார் தெரிவித்தார்கள்?");
     expect(TAMIL_QUALIFICATION_SET2[9]).toBe("இவ்வாறு தொடரலாமா?");
+  });
+
+  describe("qualification call opening (what actually plays after Book an Appointment)", () => {
+    it("is short, states the purpose, and asks Question 1 verbatim as part of the opening", () => {
+      expect(TAMIL_QUALIFICATION_CALL_OPENING.length).toBeLessThan(400);
+      expect(TAMIL_QUALIFICATION_CALL_OPENING).toContain("சில சிறிய கேள்விகள்");
+      expect(TAMIL_QUALIFICATION_CALL_OPENING.endsWith(TAMIL_QUALIFICATION_SET1[0])).toBe(true);
+    });
+
+    it("is NOT the founder pitch — none of the pitch's signature phrases appear", () => {
+      expect(TAMIL_QUALIFICATION_CALL_OPENING).not.toContain("Business Card ஐ கொடுத்திருப்பீங்க");
+      expect(TAMIL_QUALIFICATION_CALL_OPENING).not.toContain("Paper Business Card");
+      expect(TAMIL_QUALIFICATION_CALL_OPENING).not.toContain("Elevator Pitch");
+      expect(TAMIL_QUALIFICATION_CALL_OPENING).not.toContain("no-show");
+      expect(TAMIL_QUALIFICATION_CALL_OPENING).not.toBe(TAMIL_QUALIFICATION_INTRO);
+    });
   });
 
   it("has no duplicated questions across the 17", () => {
@@ -62,6 +79,13 @@ describe("authored Tamil qualification content", () => {
       expect(directive).toContain("Never invent an answer the visitor did not give");
       expect(directive).toContain("never");
       expect(directive).toContain("do not translate, paraphrase, shorten, reword or renumber");
+    });
+
+    it("handles the opening-already-asked-Q1 case, refusals, and bans pitch replay", () => {
+      expect(directive).toContain("do NOT repeat it");
+      expect(directive).toContain("continue with question 2");
+      expect(directive).toContain("Never replay the founder");
+      expect(directive).toContain("declines a question");
     });
   });
 });

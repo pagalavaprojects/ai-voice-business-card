@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import Vapi from "@vapi-ai/web";
+import type Vapi from "@vapi-ai/web";
 import { VoiceState } from "../components/VoiceMicButton";
 import { MessageItem } from "../components/TranscriptViewer";
 import { DEFAULT_VOICE_ID, OpenAIVoiceId } from "@/shared/lib/voice";
@@ -124,6 +124,10 @@ export function useVapiSession({
   const isDemoMode = isDemoVapiKey(vapiPublicKey || process.env.NEXT_PUBLIC_VAPI_PUBLIC_KEY);
 
   const vapiRef = useRef<Vapi | null>(null);
+  // Resolves when the dynamically-imported SDK has been constructed (or
+  // failed) — startCall awaits it so an early tap never mis-lands in the
+  // demo path just because the chunk hadn't arrived yet.
+  const sdkReadyRef = useRef<Promise<unknown> | null>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const isDemoModeRef = useRef<boolean>(isDemoMode);
   // Flips true the moment the first assistant utterance is seen, and stays
@@ -217,8 +221,18 @@ export function useVapiSession({
       };
     }
 
-    try {
-      const vapi = new Vapi(publicKey);
+    // The Vapi SDK (WebRTC + Daily) is deliberately NOT in the initial
+    // bundle: the public card must render and play pitches without paying
+    // for conversational-voice bytes up front. The SDK loads here in the
+    // background right after mount; startCall awaits sdkReadyRef for the
+    // sliver of time before it lands, so a fast tap still gets a real call.
+    let disposed = false;
+    let teardown: (() => void) | null = null;
+    sdkReadyRef.current = import("@vapi-ai/web")
+      .then(({ default: VapiCtor }) => {
+        if (disposed) return;
+        try {
+      const vapi = new VapiCtor(publicKey);
       vapiRef.current = vapi;
       // Reroutes Vapi's own <audio> element(s) through a gain/compressor/
       // limiter chain — see audioEnhancement.ts. Independent of call
@@ -360,18 +374,28 @@ export function useVapiSession({
         }
       });
 
-      return () => {
+      teardown = () => {
         vapi.stop();
         uninstallLoudnessEnhancement();
-        clearSpeakingTimeout();
-        clearDemoTimeouts();
-        clearReconnectTimeout();
-        stopTimer();
       };
-    } catch (err: unknown) {
-      console.warn("Vapi SDK setup warning:", err);
-      isDemoModeRef.current = true;
-    }
+        } catch (err: unknown) {
+          console.warn("Vapi SDK setup warning:", err);
+          isDemoModeRef.current = true;
+        }
+      })
+      .catch((err: unknown) => {
+        console.warn("Vapi SDK load failed — falling back to demo mode:", err);
+        isDemoModeRef.current = true;
+      });
+
+    return () => {
+      disposed = true;
+      teardown?.();
+      clearSpeakingTimeout();
+      clearDemoTimeouts();
+      clearReconnectTimeout();
+      stopTimer();
+    };
   }, [vapiPublicKey, isDemoMode, startTimer, stopTimer, clearSpeakingTimeout, clearDemoTimeouts, clearReconnectTimeout]);
 
   useEffect(() => {
@@ -392,6 +416,14 @@ export function useVapiSession({
     const effectiveFirstMessage = overrides?.firstMessage || firstMessage;
 
     setError(null);
+
+    // If the SDK chunk is still in flight (dynamic import above), wait for
+    // it instead of misclassifying a real-keyed session as demo mode.
+    if (!isDemoModeRef.current && !vapiRef.current && sdkReadyRef.current) {
+      setVoiceState("connecting");
+      await sdkReadyRef.current.catch(() => undefined);
+      if (!vapiRef.current) setVoiceState("idle");
+    }
 
     // If using Demo Mode (Local Testing without live Vapi keys)
     if (isDemoModeRef.current || !vapiRef.current) {

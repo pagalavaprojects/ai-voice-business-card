@@ -12,6 +12,13 @@
  * questionnaire UI is involved.
  */
 
+/**
+ * The founder's authored Maylaan AI introduction — PITCH-experience
+ * content, kept verbatim as supplied. It must NEVER be used as the
+ * qualification call's opening (see TAMIL_QUALIFICATION_CALL_OPENING
+ * below): replaying a ~90-second sales pitch after "Book an Appointment"
+ * is exactly the behavior the product owner rejected.
+ */
 export const TAMIL_QUALIFICATION_INTRO = `வணக்கம், இந்த மாதம் எத்தனை பேர் உங்கள் Business Card ஐ கொடுத்திருப்பீங்க… ஆனால் திரும்பி ஒரு Call ம் வரவில்லையா?
 
 அது உங்கள் தப்பு இல்லை — அந்த Paper Business Card ன் தவறு.
@@ -32,6 +39,19 @@ export const TAMIL_QUALIFICATION_INTRO = `வணக்கம், இந்த �
 
 இது தான் இந்த card ன் சிறப்பு. நன்றி.`;
 
+/**
+ * The qualification call's ACTUAL opening line. Deliberately short — the
+ * founder pitch above belongs to the public-card/pitch experience and must
+ * NEVER replay after "Book an Appointment". This states the purpose (a few
+ * quick questions, answer naturally, skip to booking any time) and then
+ * asks QUESTION 1 VERBATIM as part of the opening itself, so reaching Q1
+ * is deterministic — not dependent on the model deciding to begin.
+ */
+export const TAMIL_QUALIFICATION_CALL_OPENING =
+  "வணக்கம்! உங்கள் சந்திப்பை உறுதி செய்யும் முன், உங்கள் தேவைகளை சரியாக புரிந்துகொள்ள சில சிறிய கேள்விகள் கேட்கப்போகிறேன். " +
+  "இயல்பாக பதிலளித்தால் போதும் — விருப்பமில்லை என்றால் எந்த நேரத்திலும் நேரடியாக நேரத்தைத் தேர்வு செய்யலாம். " +
+  "முதல் கேள்வி: உங்கள் வணிகத்தில் முதன்மையாகத் தீர்வு காண விரும்பும் பிரச்சினை என்ன?";
+
 /** Set 1 — Lead Qualification. Asked in order, verbatim. */
 export const TAMIL_QUALIFICATION_SET1: readonly string[] = [
   "உங்கள் வணிகத்தில் முதன்மையாகத் தீர்வு காண விரும்பும் பிரச்சினை என்ன?",
@@ -51,7 +71,7 @@ export const TAMIL_QUALIFICATION_SET2: readonly string[] = [
   "இது விலையா, நேரமா, அல்லது வேறு ஏதேனும் காரணமா?",
   "இது குறித்து முடிவெடுக்க தங்களுக்கு எவ்வளவு காலஅவகாசம் தேவைப்படும்?",
   "இன்று இதற்கு சம்மதிக்க என்ன தேவைப்படும்?",
-  "இதைப் பற்றி தங்களுக்கு யார் தெரிவித்தார்கள்?",
+  "இதைக் குறித்து தங்களுக்கு யார் தெரிவித்தார்கள்?",
   "உங்கள் பகுதியில் உள்ள வேறு வாடிக்கையாளர்களுடன் இணைக்க வேண்டுமா?",
   "இப்போது, இதை முன்னெடுத்துச் செல்ல, தங்கள் வசதிக்கேற்ப ஒரு நேரத்தைப் பதிவு செய்ய எங்கள் காலெண்டரைக் காட்டட்டுமா?",
   "இவ்வாறு தொடரலாமா?",
@@ -73,6 +93,11 @@ export function getTamilQualificationDirective(): string {
     `\n\n=== TAMIL QUALIFICATION SCRIPT (booking flow) ===\n` +
     `When the visitor is being qualified for an appointment, ask the following authored questions IN ORDER, ` +
     `one at a time, EXACTLY as written — do not translate, paraphrase, shorten, reword or renumber them. ` +
+    `If the call's opening line already asked question 1 ("முதல் கேள்வி: ..."), do NOT repeat it — treat the ` +
+    `visitor's first reply as the answer to question 1 and continue with question 2. Never replay the founder ` +
+    `pitch or any elevator/product/USP content during qualification. If the visitor declines a question, ` +
+    `acknowledge it naturally, record nothing invented, and move to the next question — never end or restart ` +
+    `the qualification because of a refusal. ` +
     `After each answer: listen fully, then record what they actually said via save_lead / update_lead_qualification ` +
     `(map naturally: problem -> problem_statement; prior attempts -> current_solution; decision authority -> decision_maker; ` +
     `budget -> budget; start timing -> timeline; importance/urgency -> urgency and buying_intent; obstacles/reasons -> objections ` +

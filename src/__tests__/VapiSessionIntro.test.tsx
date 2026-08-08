@@ -210,6 +210,9 @@ describe("useVapiSession — scripted intro tracking", () => {
 
   it("marks isPlayingIntro true for the first assistant utterance, then false once it finishes", async () => {
     const { result } = renderHook(() => useVapiSession({ companyId: "c1", employeeId: "e1", vapiPublicKey: REAL_KEY }));
+    // The SDK is dynamically imported now — flush the microtask that
+    // constructs the instance before emitting on it.
+    await act(async () => {});
     const vapi = fakeVapiInstances[0];
 
     act(() => vapi.emit("call-start"));
@@ -224,6 +227,9 @@ describe("useVapiSession — scripted intro tracking", () => {
 
   it("does not treat a later reply as the intro", async () => {
     const { result } = renderHook(() => useVapiSession({ companyId: "c1", employeeId: "e1", vapiPublicKey: REAL_KEY }));
+    // The SDK is dynamically imported now — flush the microtask that
+    // constructs the instance before emitting on it.
+    await act(async () => {});
     const vapi = fakeVapiInstances[0];
 
     act(() => vapi.emit("call-start"));
@@ -238,6 +244,9 @@ describe("useVapiSession — scripted intro tracking", () => {
 
   it("ignores speech-start during the intro instead of treating it as an interruption", async () => {
     const { result } = renderHook(() => useVapiSession({ companyId: "c1", employeeId: "e1", vapiPublicKey: REAL_KEY }));
+    // The SDK is dynamically imported now — flush the microtask that
+    // constructs the instance before emitting on it.
+    await act(async () => {});
     const vapi = fakeVapiInstances[0];
 
     act(() => vapi.emit("call-start"));
@@ -258,6 +267,9 @@ describe("useVapiSession — scripted intro tracking", () => {
 
   it("force-mutes the mic at call-start and unmutes only once the intro finishes", async () => {
     const { result } = renderHook(() => useVapiSession({ companyId: "c1", employeeId: "e1", vapiPublicKey: REAL_KEY }));
+    // The SDK is dynamically imported now — flush the microtask that
+    // constructs the instance before emitting on it.
+    await act(async () => {});
     const vapi = fakeVapiInstances[0];
 
     act(() => vapi.emit("call-start"));
@@ -272,6 +284,9 @@ describe("useVapiSession — scripted intro tracking", () => {
 
   it("does not re-mute for a later reply, only for the intro", async () => {
     const { result } = renderHook(() => useVapiSession({ companyId: "c1", employeeId: "e1", vapiPublicKey: REAL_KEY }));
+    // The SDK is dynamically imported now — flush the microtask that
+    // constructs the instance before emitting on it.
+    await act(async () => {});
     const vapi = fakeVapiInstances[0];
 
     act(() => vapi.emit("call-start"));
@@ -345,6 +360,9 @@ describe("useVapiSession — scripted intro tracking", () => {
 
   it("plays the intro again on a fresh call-start, so a refresh or new session is unaffected", async () => {
     const { result } = renderHook(() => useVapiSession({ companyId: "c1", employeeId: "e1", vapiPublicKey: REAL_KEY }));
+    // The SDK is dynamically imported now — flush the microtask that
+    // constructs the instance before emitting on it.
+    await act(async () => {});
     const vapi = fakeVapiInstances[0];
 
     act(() => vapi.emit("call-start"));
