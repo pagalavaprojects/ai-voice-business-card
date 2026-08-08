@@ -8,6 +8,7 @@ import { resolveVoiceProviderConfig } from "@/shared/lib/voice";
 import { resolvePublicBaseUrl } from "@/shared/lib/publicUrl";
 import { createWebhookToken } from "@/shared/lib/webhookToken";
 import { isEmployeeCardVisible } from "@/shared/lib/employeeVisibility";
+import { checkRateLimitDistributed } from "@/shared/lib/rateLimit";
 import {
   resolveRequestLanguage,
   resolveGreeting,
@@ -80,8 +81,23 @@ async function renderCardQr(origin: string, companyId: string, employeeId: strin
  * client call instead of every live call running a bare, prompt-less
  * model. serverUrl is also returned so tool-calls and the end-of-call
  * report route back to our webhook during the call. */
+// This is the first request every real page view makes (and can repeat once
+// per language switch — see PublicBusinessCard's fetch effect), so the limit
+// is deliberately generous: it exists to blunt scraping/enumeration of the
+// companyId/employeeId space, not to throttle a normal visitor. Unauthenticated,
+// so keyed by IP — same reasoning as the appointments route's own limiter.
+async function enforceCardRateLimit(req: NextRequest): Promise<boolean> {
+  const identifier = req.headers.get("x-forwarded-for") || "unknown";
+  const { allowed } = await checkRateLimitDistributed(`public-card-read:${identifier}`, 60, 10 * 60_000);
+  return allowed;
+}
+
 export async function GET(req: NextRequest, { params }: { params: { companyId: string; employeeId: string } }) {
   const { companyId, employeeId } = params;
+
+  if (!(await enforceCardRateLimit(req))) {
+    return NextResponse.json({ message: "Too many requests — please try again shortly." }, { status: 429 });
+  }
 
   try {
     const [company, employee] = await Promise.all([

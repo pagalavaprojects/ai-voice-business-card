@@ -33,6 +33,16 @@ jest.mock("@/core/infrastructure/booking/calcom/CalcomAdapter", () => ({
   })),
 }));
 
+const getCompanyById = jest.fn();
+const getEmployeeById = jest.fn();
+
+jest.mock("@/core/infrastructure/database/supabase/SupabaseKnowledgeRepository", () => ({
+  SupabaseKnowledgeRepository: jest.fn().mockImplementation(() => ({
+    getCompanyById: (...args: unknown[]) => getCompanyById(...args),
+    getEmployeeById: (...args: unknown[]) => getEmployeeById(...args),
+  })),
+}));
+
 const PARAMS = { params: { companyId: "company-1", employeeId: "employee-1" } };
 
 function postRequest(body: unknown, ip = "10.0.0.1") {
@@ -47,6 +57,8 @@ describe("GET /api/public/[companyId]/[employeeId]/appointments", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     __resetInMemoryRateLimit();
+    getCompanyById.mockResolvedValue({ id: "company-1", name: "Test Co" });
+    getEmployeeById.mockResolvedValue({ id: "employee-1", company_id: "company-1", name: "Test Employee" });
   });
 
   it("returns no slots (not a crash) when no Cal.com event type is configured anywhere", async () => {
@@ -92,6 +104,26 @@ describe("GET /api/public/[companyId]/[employeeId]/appointments", () => {
     expect(json).toEqual({ configured: false, slots: [], reason: "error" });
   });
 
+  it("returns 404, not 200 unconfigured, for a company that doesn't exist", async () => {
+    getCompanyById.mockResolvedValue(null);
+    resolveCompanyDefaults.mockResolvedValue({ eventTypeId: undefined });
+
+    const req = new NextRequest("http://localhost:3000/api/public/company-1/employee-1/appointments");
+    const res = await GET(req, PARAMS);
+
+    expect(res.status).toBe(404);
+    expect(resolveCompanyDefaults).not.toHaveBeenCalled();
+  });
+
+  it("returns 404 for an employee that doesn't belong to the given company", async () => {
+    getEmployeeById.mockResolvedValue({ id: "employee-1", company_id: "some-other-company" });
+
+    const req = new NextRequest("http://localhost:3000/api/public/company-1/employee-1/appointments");
+    const res = await GET(req, PARAMS);
+
+    expect(res.status).toBe(404);
+  });
+
   it("rate-limits repeated slot lookups from the same visitor, independently of the booking-submission limit", async () => {
     resolveCompanyDefaults.mockResolvedValue({ eventTypeId: 555 });
     isConfigured.mockReturnValue(true);
@@ -115,6 +147,8 @@ describe("POST /api/public/[companyId]/[employeeId]/appointments", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     __resetInMemoryRateLimit();
+    getCompanyById.mockResolvedValue({ id: "company-1", name: "Test Co" });
+    getEmployeeById.mockResolvedValue({ id: "employee-1", company_id: "company-1", name: "Test Employee" });
   });
 
   const VALID_BODY = {
@@ -124,6 +158,15 @@ describe("POST /api/public/[companyId]/[employeeId]/appointments", () => {
     startTime: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
     timeZone: "UTC",
   };
+
+  it("returns 404 for a booking attempt against a company/employee that doesn't exist, before touching any tool", async () => {
+    getCompanyById.mockResolvedValue(null);
+
+    const res = await POST(postRequest(VALID_BODY), PARAMS);
+
+    expect(res.status).toBe(404);
+    expect(getTool).not.toHaveBeenCalled();
+  });
 
   it("rejects an invalid body with 400 before touching any tool", async () => {
     const res = await POST(postRequest({ name: "" }), PARAMS);

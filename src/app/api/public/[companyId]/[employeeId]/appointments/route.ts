@@ -5,12 +5,30 @@ import { CalcomAdapter } from "@/core/infrastructure/booking/calcom/CalcomAdapte
 import { checkRateLimitDistributed } from "@/shared/lib/rateLimit";
 import { Logger } from "@/shared/lib/logger";
 import { isSupportedLanguage } from "@/features/language/config";
+import { SupabaseKnowledgeRepository } from "@/core/infrastructure/database/supabase/SupabaseKnowledgeRepository";
 
 // Reads live availability and writes real bookings on every request — a
 // public, unauthenticated, write-capable endpoint has nothing safe to cache.
 export const dynamic = "force-dynamic";
 
 const calcom = new CalcomAdapter();
+const knowledgeRepo = new SupabaseKnowledgeRepository();
+
+/** Neither slot lookup nor booking checked before this fix that the company/
+ * employee in the URL actually exist — an invalid id fell through to
+ * resolveCompanyDefaults, which just returns no eventTypeId, so the route
+ * answered 200 {configured:false,reason:"unconfigured"} indistinguishably
+ * from a real, existing company that simply hasn't set up booking yet.
+ * Matches the main card route's own 404 behaviour (see
+ * /api/public/[companyId]/[employeeId]/route.ts) so both public endpoints
+ * agree on what an invalid id means. */
+async function cardIdentityExists(companyId: string, employeeId: string): Promise<boolean> {
+  const [company, employee] = await Promise.all([
+    knowledgeRepo.getCompanyById(companyId).catch(() => null),
+    knowledgeRepo.getEmployeeById(employeeId).catch(() => null),
+  ]);
+  return Boolean(company && employee && employee.company_id === companyId);
+}
 
 // 30 minutes matches the "30-minute discovery consultation" copy the
 // booking modal already shows the visitor — kept as one constant so the
@@ -67,6 +85,10 @@ export async function GET(req: NextRequest, { params }: { params: { companyId: s
     return NextResponse.json({ configured: false, slots: [], reason: "rate_limited" }, { status: 429 });
   }
 
+  if (!(await cardIdentityExists(params.companyId, params.employeeId))) {
+    return NextResponse.json({ message: "Business card not found" }, { status: 404 });
+  }
+
   try {
     const { eventTypeId } = await toolRegistry.resolveCompanyDefaults(params.companyId);
     if (!eventTypeId) {
@@ -117,6 +139,10 @@ export async function GET(req: NextRequest, { params }: { params: { companyId: s
 export async function POST(req: NextRequest, { params }: { params: { companyId: string; employeeId: string } }) {
   if (!(await enforceRateLimit(req, "write", 8))) {
     return NextResponse.json({ success: false, message: "Too many requests — please try again in a few minutes." }, { status: 429 });
+  }
+
+  if (!(await cardIdentityExists(params.companyId, params.employeeId))) {
+    return NextResponse.json({ success: false, message: "Business card not found" }, { status: 404 });
   }
 
   const body = await req.json().catch(() => null);

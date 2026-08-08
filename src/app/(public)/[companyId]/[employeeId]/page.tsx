@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { cache } from "react";
+import { notFound } from "next/navigation";
 import { headers } from "next/headers";
 import { PublicBusinessCard } from "@/features/voice/components/PublicBusinessCard";
 import { SupabaseKnowledgeRepository } from "@/core/infrastructure/database/supabase/SupabaseKnowledgeRepository";
@@ -48,26 +49,29 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
 }
 
 export default async function VoiceBusinessCardPage({ params }: { params: Params }) {
-  const card = await getCard(params.companyId, params.employeeId).catch(() => null);
+  // A genuinely unknown company/employee is a 404, not an error: notFound()
+  // renders the app's existing not-found page (see /c/[slug]'s own page,
+  // which already did this — this route was the one inconsistent with it,
+  // previously falling back to PublicBusinessCard's client-side "not found"
+  // UI while still answering the request itself with HTTP 200). A real
+  // infrastructure failure (getCard throwing rather than returning null) is
+  // deliberately left uncaught so it reaches error.tsx instead of being
+  // misreported as "this card doesn't exist."
+  const card = await getCard(params.companyId, params.employeeId);
+  if (!card) notFound();
+  const { employee, company } = card;
 
-  // No JSON-LD for an unresolved card — PublicBusinessCard renders its own
-  // honest not-found/unavailable state client-side; there's nothing true to
-  // describe to a search engine here.
-  const jsonLd = card
-    ? (() => {
-        const host = headers().get("host") ?? (process.env.NEXT_PUBLIC_APP_URL || "https://maylaanai.com").replace(/^https?:\/\//, "");
-        const protocol = host.startsWith("localhost") || host.startsWith("127.") ? "http" : "https";
-        return buildCardJsonLd({
-          employee: card.employee,
-          company: card.company,
-          canonicalUrl: `${protocol}://${host}/${params.companyId}/${params.employeeId}`,
-        });
-      })()
-    : null;
+  const host = headers().get("host") ?? (process.env.NEXT_PUBLIC_APP_URL || "https://maylaanai.com").replace(/^https?:\/\//, "");
+  const protocol = host.startsWith("localhost") || host.startsWith("127.") ? "http" : "https";
+  const jsonLd = buildCardJsonLd({
+    employee,
+    company,
+    canonicalUrl: `${protocol}://${host}/${params.companyId}/${params.employeeId}`,
+  });
 
   return (
     <>
-      {jsonLd && <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: serializeJsonLd(jsonLd) }} />}
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: serializeJsonLd(jsonLd) }} />
       <PublicBusinessCard companyId={params.companyId} employeeId={params.employeeId} />
     </>
   );

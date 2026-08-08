@@ -7,7 +7,8 @@ import { Logger } from "@/shared/lib/logger";
 /** Single place every API route converts a thrown error into a consistent
  * { status, success, message, data, errors } response shape.
  * AuthError -> 401/403, RateLimitError -> 429 with Retry-After,
- * ZodError -> 422 with field-level messages, anything else -> 500. */
+ * SyntaxError -> 400, ZodError -> 422 with field-level messages,
+ * anything else -> 500. */
 export function handleApiError(error: unknown) {
   if (error instanceof AuthError) {
     return formatApiResponse(null, error.status, error.message);
@@ -18,6 +19,14 @@ export function handleApiError(error: unknown) {
     const response = formatApiResponse(null, 429, error.message, ["Rate limit exceeded"]);
     response.headers.set("Retry-After", String(error.retryAfterSeconds));
     return response;
+  }
+  // A malformed request body (req.json() failing to parse) is a client
+  // mistake, not a server fault — without this, every route's `await
+  // req.json()` on garbage input surfaced as a 500, which is both the wrong
+  // status for the caller to act on and got logged as a false "unexpected
+  // failure" alongside real server errors.
+  if (error instanceof SyntaxError) {
+    return formatApiResponse(null, 400, "Malformed request body — expected valid JSON.");
   }
   // Validation messages are safe and actively useful to the caller: they
   // describe the caller's own payload, not our internals.
