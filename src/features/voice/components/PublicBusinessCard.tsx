@@ -10,6 +10,7 @@ import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
 import { Dialog } from "@/shared/ui/dialog";
 import { downloadVCard, imageUrlToDataUri } from "@/features/voice/lib/vcard";
+import { speakPitchWithBrowserTts, stopBrowserTts } from "@/features/voice/lib/pitchFallback";
 import { useLanguage } from "@/features/language/hooks/useLanguage";
 import { LanguageSelector } from "@/features/language/components/LanguageSelector";
 import { LanguageGate } from "@/features/language/components/LanguageGate";
@@ -153,12 +154,20 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
   const stopPitch = () => {
     pitchAudioRef.current?.pause();
     pitchAudioRef.current = null;
+    stopBrowserTts();
     setPitchPlaying(null);
     setPitchLoading(null);
   };
 
-  // Unmount must not leave a detached audio element narrating to nobody.
-  useEffect(() => () => pitchAudioRef.current?.pause(), []);
+  // Unmount must not leave a detached audio element (or a browser-TTS
+  // utterance) narrating to nobody.
+  useEffect(
+    () => () => {
+      pitchAudioRef.current?.pause();
+      stopBrowserTts();
+    },
+    []
+  );
 
   // Refetches whenever the visitor's language changes (including the one
   // extra fetch on first load once useLanguage resolves the real starting
@@ -355,9 +364,44 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
     setPitchError(false);
     if (voiceStateRef.current !== "idle") endCall();
 
-    const audio = new Audio(
-      `/api/public/${companyId}/${employeeId}/pitch?type=${type}&lang=${encodeURIComponent(language)}`
-    );
+    const pitchUrl = `/api/public/${companyId}/${employeeId}/pitch?type=${type}&lang=${encodeURIComponent(language)}`;
+
+    // When the server can't produce the rendered MP3 (e.g. TTS credits
+    // exhausted upstream), the pitch still speaks: fetch the composed
+    // script (no TTS involved server-side) and voice it with the
+    // browser's own built-in speech synthesis. Still strictly speak-only —
+    // no microphone, no permission prompt, no live AI session.
+    const fallbackToBrowserTts = () => {
+      fetch(`${pitchUrl}&format=script`)
+        .then((res) => (res.ok ? res.json() : Promise.reject(new Error(String(res.status)))))
+        .then(({ script }: { script: string }) => {
+          const started = speakPitchWithBrowserTts(script, language, {
+            onStart: () => {
+              setPitchLoading(null);
+              setPitchPlaying(type);
+            },
+            onEnd: () => {
+              setPitchPlaying(null);
+              setPitchLoading(null);
+            },
+            onError: () => {
+              setPitchPlaying(null);
+              setPitchLoading(null);
+              setPitchError(true);
+            },
+          });
+          if (!started) {
+            setPitchLoading(null);
+            setPitchError(true);
+          }
+        })
+        .catch(() => {
+          setPitchLoading(null);
+          setPitchError(true);
+        });
+    };
+
+    const audio = new Audio(pitchUrl);
     pitchAudioRef.current = audio;
     setPitchLoading(type);
     audio.onplaying = () => {
@@ -366,12 +410,12 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
     };
     audio.onended = () => stopPitch();
     audio.onerror = () => {
-      stopPitch();
-      setPitchError(true);
+      pitchAudioRef.current = null;
+      fallbackToBrowserTts();
     };
     audio.play().catch(() => {
-      stopPitch();
-      setPitchError(true);
+      pitchAudioRef.current = null;
+      fallbackToBrowserTts();
     });
   };
 

@@ -7,6 +7,7 @@ import { CalcomAdapter } from "../../infrastructure/booking/calcom/CalcomAdapter
 import { ISettingsRepository } from "../../domain/repositories/ISettingsRepository";
 import { IKnowledgeDocumentRepository } from "../../domain/repositories/IKnowledgeDocumentRepository";
 import { OpenAIEmbeddingAdapter } from "../../infrastructure/embeddings/OpenAIEmbeddingAdapter";
+import { getWhatsAppNotifier } from "../../infrastructure/notifications/WhatsAppNotifier";
 import { AppointmentStatus, LeadTemperature, NurtureStatus, LeadQualificationSignalsSchema } from "../../domain/models/types";
 import { Logger } from "@/shared/lib/logger";
 
@@ -532,6 +533,43 @@ export class ToolRegistry {
                 : copy.requestedBody(lead.name, when),
             })
             .catch((err) => Logger.error("book_appointment email failed", { error: err instanceof Error ? err.message : String(err) }));
+        }
+
+        // Automated WhatsApp confirmations to both sides — the real Cloud
+        // API integration, not the card's wa.me deep links. Inert (a logged
+        // {sent:false, reason:"unconfigured"} no-op) until WHATSAPP_ACCESS_
+        // TOKEN / WHATSAPP_PHONE_NUMBER_ID hold real credentials, and
+        // fire-and-forget like the email above: messaging must never fail,
+        // slow, or retry the booking itself.
+        {
+          const whatsapp = getWhatsAppNotifier();
+          if (whatsapp.isConfigured()) {
+            const when = new Date(appointment.start_time).toLocaleString(context.language || "en-US", {
+              dateStyle: "full",
+              timeStyle: "short",
+              timeZone: String(args.timezone || "UTC"),
+            });
+            const tz = String(args.timezone || "UTC");
+            if (lead?.phone) {
+              const clientMsg = confirmed
+                ? `Your meeting with ${companyDefaults.fromName ?? "our team"} is confirmed for ${when} (${tz}).${meetingUrl ? ` Join: ${meetingUrl}` : ""}`
+                : `Thanks — we've noted your preferred meeting time of ${when} (${tz}). A confirmation will follow shortly.`;
+              whatsapp
+                .send(lead.phone, clientMsg)
+                .catch((err) => Logger.warn("book_appointment client WhatsApp failed", { error: err instanceof Error ? err.message : String(err) }));
+            }
+            this.knowledgeRepo
+              .getEmployeeById(context.employeeId)
+              .then((employee) => {
+                if (!employee?.phone) return;
+                const ownerMsg =
+                  `New appointment ${confirmed ? "BOOKED" : "REQUESTED"}: ${lead?.name ?? "Website visitor"}` +
+                  `${lead?.phone ? ` (${lead.phone})` : ""}${lead?.email ? ` <${lead.email}>` : ""} — ${when} (${tz}).` +
+                  `${lead?.lead_temperature ? ` Lead temperature: ${lead.lead_temperature}.` : ""}`;
+                return whatsapp.send(employee.phone, ownerMsg);
+              })
+              .catch((err) => Logger.warn("book_appointment owner WhatsApp failed", { error: err instanceof Error ? err.message : String(err) }));
+          }
         }
 
         return {
