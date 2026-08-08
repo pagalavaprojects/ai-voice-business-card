@@ -41,7 +41,19 @@ export class PromptAssemblyService {
   async assembleSystemPrompt(
     companyId: string,
     employeeId: string,
-    draftOverride?: { moduleName: string; content: string }
+    draftOverride?: { moduleName: string; content: string },
+    /** Data the caller already fetched for its own purposes (the public
+     * card route loads all of these to render the card). Passing it here
+     * skips five duplicate Supabase round trips per cache miss — prompt
+     * templates are still fetched fresh, and the assembled result is still
+     * cached identically. */
+    prefetched?: {
+      company: Awaited<ReturnType<IKnowledgeRepository["getCompanyById"]>>;
+      employee: Awaited<ReturnType<IKnowledgeRepository["getEmployeeById"]>>;
+      products: Awaited<ReturnType<IKnowledgeRepository["getProductsByCompany"]>>;
+      services: Awaited<ReturnType<IKnowledgeRepository["getServicesByCompany"]>>;
+      faqs: Awaited<ReturnType<IKnowledgeRepository["getFAQsByCompany"]>>;
+    }
   ): Promise<string> {
     // Draft previews must never be cached — they're per-edit-session,
     // unsaved content. Only the real, saved-state assembly is cacheable.
@@ -56,18 +68,19 @@ export class PromptAssemblyService {
       }
     }
 
-    const company = await this.knowledgeRepo.getCompanyById(companyId);
-    const employee = await this.knowledgeRepo.getEmployeeById(employeeId);
+    const company = prefetched ? prefetched.company : await this.knowledgeRepo.getCompanyById(companyId);
+    const employee = prefetched ? prefetched.employee : await this.knowledgeRepo.getEmployeeById(employeeId);
 
     if (!company || !employee) {
       throw new Error("Company or Employee not found for prompt assembly.");
     }
 
-    const products = await this.knowledgeRepo.getProductsByCompany(companyId);
-    const services = await this.knowledgeRepo.getServicesByCompany(companyId);
-    const faqs = await this.knowledgeRepo.getFAQsByCompany(companyId);
-
-    const templates = await this.promptRepo.getPromptTemplates(companyId);
+    const [products, services, faqs, templates] = await Promise.all([
+      prefetched ? Promise.resolve(prefetched.products) : this.knowledgeRepo.getProductsByCompany(companyId),
+      prefetched ? Promise.resolve(prefetched.services) : this.knowledgeRepo.getServicesByCompany(companyId),
+      prefetched ? Promise.resolve(prefetched.faqs) : this.knowledgeRepo.getFAQsByCompany(companyId),
+      this.promptRepo.getPromptTemplates(companyId),
+    ]);
     const resolve = (moduleName: string) => {
       if (draftOverride && draftOverride.moduleName === moduleName) {
         return substituteTemplateVariables(draftOverride.content, company, employee);

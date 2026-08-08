@@ -150,7 +150,7 @@ export async function GET(req: NextRequest, { params }: { params: { companyId: s
     );
 
     const [systemPromptBase] = await Promise.all([
-      promptAssemblyService.assembleSystemPrompt(companyId, employeeId).catch((err) => {
+      promptAssemblyService.assembleSystemPrompt(companyId, employeeId, undefined, { company, employee, products, services, faqs }).catch((err) => {
         Logger.warn("System prompt assembly failed, live call will run without one", {
           companyId,
           employeeId,
