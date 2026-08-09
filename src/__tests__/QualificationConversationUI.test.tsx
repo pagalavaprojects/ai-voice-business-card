@@ -1,14 +1,14 @@
 /**
  * @jest-environment jsdom
  *
- * The qualification panel must always show WHICH question is being asked —
- * never a bare "Listening…". The AI line is the authoritative authored
- * wording (seeded with Q1, advanced by real assistant transcripts); the
- * visitor line is their real transcript only, never invented.
+ * The qualification panel must always show WHICH authored question is
+ * active, and the visitor's transcript is ENGLISH-ONLY — rendered from the
+ * server's recorded answers (question number + YES/NO/MAYBE + English
+ * text), never from raw Tamil ASR and never invented client-side.
  */
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, act } from "@testing-library/react";
 import { AppointmentModal } from "@/features/voice/components/AppointmentModal";
-import { TAMIL_QUALIFICATION_SET1, matchAuthoredTamilQuestion, ALL_TAMIL_QUESTIONS } from "@/features/voice/lib/qualificationScript";
+import { TAMIL_QUALIFICATION_SET1, ALL_TAMIL_QUESTIONS, matchAuthoredTamilQuestion } from "@/features/voice/lib/qualificationScript";
 
 const t = (key: string, vars?: Record<string, string>) => (vars?.n ? `${key}:${vars.n}` : key);
 const baseProps = {
@@ -30,114 +30,107 @@ function startQualification() {
   fireEvent.click(screen.getByTestId("start-qualification"));
 }
 
+function mockStatus(payload: unknown) {
+  global.fetch = jest.fn((url: RequestInfo | URL) => {
+    const u = String(url);
+    if (u.includes("qualification-status")) {
+      return Promise.resolve({ ok: true, json: async () => payload } as Response);
+    }
+    return Promise.resolve({ ok: true, json: async () => ({ slots: [] }) } as Response);
+  }) as never;
+}
+
 beforeEach(() => {
-  global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ slots: [] }) }) as never;
+  mockStatus({ qualified: false, temperature: null, answers: [] });
+});
+
+afterEach(() => {
+  jest.useRealTimers();
 });
 
 describe("qualification conversation UI", () => {
-  it("shows Q1 (exact authored wording) immediately once qualification starts, even before any transcript", async () => {
+  it("shows the NEW Q1 (exact authored wording) immediately, before any transcript", () => {
     render(<AppointmentModal {...baseProps} voice={voiceWith([])} />);
     startQualification();
-    expect(screen.getByTestId("current-question").textContent).toContain(TAMIL_QUALIFICATION_SET1[0]);
+    expect(screen.getByTestId("current-question").textContent).toContain("உங்கள் வணிகத்தில் தீர்வு காண வேண்டிய குறிப்பிட்ட பிரச்சினை உள்ளதா?");
   });
 
-  it("keeps the current question visible during the listening state — never a bare Listening", async () => {
+  it("keeps the current question visible during listening — never a bare Listening", () => {
     render(<AppointmentModal {...baseProps} voice={voiceWith([], "listening")} />);
     startQualification();
     expect(screen.getByTestId("current-question").textContent).toBeTruthy();
     expect(screen.getByText("status.listening")).toBeTruthy();
   });
 
-  it("renders the visitor's REAL transcript under the question", async () => {
+  it("advances the displayed question when the assistant transcript matches the next authored question", () => {
     render(
       <AppointmentModal
         {...baseProps}
         voice={voiceWith([
           { role: "assistant", content: TAMIL_QUALIFICATION_SET1[0] },
-          { role: "user", content: "எங்க பில்லிங் ரொம்ப மெதுவா இருக்கு" },
-        ])}
-      />
-    );
-    startQualification();
-    expect(screen.getByTestId("user-transcript").textContent).toContain("எங்க பில்லிங் ரொம்ப மெதுவா இருக்கு");
-  });
-
-  it("advances the displayed question to Q2 when the assistant's transcript matches it — showing the AUTHORED wording", async () => {
-    render(
-      <AppointmentModal
-        {...baseProps}
-        voice={voiceWith([
-          { role: "assistant", content: TAMIL_QUALIFICATION_SET1[0] },
-          { role: "user", content: "பில்லிங் பிரச்சனை" },
-          // Slight punctuation/whitespace drift, as real TTS transcripts have:
-          { role: "assistant", content: "  இந்தப் பிரச்சினை உங்கள் வணிகத்தை எவ்வளவு காலமாக பாதித்து வருகிறது  " },
+          { role: "user", content: "ஆமாம், லீட்ஸ் பிரச்சனை" },
+          // punctuation/whitespace drift, as real transcripts have:
+          { role: "assistant", content: "  இந்தப் பிரச்சினை 3 மாதங்களுக்கு மேல் உள்ளதா  " },
         ])}
       />
     );
     startQualification();
     expect(screen.getByTestId("current-question").textContent).toContain(TAMIL_QUALIFICATION_SET1[1]);
-    // The just-answered exchange's user line belongs to the previous
-    // question; nothing is shown as an answer to Q2 yet.
-    expect(screen.queryByTestId("user-transcript")).toBeNull();
-  });
-
-  it("never invents a visitor transcript", async () => {
-    render(<AppointmentModal {...baseProps} voice={voiceWith([{ role: "assistant", content: TAMIL_QUALIFICATION_SET1[0] }])} />);
-    startQualification();
-    expect(screen.queryByTestId("user-transcript")).toBeNull();
-  });
-
-  it("shows Set-1 progress (question n of 7) and advances it with the question", async () => {
-    const { rerender } = render(<AppointmentModal {...baseProps} voice={voiceWith([])} />);
-    startQualification();
-    expect(screen.getByTestId("qual-progress").textContent).toContain("appointment.progressSet1:1");
-
-    rerender(
-      <AppointmentModal
-        {...baseProps}
-        voice={voiceWith([
-          { role: "assistant", content: TAMIL_QUALIFICATION_SET1[0] },
-          { role: "user", content: "பில்லிங்" },
-          { role: "assistant", content: TAMIL_QUALIFICATION_SET1[1] },
-        ])}
-      />
-    );
     expect(screen.getByTestId("qual-progress").textContent).toContain("appointment.progressSet1:2");
   });
 
-  it("shows Set-2 progress once a conversion question is active", async () => {
-    render(
-      <AppointmentModal
-        {...baseProps}
-        voice={voiceWith([{ role: "assistant", content: ALL_TAMIL_QUESTIONS[7] }])}
-      />
-    );
-    startQualification();
-    expect(screen.getByTestId("qual-progress").textContent).toContain("appointment.progressSet2:8");
-  });
-
-  it("keeps previous questions and REAL answers visible as history when the next question starts", async () => {
+  it("NEVER renders raw Tamil ASR as the visitor transcript — English-only rule", () => {
     render(
       <AppointmentModal
         {...baseProps}
         voice={voiceWith([
           { role: "assistant", content: TAMIL_QUALIFICATION_SET1[0] },
-          { role: "user", content: "எங்க பில்லிங் மெதுவா இருக்கு" },
-          { role: "assistant", content: TAMIL_QUALIFICATION_SET1[1] },
+          { role: "user", content: "ஆமாம், எங்களுக்கு லீட்ஸ் பிரச்சனை இருக்கு" },
         ])}
       />
     );
     startQualification();
+    const panel = screen.getByTestId("qualification-conversation");
+    expect(panel.textContent).not.toContain("ஆமாம், எங்களுக்கு லீட்ஸ் பிரச்சனை இருக்கு");
+    expect(screen.queryByTestId("qual-history")).toBeNull();
+  });
+
+  it("renders the server-recorded ENGLISH answers with YES/NO/MAYBE tags, and falls forward to the next question", async () => {
+    jest.useFakeTimers();
+    mockStatus({
+      qualified: false,
+      temperature: null,
+      answers: [
+        { n: 1, c: "YES", a: "They struggle to generate qualified leads." },
+        { n: 2, c: "MAYBE", a: "Roughly three months, maybe longer." },
+      ],
+    });
+    render(<AppointmentModal {...baseProps} voice={voiceWith([{ role: "assistant", content: TAMIL_QUALIFICATION_SET1[0] }])} />);
+    startQualification();
+    await act(async () => {
+      jest.advanceTimersByTime(3100);
+      await Promise.resolve();
+    });
+
     const history = screen.getByTestId("qual-history");
-    expect(history.textContent).toContain(TAMIL_QUALIFICATION_SET1[0]);
-    expect(history.textContent).toContain("எங்க பில்லிங் மெதுவா இருக்கு");
-    // And the active question is Q2, outside the history block:
-    expect(screen.getByTestId("current-question").textContent).toContain(TAMIL_QUALIFICATION_SET1[1]);
+    expect(history.textContent).toContain("They struggle to generate qualified leads.");
+    expect(screen.getByTestId("answer-1").textContent).toContain("YES");
+    expect(screen.getByTestId("answer-2").textContent).toContain("MAYBE");
+    // Two answers recorded -> the active question falls forward to Q3 even
+    // though the transcript only matched Q1.
+    expect(screen.getByTestId("current-question").textContent).toContain(TAMIL_QUALIFICATION_SET1[2]);
+    expect(screen.getByTestId("qual-progress").textContent).toContain("appointment.progressSet1:3");
+  });
+
+  it("shows Set-2 progress once a conversion question is active", () => {
+    render(<AppointmentModal {...baseProps} voice={voiceWith([{ role: "assistant", content: ALL_TAMIL_QUESTIONS[7] }])} />);
+    startQualification();
+    expect(screen.getByTestId("qual-progress").textContent).toContain("appointment.progressSet2:8");
   });
 });
 
 describe("matchAuthoredTamilQuestion", () => {
-  it("maps drifted transcripts back to the exact authored wording for all 17 questions", () => {
+  it("maps drifted transcripts back to the exact authored wording for all 16 questions", () => {
     for (const q of ALL_TAMIL_QUESTIONS) {
       expect(matchAuthoredTamilQuestion(`  ${q.replace("?", "")} `)).toBe(q);
     }

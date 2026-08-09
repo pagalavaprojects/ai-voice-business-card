@@ -1,108 +1,99 @@
 /**
- * The founder-authored Tamil qualification content is source-of-truth:
- * these tests pin the exact wording (any future "improvement" fails
- * loudly) and pin the directive's routing rules — Set 2 for HOT/WARM only,
- * COLD skips straight to booking and must still be able to book.
+ * The 2026-08-10 authored questionnaire is source-of-truth: these tests
+ * pin the exact wording (any future "improvement" fails loudly), the Q13
+ * gap, the call opening (exactly Q1, no preamble), and the directive's
+ * contract with the server sequencing tool.
  */
 import {
   TAMIL_QUALIFICATION_INTRO,
   TAMIL_QUALIFICATION_CALL_OPENING,
+  TAMIL_QUALIFICATION_QUESTIONS,
   TAMIL_QUALIFICATION_SET1,
   TAMIL_QUALIFICATION_SET2,
+  ALL_TAMIL_QUESTIONS,
+  getAuthoredQuestion,
   getTamilQualificationDirective,
 } from "@/features/voice/lib/qualificationScript";
 
-describe("authored Tamil qualification content", () => {
-  it("keeps the intro verbatim — exact opening, exact closing, key supplied phrases", () => {
-    expect(TAMIL_QUALIFICATION_INTRO.startsWith("வணக்கம், இந்த மாதம் எத்தனை பேர் உங்கள் Business Card ஐ கொடுத்திருப்பீங்க")).toBe(true);
-    expect(TAMIL_QUALIFICATION_INTRO.endsWith("இது தான் இந்த card ன் சிறப்பு. நன்றி.")).toBe(true);
-    expect(TAMIL_QUALIFICATION_INTRO).toContain("அது உங்கள் தப்பு இல்லை — அந்த Paper Business Card ன் தவறு.");
-    expect(TAMIL_QUALIFICATION_INTRO).toContain("தீர்வு எங்களின் Maylaan AI");
-    expect(TAMIL_QUALIFICATION_INTRO).toContain("Appointment Boom ஆகிடும்");
-    expect(TAMIL_QUALIFICATION_INTRO).toContain("so no-show குறையும்");
+describe("authored questionnaire (2026-08-10 revision)", () => {
+  it("pins Set 1 verbatim", () => {
+    expect(TAMIL_QUALIFICATION_SET1).toEqual([
+      "உங்கள் வணிகத்தில் தீர்வு காண வேண்டிய குறிப்பிட்ட பிரச்சினை உள்ளதா?",
+      "இந்தப் பிரச்சினை 3 மாதங்களுக்கு மேல் உள்ளதா?",
+      "இதற்கு முன் வேறு தீர்வு முயற்சி செய்தீர்களா?",
+      "இந்த முடிவை தாங்கள் மட்டும் எடுக்க முடியுமா?",
+      "தாங்கள் நினைத்திருக்கும் தொகை எங்கள் விலை வரம்பிற்குள் உள்ளதா?",
+      "இதை இந்த மாதத்திற்குள் தொடங்க எண்ணியுள்ளீர்களா?",
+      "இது தங்களுக்கு இப்போதே தேவையானதா?",
+    ]);
   });
 
-  it("keeps all 7 Set-1 questions verbatim and in order", () => {
-    expect(TAMIL_QUALIFICATION_SET1).toHaveLength(7);
-    expect(TAMIL_QUALIFICATION_SET1[0]).toBe("உங்கள் வணிகத்தில் முதன்மையாகத் தீர்வு காண விரும்பும் பிரச்சினை என்ன?");
-    expect(TAMIL_QUALIFICATION_SET1[3]).toBe("இந்த முடிவை தாங்கள் மட்டும் எடுப்பீர்களா, அல்லது வேறு யாரேனும் இதில் இணைந்திருப்பார்களா?");
-    expect(TAMIL_QUALIFICATION_SET1[6]).toBe("இது தங்களுக்கு எவ்வளவு முக்கியத்துவம் வாய்ந்தது — இப்போதே தேவையா, அல்லது யோசிக்கலாமா?");
+  it("pins Set 2 verbatim — 9 questions, no Q13", () => {
+    expect(TAMIL_QUALIFICATION_SET2).toEqual([
+      "இந்தத் தீர்வு உங்கள் வணிகத்திற்கு பயனுள்ளதாக இருக்கும் என நினைக்கிறீர்களா?",
+      "தரம்/வேகம் தங்களுக்கு விலையை விட முக்கியமா?",
+      "முன்னேற தங்களைத் தடுக்கும் ஏதேனும் காரணம் உள்ளதா?",
+      "அது விலை தொடர்பானதா?",
+      "இன்றே முடிவெடுக்க தாங்கள் தயாரா?",
+      "இது ஒரு பரிந்துரையின் மூலம் வந்ததா?",
+      "உங்கள் பகுதியில் உள்ள வாடிக்கையாளர்களுடன் இணைக்க விரும்புகிறீர்களா?",
+      "இப்போது, இதை முன்னெடுத்துச் செல்ல, தங்கள் வசதிக்கேற்ப ஒரு நேரத்தைப் பதிவு செய்ய எங்கள் காலெண்டரைக் காட்டட்டுமா?",
+      "இவ்வாறு தொடரலாமா?",
+    ]);
   });
 
-  it("keeps all 10 Set-2 questions verbatim and in order", () => {
-    expect(TAMIL_QUALIFICATION_SET2).toHaveLength(10);
-    expect(TAMIL_QUALIFICATION_SET2[0]).toBe("இந்தத் தீர்வு உங்களுக்குக் கிடைத்தால், உங்கள் வணிகத்தில் என்ன மாற்றத்தை எதிர்பார்க்கிறீர்கள்?");
-    expect(TAMIL_QUALIFICATION_SET2[6]).toBe("இதைக் குறித்து தங்களுக்கு யார் தெரிவித்தார்கள்?");
-    expect(TAMIL_QUALIFICATION_SET2[9]).toBe("இவ்வாறு தொடரலாமா?");
+  it("Q13 does not exist anywhere", () => {
+    expect(getAuthoredQuestion(13)).toBeNull();
+    expect(TAMIL_QUALIFICATION_QUESTIONS.some((q) => q.number === 13)).toBe(false);
+    expect(ALL_TAMIL_QUESTIONS).toHaveLength(16);
   });
 
-  describe("qualification call opening (what actually plays after Start AI Conversation)", () => {
-    it("is EXACTLY Question 1 — no greeting, no preamble, no filler", () => {
+  it("every derived structure comes from the one master list", () => {
+    expect(TAMIL_QUALIFICATION_SET1).toEqual(TAMIL_QUALIFICATION_QUESTIONS.filter((q) => q.number <= 7).map((q) => q.question));
+    expect(TAMIL_QUALIFICATION_SET2).toEqual(TAMIL_QUALIFICATION_QUESTIONS.filter((q) => q.number >= 8).map((q) => q.question));
+    expect(ALL_TAMIL_QUESTIONS).toEqual(TAMIL_QUALIFICATION_QUESTIONS.map((q) => q.question));
+    expect(new Set(ALL_TAMIL_QUESTIONS).size).toBe(16);
+  });
+
+  describe("call opening (what plays after Start AI Conversation)", () => {
+    it("is EXACTLY the new Question 1 — no greeting, no preamble, no filler", () => {
       expect(TAMIL_QUALIFICATION_CALL_OPENING).toBe(TAMIL_QUALIFICATION_SET1[0]);
-      expect(TAMIL_QUALIFICATION_CALL_OPENING).toBe("உங்கள் வணிகத்தில் முதன்மையாகத் தீர்வு காண விரும்பும் பிரச்சினை என்ன?");
+      expect(TAMIL_QUALIFICATION_CALL_OPENING).toBe("உங்கள் வணிகத்தில் தீர்வு காண வேண்டிய குறிப்பிட்ட பிரச்சினை உள்ளதா?");
     });
 
-    it("contains no forbidden openers or pitch content of any kind", () => {
-      for (const forbidden of [
-        "வணக்கம்", // greeting
-        "சரி", // "okay…" filler
-        "முதல் கேள்வி", // "first question:" preamble
-        "சில சிறிய கேள்விகள்", // "a few quick questions" preamble
-        "Business Card",
-        "Paper",
-        "Elevator",
-        "Pitch",
-        "USP",
-        "no-show",
-        "How can I help",
-      ]) {
+    it("contains no forbidden openers or pitch content", () => {
+      for (const forbidden of ["வணக்கம்", "சரி", "முதல் கேள்வி", "Business Card", "Paper", "Elevator", "Pitch", "USP", "How can I help"]) {
         expect(TAMIL_QUALIFICATION_CALL_OPENING).not.toContain(forbidden);
       }
       expect(TAMIL_QUALIFICATION_CALL_OPENING).not.toBe(TAMIL_QUALIFICATION_INTRO);
     });
   });
 
-  it("has no duplicated questions across the 17", () => {
-    const all = [...TAMIL_QUALIFICATION_SET1, ...TAMIL_QUALIFICATION_SET2];
-    expect(new Set(all).size).toBe(17);
-  });
-
   describe("getTamilQualificationDirective", () => {
     const directive = getTamilQualificationDirective();
 
-    it("embeds every question verbatim, numbered 1-17 in order", () => {
-      for (const q of [...TAMIL_QUALIFICATION_SET1, ...TAMIL_QUALIFICATION_SET2]) {
-        expect(directive).toContain(q);
+    it("embeds every authored question with its real number, and no 13", () => {
+      for (const { number, question } of TAMIL_QUALIFICATION_QUESTIONS) {
+        expect(directive).toContain(`${number}. ${question}`);
       }
-      expect(directive.indexOf("1. உங்கள் வணிகத்தில்")).toBeLessThan(directive.indexOf("8. இந்தத் தீர்வு"));
-      expect(directive).toContain("17. இவ்வாறு தொடரலாமா?");
+      expect(directive).not.toMatch(/\n13\. /);
+      expect(directive).toContain("no question 13");
     });
 
-    it("routes HOT/WARM into Set 2 and COLD past it — with COLD still explicitly able to book", () => {
-      expect(directive).toContain("If it is HOT or WARM, continue with Set 2");
-      expect(directive).toContain("If it is COLD, SKIP Set 2");
-      expect(directive).toContain("a COLD lead must always still be able to book");
-    });
-
-    it("forbids inventing answers and mandates the existing tool persistence", () => {
-      expect(directive).toContain("save_lead / update_lead_qualification");
-      expect(directive).toContain("Never invent an answer the visitor did not give");
-      expect(directive).toContain("never");
-      expect(directive).toContain("do not translate, paraphrase, shorten, reword or renumber");
-    });
-
-    it("handles the opening-already-asked-Q1 case, refusals, and bans pitch replay", () => {
-      expect(directive).toContain("do NOT repeat it");
-      expect(directive).toContain("Never replay the founder");
-      expect(directive).toContain("declines a question");
-    });
-
-    it("mandates tool-driven progression — the model may not sequence from memory", () => {
-      expect(directive).toContain("PROGRESSION IS TOOL-DRIVEN");
+    it("mandates the tool contract: English translation, strict YES/NO/MAYBE, tool-driven progression", () => {
+      expect(directive).toContain("ENGLISH sentence");
+      expect(directive).toContain("YES, NO, or MAYBE");
+      expect(directive).toContain("Declined to answer");
       expect(directive).toContain("get_next_qualification_question");
-      expect(directive).toContain("cold_proceed_to_booking");
-      expect(directive).toContain("complete_proceed_to_booking");
-      expect(directive).toContain("Never skip a question the tool returned");
+      expect(directive).toContain("SPEAK IT EXACTLY as returned");
+      expect(directive).toContain("never skip a question it returned");
+    });
+
+    it("bans preamble/pitch replay and mandates re-asking on unclear speech", () => {
+      expect(directive).toContain("opening line IS question 1");
+      expect(directive).toContain("Never replay the founder pitch");
+      expect(directive).toContain("ask the SAME");
+      expect(directive).toContain("do NOT call the tool");
     });
   });
 });

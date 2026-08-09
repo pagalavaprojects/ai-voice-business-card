@@ -39,45 +39,62 @@ export const TAMIL_QUALIFICATION_INTRO = `வணக்கம், இந்த �
 
 இது தான் இந்த card ன் சிறப்பு. நன்றி.`;
 
-/** Set 1 — Lead Qualification. Asked in order, verbatim. */
-export const TAMIL_QUALIFICATION_SET1: readonly string[] = [
-  "உங்கள் வணிகத்தில் முதன்மையாகத் தீர்வு காண விரும்பும் பிரச்சினை என்ன?",
-  "இந்தப் பிரச்சினை உங்கள் வணிகத்தை எவ்வளவு காலமாக பாதித்து வருகிறது?",
-  "இதற்கு முன் வேறு ஏதேனும் தீர்வு முயற்சி செய்தீர்களா?",
-  "இந்த முடிவை தாங்கள் மட்டும் எடுப்பீர்களா, அல்லது வேறு யாரேனும் இதில் இணைந்திருப்பார்களா?",
-  "தாங்கள் மனதில் கொண்டுள்ள தோராயமான பட்ஜெட்டைத் தெரிவிக்க முடியுமா?",
-  "இதைத் தொடங்க/வாங்க தாங்கள் எப்பொழுது எண்ணியுள்ளீர்கள்?",
-  "இது தங்களுக்கு எவ்வளவு முக்கியத்துவம் வாய்ந்தது — இப்போதே தேவையா, அல்லது யோசிக்கலாமா?",
+/**
+ * THE single authoritative questionnaire (2026-08-10 revision, supplied by
+ * the product owner — immutable wording). Keyed by authored question
+ * NUMBER because the numbering carries meaning: Q13 is intentionally
+ * unused and must NEVER be asked, and Q11 is conditional on Q10's answer.
+ * Every other structure below (Set 1, Set 2, ALL, the call opening, the
+ * directive, the sequencing tool, the UI) derives from this one list.
+ */
+export interface AuthoredQuestion {
+  readonly number: number;
+  readonly question: string;
+}
+
+export const TAMIL_QUALIFICATION_QUESTIONS: readonly AuthoredQuestion[] = [
+  { number: 1, question: "உங்கள் வணிகத்தில் தீர்வு காண வேண்டிய குறிப்பிட்ட பிரச்சினை உள்ளதா?" },
+  { number: 2, question: "இந்தப் பிரச்சினை 3 மாதங்களுக்கு மேல் உள்ளதா?" },
+  { number: 3, question: "இதற்கு முன் வேறு தீர்வு முயற்சி செய்தீர்களா?" },
+  { number: 4, question: "இந்த முடிவை தாங்கள் மட்டும் எடுக்க முடியுமா?" },
+  { number: 5, question: "தாங்கள் நினைத்திருக்கும் தொகை எங்கள் விலை வரம்பிற்குள் உள்ளதா?" },
+  { number: 6, question: "இதை இந்த மாதத்திற்குள் தொடங்க எண்ணியுள்ளீர்களா?" },
+  { number: 7, question: "இது தங்களுக்கு இப்போதே தேவையானதா?" },
+  { number: 8, question: "இந்தத் தீர்வு உங்கள் வணிகத்திற்கு பயனுள்ளதாக இருக்கும் என நினைக்கிறீர்களா?" },
+  { number: 9, question: "தரம்/வேகம் தங்களுக்கு விலையை விட முக்கியமா?" },
+  { number: 10, question: "முன்னேற தங்களைத் தடுக்கும் ஏதேனும் காரணம் உள்ளதா?" },
+  { number: 11, question: "அது விலை தொடர்பானதா?" },
+  { number: 12, question: "இன்றே முடிவெடுக்க தாங்கள் தயாரா?" },
+  // Q13 is INTENTIONALLY ABSENT — reserved/unused by the product owner.
+  { number: 14, question: "இது ஒரு பரிந்துரையின் மூலம் வந்ததா?" },
+  { number: 15, question: "உங்கள் பகுதியில் உள்ள வாடிக்கையாளர்களுடன் இணைக்க விரும்புகிறீர்களா?" },
+  { number: 16, question: "இப்போது, இதை முன்னெடுத்துச் செல்ல, தங்கள் வசதிக்கேற்ப ஒரு நேரத்தைப் பதிவு செய்ய எங்கள் காலெண்டரைக் காட்டட்டுமா?" },
+  { number: 17, question: "இவ்வாறு தொடரலாமா?" },
 ] as const;
+
+export function getAuthoredQuestion(number: number): AuthoredQuestion | null {
+  return TAMIL_QUALIFICATION_QUESTIONS.find((q) => q.number === number) ?? null;
+}
+
+/** Set 1 — Lead Qualification (Q1-Q7), derived from the master list. */
+export const TAMIL_QUALIFICATION_SET1: readonly string[] = TAMIL_QUALIFICATION_QUESTIONS.filter((q) => q.number <= 7).map((q) => q.question);
+
+/** Set 2 — Lead Conversion (Q8-Q17, no Q13), derived from the master list. */
+export const TAMIL_QUALIFICATION_SET2: readonly string[] = TAMIL_QUALIFICATION_QUESTIONS.filter((q) => q.number >= 8).map((q) => q.question);
 
 /**
  * The qualification call's ACTUAL opening line: EXACTLY Question 1 — by
- * reference, not a copied string, so the opening and the question list can
- * never drift apart. No founder pitch, no greeting, no preamble, no
- * filler: the product owner's acceptance criterion is that the first
- * spoken content after "Start AI Conversation" IS Q1, and the AI's
- * directive tells it the opening already asked Q1 (never repeat it; the
- * visitor's first reply is Q1's answer).
+ * reference, so the opening and the questionnaire can never drift apart.
+ * No founder pitch, no greeting, no preamble, no filler: the first spoken
+ * content after "Start AI Conversation" IS Q1, and the directive tells the
+ * AI the opening already asked Q1 (never repeat it; the visitor's first
+ * reply is Q1's answer).
  */
 export const TAMIL_QUALIFICATION_CALL_OPENING = TAMIL_QUALIFICATION_SET1[0];
 
-/** Set 2 — Lead Conversion / closing. HOT/WARM leads only, in order, verbatim. */
-export const TAMIL_QUALIFICATION_SET2: readonly string[] = [
-  "இந்தத் தீர்வு உங்களுக்குக் கிடைத்தால், உங்கள் வணிகத்தில் என்ன மாற்றத்தை எதிர்பார்க்கிறீர்கள்?",
-  "விலை, தரம், வேகம் — இவற்றில் தங்களுக்கு எது மிக முக்கியம்?",
-  "முன்னேற தங்களைத் தடுக்கக்கூடிய ஏதேனும் காரணம் இருக்கிறதா?",
-  "இது விலையா, நேரமா, அல்லது வேறு ஏதேனும் காரணமா?",
-  "இது குறித்து முடிவெடுக்க தங்களுக்கு எவ்வளவு காலஅவகாசம் தேவைப்படும்?",
-  "இன்று இதற்கு சம்மதிக்க என்ன தேவைப்படும்?",
-  "இதைக் குறித்து தங்களுக்கு யார் தெரிவித்தார்கள்?",
-  "உங்கள் பகுதியில் உள்ள வேறு வாடிக்கையாளர்களுடன் இணைக்க வேண்டுமா?",
-  "இப்போது, இதை முன்னெடுத்துச் செல்ல, தங்கள் வசதிக்கேற்ப ஒரு நேரத்தைப் பதிவு செய்ய எங்கள் காலெண்டரைக் காட்டட்டுமா?",
-  "இவ்வாறு தொடரலாமா?",
-] as const;
-
 /** Every authored question, in asking order — the UI's authoritative
  * source for "which question is on screen right now". */
-export const ALL_TAMIL_QUESTIONS: readonly string[] = [...TAMIL_QUALIFICATION_SET1, ...TAMIL_QUALIFICATION_SET2];
+export const ALL_TAMIL_QUESTIONS: readonly string[] = TAMIL_QUALIFICATION_QUESTIONS.map((q) => q.question);
 
 const normalize = (s: string) => s.replace(/\s+/g, " ").replace(/[?？.!]/g, "").trim();
 
@@ -100,44 +117,54 @@ export function matchAuthoredTamilQuestion(transcript: string): string | null {
 }
 
 /**
- * The system-prompt section injected for Tamil sessions. Written in English
- * (instructions ABOUT the script don't need to be in Tamil — same
- * reasoning as getLanguageDirective) with the authored questions embedded
- * verbatim. It layers ON TOP of the existing sales/booking modules: the
- * conversational engine, scoring, tools and HOT/WARM/COLD routing all stay
- * exactly as deployed — this only fixes WHICH questions are asked and in
- * WHAT order during the booking-qualification conversation.
+ * The system-prompt section injected for Tamil sessions. Written in
+ * English (instructions ABOUT the script don't need to be Tamil) with the
+ * authored questions embedded verbatim. Progression, the Q10->Q11
+ * condition, the Q13 gap, and COLD routing are ALL enforced server-side
+ * by get_next_qualification_question — this text tells the model its
+ * contract with that tool.
  */
 export function getTamilQualificationDirective(): string {
-  const set1 = TAMIL_QUALIFICATION_SET1.map((q, i) => `${i + 1}. ${q}`).join("\n");
-  const set2 = TAMIL_QUALIFICATION_SET2.map((q, i) => `${i + 8}. ${q}`).join("\n");
+  const numbered = TAMIL_QUALIFICATION_QUESTIONS.map((q) => `${q.number}. ${q.question}`).join("\n");
   return (
-    `\n\n=== TAMIL QUALIFICATION SCRIPT (booking flow) ===\n` +
-    `When the visitor is being qualified for an appointment, ask the following authored questions IN ORDER, ` +
-    `one at a time, EXACTLY as written — do not translate, paraphrase, shorten, reword or renumber them. ` +
-    `The call's opening line IS question 1 verbatim — do NOT repeat it, do NOT add any greeting or preamble ` +
-    `around it; treat the visitor's first reply as the answer to question 1. Never replay the founder ` +
-    `pitch or any elevator/product/USP content during qualification. If the visitor declines a question, ` +
-    `acknowledge it naturally, record nothing invented, and move on — never end or restart ` +
-    `the qualification because of a refusal. ` +
-    `PROGRESSION IS TOOL-DRIVEN, NOT FROM MEMORY: after storing each answer, you MUST call ` +
-    `get_next_qualification_question with the number of the question just answered (and the lead_id from ` +
-    `save_lead), then speak the returned question EXACTLY as given. Obey its action field: ` +
-    `"cold_proceed_to_booking" means skip the remaining questions and warmly invite them to pick a time on ` +
-    `screen; "complete_proceed_to_booking" means move to booking. Never skip a question the tool returned and ` +
-    `never invent a question the tool did not return. ` +
-    `After each answer: listen fully, then record what they actually said via save_lead / update_lead_qualification ` +
-    `(map naturally: problem -> problem_statement; prior attempts -> current_solution; decision authority -> decision_maker; ` +
-    `budget -> budget; start timing -> timeline; importance/urgency -> urgency and buying_intent; obstacles/reasons -> objections ` +
-    `and, when clearly blocking, cold_reason; who told them -> referral_source; everything else informative -> qualification_notes). ` +
-    `Never invent an answer the visitor did not give. Then ask the next question.\n\n` +
-    `SET 1 — LEAD QUALIFICATION (every visitor):\n${set1}\n\n` +
-    `After Set 1, the tools return the lead's temperature. If it is HOT or WARM, continue with Set 2. ` +
-    `If it is COLD, SKIP Set 2 entirely — never push a cold lead through closing questions — thank them warmly and ` +
-    `invite them to pick an appointment time anyway; a COLD lead must always still be able to book.\n\n` +
-    `SET 2 — LEAD CONVERSION (HOT/WARM only):\n${set2}\n\n` +
-    `Questions 16-17 ask consent to show the calendar; on a yes, proceed to booking (collect Name, Email, Phone and use ` +
-    `book_appointment, or tell them they can pick a time on screen). The visitor may stop or skip at ANY point — never ` +
-    `trap them; if they want to book immediately, let them.`
+    `
+
+=== TAMIL QUALIFICATION SCRIPT (booking flow) ===
+` +
+    `When the visitor is being qualified for an appointment, ask ONLY the authored questions below, one at a ` +
+    `time, EXACTLY as written — never translate, paraphrase, shorten, reword or renumber them, and never invent ` +
+    `a question. There is deliberately no question 13 — never ask one. ` +
+    `The call's opening line IS question 1 verbatim — do NOT repeat it and do NOT add any greeting or preamble; ` +
+    `the visitor's first reply is the answer to question 1. Never replay the founder pitch or any ` +
+    `elevator/product/USP content during qualification.
+
+` +
+    `FOR EVERY ANSWER, before moving on you MUST:
+` +
+    `1. Translate what the visitor actually said into one concise ENGLISH sentence (their meaning, nothing added).
+` +
+    `2. Classify it strictly as YES, NO, or MAYBE — MAYBE whenever it is genuinely ambiguous, and MAYBE with the ` +
+    `English text "Declined to answer" when they refuse. Never guess a YES/NO you did not hear.
+` +
+    `3. Call get_next_qualification_question with: last_answered_question (the number just answered), ` +
+    `classification (YES/NO/MAYBE), answer_english (your translation), and the lead_id from save_lead. The server ` +
+    `records the answer and returns the next authored question — SPEAK IT EXACTLY as returned. Obey its action ` +
+    `field: "cold_proceed_to_booking"/"complete_proceed_to_booking" mean move to booking (warmly invite them to ` +
+    `pick a time on screen, or collect Name/Email/Phone and use book_appointment).
+` +
+    `4. Also keep mapping content into the lead via save_lead / update_lead_qualification as before (problem -> ` +
+    `problem_statement; prior attempts -> current_solution; decision authority -> decision_maker; budget -> budget; ` +
+    `timing -> timeline; urgency -> urgency and buying_intent; obstacles -> objections and, when clearly blocking, ` +
+    `cold_reason; referral -> referral_source). Never invent an answer.
+
+` +
+    `If the visitor's speech is unclear or silent: do NOT call the tool and do NOT advance — politely ask the SAME ` +
+    `question again. The sequencing (including whether question 11 is asked, and where COLD leads go) is decided ` +
+    `entirely by the tool — never skip a question it returned and never ask one it did not return. The visitor may ` +
+    `stop or skip to booking at ANY point — never trap them.
+
+` +
+    `THE AUTHORED QUESTIONS:
+${numbered}`
   );
 }

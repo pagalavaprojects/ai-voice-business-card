@@ -6,7 +6,7 @@ import { Dialog } from "@/shared/ui/dialog";
 import { Button } from "@/shared/ui/button";
 import { Skeleton } from "@/shared/ui/skeleton";
 import type { LanguageCode } from "@/features/language/config";
-import { TAMIL_QUALIFICATION_SET1, ALL_TAMIL_QUESTIONS, matchAuthoredTamilQuestion } from "@/features/voice/lib/qualificationScript";
+import { TAMIL_QUALIFICATION_SET1, ALL_TAMIL_QUESTIONS, TAMIL_QUALIFICATION_QUESTIONS, matchAuthoredTamilQuestion } from "@/features/voice/lib/qualificationScript";
 
 interface AppointmentModalProps {
   open: boolean;
@@ -92,6 +92,12 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   const [step, setStep] = useState<0 | 1 | 2 | 3>(voice ? 0 : 1);
   const [qualStage, setQualStage] = useState<"intro" | "active">("intro");
   const [temperature, setTemperature] = useState<"HOT" | "WARM" | "COLD" | null>(null);
+  // Per-question answer records from the server (question number,
+  // YES/NO/MAYBE, ENGLISH transcript) — the transcript shown to the
+  // visitor is English-only by product rule; raw Tamil ASR is never
+  // rendered. These come from what the sequencing tool actually persisted,
+  // so nothing displayed was ever invented client-side.
+  const [qualAnswers, setQualAnswers] = useState<Array<{ n: number; c: string; a: string }>>([]);
   const qualStageRef = useRef(qualStage);
   qualStageRef.current = qualStage;
   const [slots, setSlots] = useState<CalcomSlot[]>([]);
@@ -196,17 +202,23 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   // invitation to keep talking doesn't need continued polling; routing only
   // needs the first classification.
   useEffect(() => {
-    if (!open || step !== 0 || qualStage !== "active" || !voice?.callId || temperature) return;
+    // Polls for the WHOLE active conversation (not just until the
+    // temperature lands): the answers feed is what renders the visitor's
+    // English transcript. Stops on modal close or leaving the step.
+    if (!open || step !== 0 || qualStage !== "active" || !voice?.callId) return;
     const timer = setInterval(() => {
       fetch(`/api/public/${companyId}/${employeeId}/qualification-status?callId=${encodeURIComponent(voice.callId!)}`)
         .then((res) => (res.ok ? res.json() : null))
-        .then((data: { qualified?: boolean; temperature?: "HOT" | "WARM" | "COLD" | null } | null) => {
-          if (data?.qualified && data.temperature) setTemperature(data.temperature);
-        })
+        .then(
+          (data: { qualified?: boolean; temperature?: "HOT" | "WARM" | "COLD" | null; answers?: Array<{ n: number; c: string; a: string }> } | null) => {
+            if (data?.qualified && data.temperature) setTemperature(data.temperature);
+            if (Array.isArray(data?.answers)) setQualAnswers(data!.answers!);
+          }
+        )
         .catch(() => undefined);
     }, 3000);
     return () => clearInterval(timer);
-  }, [open, step, qualStage, voice?.callId, temperature, companyId, employeeId]);
+  }, [open, step, qualStage, voice?.callId, companyId, employeeId]);
 
   const advanceToSlots = () => {
     // The visitor is done talking (or never wanted to) — the mic must not
@@ -220,6 +232,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
     setStep(voice ? 0 : 1);
     setQualStage("intro");
     setTemperature(null);
+    setQualAnswers([]);
     setFormData({ name: "", email: "", phone: "", notes: "" });
     setOutcome(null);
     setSubmitErrorKey(null);
@@ -293,33 +306,35 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                     is their REAL transcript only; nothing is ever invented. */}
                 {(() => {
                   const msgs = voice.messages ?? [];
-                  // Walk the REAL transcript into exchanges: each assistant
-                  // message matching an authored question opens an exchange;
-                  // the visitor's utterances until the next matched question
-                  // are its answer. Nothing is ever fabricated — history is
-                  // exactly what was said.
-                  const exchanges: Array<{ question: string; answers: string[] }> = [];
+                  // CURRENT question: the last assistant utterance that
+                  // matches an authored question — displayed in the exact
+                  // AUTHORED wording, never an ASR paraphrase. Seeded with
+                  // Q1 (it IS the call's opening line). Falls forward to the
+                  // next expected question when the server's answer records
+                  // are ahead of the transcript events.
+                  let currentQuestion: string | null = voice.language === "ta" ? TAMIL_QUALIFICATION_SET1[0] : null;
                   if (voice.language === "ta") {
-                    for (const m of msgs) {
-                      if (m.role === "assistant") {
-                        const matched = matchAuthoredTamilQuestion(m.content);
-                        if (matched && exchanges[exchanges.length - 1]?.question !== matched) {
-                          exchanges.push({ question: matched, answers: [] });
-                        }
-                      } else if (m.role === "user" && exchanges.length > 0) {
-                        exchanges[exchanges.length - 1].answers.push(m.content);
+                    for (let i = msgs.length - 1; i >= 0; i--) {
+                      if (msgs[i].role !== "assistant") continue;
+                      const matched = matchAuthoredTamilQuestion(msgs[i].content);
+                      if (matched) {
+                        currentQuestion = matched;
+                        break;
                       }
                     }
-                    // Q1 IS the call's opening line — seed it so the question
-                    // is on screen before any transcript event arrives.
-                    if (exchanges.length === 0) exchanges.push({ question: TAMIL_QUALIFICATION_SET1[0], answers: [] });
+                    const maxAnswered = qualAnswers.reduce((m, a) => Math.max(m, a.n), 0);
+                    const currentNum = currentQuestion ? ALL_TAMIL_QUESTIONS.indexOf(currentQuestion) + 1 : 0;
+                    if (maxAnswered > 0 && currentNum > 0) {
+                      const currentAuthored = TAMIL_QUALIFICATION_QUESTIONS.find((q) => q.question === currentQuestion);
+                      if (currentAuthored && currentAuthored.number <= maxAnswered) {
+                        const next = TAMIL_QUALIFICATION_QUESTIONS.find((q) => q.number > maxAnswered);
+                        if (next) currentQuestion = next.question;
+                      }
+                    }
                   }
-                  const current = exchanges[exchanges.length - 1] ?? null;
-                  const history = exchanges.slice(0, -1);
+                  const qNum = currentQuestion ? TAMIL_QUALIFICATION_QUESTIONS.find((q) => q.question === currentQuestion)?.number ?? 0 : 0;
                   const latestAssistant = [...msgs].reverse().find((m) => m.role === "assistant");
-                  const aiLine = current?.question ?? latestAssistant?.content ?? null;
-                  const lastUser = current?.answers.length ? current.answers[current.answers.length - 1] : null;
-                  const qNum = current ? ALL_TAMIL_QUESTIONS.indexOf(current.question) + 1 : 0;
+                  const aiLine = currentQuestion ?? latestAssistant?.content ?? null;
                   return (
                     <div className="space-y-2.5" data-testid="qualification-conversation">
                       {qNum > 0 && (
@@ -329,18 +344,39 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                             : t("appointment.progressSet2", { n: String(qNum) })}
                         </p>
                       )}
-                      {history.length > 0 && (
-                        <div className="space-y-2 max-h-32 overflow-y-auto pr-1 opacity-70" data-testid="qual-history">
-                          {history.map((ex, i) => (
-                            <div key={i} className="border-l-2 border-white/[0.08] pl-2.5">
-                              <p className="text-[11px] text-slate-300 leading-snug" lang={voice.language === "ta" ? "ta" : undefined}>
-                                {ex.question}
-                              </p>
-                              {ex.answers.length > 0 && (
-                                <p className="text-[11px] text-emerald-300/80 leading-snug mt-0.5">{ex.answers.join(" ")}</p>
-                              )}
-                            </div>
-                          ))}
+                      {/* Answered questions: authored Tamil question + the
+                          visitor's ENGLISH answer + its YES/NO/MAYBE tag,
+                          exactly as the server recorded them. English-only
+                          transcript is a product rule — raw Tamil ASR is
+                          never rendered. */}
+                      {qualAnswers.length > 0 && (
+                        <div className="space-y-2 max-h-36 overflow-y-auto pr-1" data-testid="qual-history">
+                          {qualAnswers.map((ans) => {
+                            const authored = TAMIL_QUALIFICATION_QUESTIONS.find((q) => q.number === ans.n);
+                            return (
+                              <div key={ans.n} className="border-l-2 border-white/[0.08] pl-2.5">
+                                {authored && (
+                                  <p className="text-[11px] text-slate-400 leading-snug" lang="ta">
+                                    {authored.question}
+                                  </p>
+                                )}
+                                <p className="text-[11px] text-slate-200 leading-snug mt-0.5" data-testid={`answer-${ans.n}`}>
+                                  <span
+                                    className={`inline-block mr-1.5 px-1 rounded text-[9px] font-bold align-middle ${
+                                      ans.c === "YES"
+                                        ? "bg-emerald-500/20 text-emerald-300"
+                                        : ans.c === "NO"
+                                          ? "bg-rose-500/20 text-rose-300"
+                                          : "bg-amber-500/20 text-amber-300"
+                                    }`}
+                                  >
+                                    {ans.c}
+                                  </span>
+                                  {ans.a}
+                                </p>
+                              </div>
+                            );
+                          })}
                         </div>
                       )}
                       {aiLine && (
@@ -348,14 +384,6 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                           <p className="text-[10px] uppercase tracking-wider text-sky-400 font-semibold mb-1">{t("transcript.aiTwin")}</p>
                           <p className="text-sm text-slate-100 leading-relaxed" data-testid="current-question" lang={voice.language === "ta" ? "ta" : undefined}>
                             {aiLine}
-                          </p>
-                        </div>
-                      )}
-                      {lastUser && (
-                        <div>
-                          <p className="text-[10px] uppercase tracking-wider text-emerald-400 font-semibold mb-1">{t("transcript.you")}</p>
-                          <p className="text-xs text-slate-300 leading-relaxed" data-testid="user-transcript">
-                            {lastUser}
                           </p>
                         </div>
                       )}

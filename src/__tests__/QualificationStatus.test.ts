@@ -47,14 +47,14 @@ describe("qualification-status", () => {
 
   it("reports unqualified while no conversation exists yet for the call", async () => {
     const json = await (await GET(request("call-abc-123"), { params })).json();
-    expect(json).toEqual({ qualified: false, temperature: null });
+    expect(json).toEqual({ qualified: false, temperature: null, answers: [] });
   });
 
   it("reports unqualified while the lead has no temperature yet", async () => {
     conversationRow = { id: "conv-1" };
     leadRow = { lead_temperature: null };
     const json = await (await GET(request("call-abc-123"), { params })).json();
-    expect(json).toEqual({ qualified: false, temperature: null });
+    expect(json).toEqual({ qualified: false, temperature: null, answers: [] });
   });
 
   it.each(["HOT", "WARM", "COLD"] as const)("reports %s once the engine has classified the lead", async (temp) => {
@@ -62,7 +62,7 @@ describe("qualification-status", () => {
     leadRow = { lead_temperature: temp };
     const res = await GET(request("call-abc-123"), { params });
     const json = await res.json();
-    expect(json).toEqual({ qualified: true, temperature: temp });
+    expect(json).toEqual({ qualified: true, temperature: temp, answers: [] });
     expect(res.headers.get("Cache-Control")).toBe("no-store");
   });
 
@@ -70,6 +70,24 @@ describe("qualification-status", () => {
     conversationRow = { id: "conv-1" };
     leadRow = { lead_temperature: "HOT", name: "Private Person", email: "p@x.com", phone: "+91 90000 00000" };
     const json = await (await GET(request("call-abc-123"), { params })).json();
-    expect(Object.keys(json).sort()).toEqual(["qualified", "temperature"]);
+    expect(Object.keys(json).sort()).toEqual(["answers", "qualified", "temperature"]);
+  });
+
+  it("parses the recorded answers out of qualification_notes and exposes ONLY the structured lines", async () => {
+    conversationRow = { id: "conv-1" };
+    leadRow = {
+      lead_temperature: "WARM",
+      qualification_notes: [
+        "internal AI reasoning line that must never leak",
+        "Q1 [YES] (2026-08-10T10:00:00.000Z): They struggle to generate leads.",
+        "Q2 [MAYBE] (2026-08-10T10:01:00.000Z): About three months.",
+      ].join("\n"),
+    };
+    const json = await (await GET(request("call-abc-123"), { params })).json();
+    expect(json.answers).toEqual([
+      { n: 1, c: "YES", a: "They struggle to generate leads." },
+      { n: 2, c: "MAYBE", a: "About three months." },
+    ]);
+    expect(JSON.stringify(json)).not.toContain("internal AI reasoning");
   });
 });

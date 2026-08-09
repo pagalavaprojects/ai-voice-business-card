@@ -43,12 +43,12 @@ export async function GET(req: NextRequest, { params }: { params: { companyId: s
       .maybeSingle();
 
     if (!conversation) {
-      return NextResponse.json({ qualified: false, temperature: null });
+      return NextResponse.json({ qualified: false, temperature: null, answers: [] });
     }
 
     const { data: lead } = await supabaseAdmin
       .from("leads")
-      .select("lead_temperature")
+      .select("lead_temperature, qualification_notes")
       .eq("conversation_id", conversation.id)
       .eq("company_id", params.companyId)
       .order("created_at", { ascending: false })
@@ -56,13 +56,24 @@ export async function GET(req: NextRequest, { params }: { params: { companyId: s
       .maybeSingle();
 
     const temperature = lead?.lead_temperature ?? null;
+    // The per-question answer records the sequencing tool appends to
+    // qualification_notes ("Qn [YES|NO|MAYBE] (ISO): english answer") —
+    // parsed back out so the booking UI can show the visitor their OWN
+    // answers in English. Non-matching note lines (the AI's internal
+    // reasoning) are never exposed.
+    const answers = (lead?.qualification_notes ?? "")
+      .split("\n")
+      .map((line: string) => /^Q(\d+) \[(YES|NO|MAYBE)\] \([^)]*\): (.*)$/.exec(line.trim()))
+      .filter((m: RegExpExecArray | null): m is RegExpExecArray => m !== null)
+      .map((m: RegExpExecArray) => ({ n: Number(m[1]), c: m[2], a: m[3] }));
+
     return NextResponse.json(
-      { qualified: temperature !== null, temperature },
+      { qualified: temperature !== null, temperature, answers },
       // Never cached: the whole point is watching this change mid-call.
       { headers: { "Cache-Control": "no-store" } }
     );
   } catch (err) {
     Logger.warn("qualification-status lookup failed", { error: err instanceof Error ? err.message : String(err) });
-    return NextResponse.json({ qualified: false, temperature: null });
+    return NextResponse.json({ qualified: false, temperature: null, answers: [] });
   }
 }

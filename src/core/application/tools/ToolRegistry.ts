@@ -8,7 +8,7 @@ import { ISettingsRepository } from "../../domain/repositories/ISettingsReposito
 import { IKnowledgeDocumentRepository } from "../../domain/repositories/IKnowledgeDocumentRepository";
 import { OpenAIEmbeddingAdapter } from "../../infrastructure/embeddings/OpenAIEmbeddingAdapter";
 import { getWhatsAppNotifier } from "../../infrastructure/notifications/WhatsAppNotifier";
-import { TAMIL_QUALIFICATION_SET1, TAMIL_QUALIFICATION_SET2 } from "@/features/voice/lib/qualificationScript";
+import { getAuthoredQuestion } from "@/features/voice/lib/qualificationScript";
 import { AppointmentStatus, LeadTemperature, NurtureStatus, LeadQualificationSignalsSchema } from "../../domain/models/types";
 import { Logger } from "@/shared/lib/logger";
 
@@ -588,43 +588,83 @@ export class ToolRegistry {
     });
 
     // 2b. Qualification sequencing tool — the SERVER owns the authored
-    // question order, so the conversation cannot stall after Q1 or drift
-    // off-script: after storing each answer the model must call this and
-    // speak exactly what comes back. At the Set-1/Set-2 boundary the
-    // routing decision (continue vs COLD-skip) is made HERE from the
-    // lead's REAL stored temperature — never from the model's own
-    // impression. Deliberately read-only: it never writes anything.
+    // question order and every branching rule: the Q10->Q11 condition, the
+    // deliberate Q13 gap, and COLD routing (skip Q8-Q15, still ask the
+    // calendar-consent questions Q16-Q17 — a COLD lead always still books).
+    // It also RECORDS each answer: question number, YES/NO/MAYBE, the
+    // English transcript and a timestamp are appended to the lead's
+    // existing qualification_notes field (no schema change), which is what
+    // the qualification-status endpoint serves back to the booking UI.
     this.register({
       name: "get_next_qualification_question",
       description:
-        "REQUIRED after storing each qualification answer: returns the exact next authored question to ask verbatim, " +
-        "or a routing action (COLD skips the conversion set and proceeds to booking; after the final question, proceed to booking).",
+        "REQUIRED after every answered qualification question: records the answer (question number, YES/NO/MAYBE " +
+        "classification, English translation) and returns the exact next authored question to speak verbatim, or a " +
+        "routing action (COLD skips the conversion questions but still gets the calendar-consent questions; after " +
+        "the final question, proceed to booking).",
       parameters: {
         type: "object",
         properties: {
           last_answered_question: {
             type: "number",
-            description: "The number (1-17) of the question the visitor just answered, or 0 before any question is answered.",
+            description: "The authored number (1-17) of the question the visitor just answered, or 0 before any answer.",
           },
-          lead_id: { type: "string", description: "UUID returned by save_lead — required from question 7 onward so routing uses the real stored temperature." },
+          classification: {
+            type: "string",
+            enum: ["YES", "NO", "MAYBE"],
+            description: "Strict classification of the visitor's actual answer. MAYBE when genuinely ambiguous or declined.",
+          },
+          answer_english: {
+            type: "string",
+            description: "One concise ENGLISH sentence translating what the visitor actually said. Never invented.",
+          },
+          lead_id: { type: "string", description: "UUID returned by save_lead — required so answers persist and routing uses the real stored temperature." },
         },
         required: ["last_answered_question"],
       },
       execute: async (args, context) => {
         if (context.language !== "ta") {
-          // Only the Tamil questionnaire is authored; other languages keep
-          // the existing conversational qualification.
           return { action: "freeform", message: "No authored script for this language — continue qualifying conversationally per your instructions." };
         }
         const last = Number(args.last_answered_question);
-        if (!Number.isInteger(last) || last < 0 || last > 17) {
-          return { action: "error", message: "last_answered_question must be an integer from 0 to 17." };
+        if (!Number.isInteger(last) || last < 0 || last > 17 || last === 13) {
+          return { action: "error", message: "last_answered_question must be an integer 0-17 (13 does not exist)." };
         }
-        const next = last + 1;
-        if (next <= 7) {
-          return { action: "ask_verbatim", question_number: next, question: TAMIL_QUALIFICATION_SET1[next - 1] };
+        const classification = typeof args.classification === "string" ? args.classification.toUpperCase() : null;
+        if (last > 0 && classification !== null && !["YES", "NO", "MAYBE"].includes(classification)) {
+          return { action: "error", message: "classification must be exactly YES, NO or MAYBE." };
         }
-        if (next === 8) {
+
+        // Record the just-given answer on the lead's existing notes field:
+        // "Qn [YES|NO|MAYBE] (ISO time): english answer". Read-modify-write
+        // append; a persistence hiccup must not stall the conversation.
+        if (last > 0 && args.lead_id && classification) {
+          try {
+            const lead = await this.crmRepo.getLeadById(String(args.lead_id));
+            if (lead) {
+              const line = `Q${last} [${classification}] (${new Date().toISOString()}): ${String(args.answer_english ?? "").slice(0, 500)}`;
+              const notes = (lead.qualification_notes ? lead.qualification_notes + "\n" : "") + line;
+              await this.crmRepo.updateLeadQualification(lead.id, { qualification_notes: notes });
+            }
+          } catch (err) {
+            Logger.warn("get_next_qualification_question: answer record failed", { error: err instanceof Error ? err.message : String(err) });
+          }
+        }
+
+        const ask = (n: number) => {
+          const q = getAuthoredQuestion(n);
+          return q
+            ? { action: "ask_verbatim", question_number: q.number, question: q.question }
+            : { action: "error", message: `No authored question ${n}.` };
+        };
+
+        // Branch rules, in authored-number space:
+        if (last === 0) return ask(1);
+        if (last < 7) return ask(last + 1);
+        if (last === 7) {
+          // Temperature gate — from the REAL stored classification, never
+          // the model's impression. COLD skips the conversion questions
+          // (Q8-Q15) but STILL gets the calendar-consent pair Q16-Q17.
           let temperature: string | null | undefined;
           if (args.lead_id) {
             try {
@@ -634,26 +674,31 @@ export class ToolRegistry {
             }
           }
           if (temperature === LeadTemperature.COLD) {
+            const q16 = getAuthoredQuestion(16)!;
             return {
-              action: "cold_proceed_to_booking",
-              message:
-                "The lead is COLD — do NOT ask the conversion questions (8-17). Thank them warmly and invite them to pick " +
-                "an appointment time on screen; a COLD lead must always still be able to book.",
+              action: "ask_verbatim",
+              question_number: 16,
+              question: q16.question,
+              note: "Lead is COLD — conversion questions 8-15 are skipped; after questions 16-17, proceed to booking. A COLD lead must always still be able to book.",
             };
           }
-          // HOT/WARM — and, when the temperature is unknown (no lead_id or
-          // lookup failure), continuing is the safe default: a HOT lead
-          // wrongly skipped loses revenue; a COLD lead wrongly asked one
-          // extra set can still book.
-          return { action: "ask_verbatim", question_number: 8, question: TAMIL_QUALIFICATION_SET2[0] };
+          // HOT/WARM — and when unknown, continuing is the safe default.
+          return ask(8);
         }
-        if (next <= 17) {
-          return { action: "ask_verbatim", question_number: next, question: TAMIL_QUALIFICATION_SET2[next - 8] };
+        if (last === 10) {
+          // Conditional Q11: only when Q10 was YES or MAYBE. Q10 = NO means
+          // nothing is blocking them — asking "is it price-related?" would
+          // make no sense. Enforced HERE, never left to the model.
+          return classification === "NO" ? ask(12) : ask(11);
         }
-        return {
-          action: "complete_proceed_to_booking",
-          message: "All questions are complete — proceed to booking: invite them to pick a time on screen, or collect Name/Email/Phone and use book_appointment.",
-        };
+        if (last === 12) return ask(14); // Q13 does not exist — never asked.
+        if (last === 17) {
+          return {
+            action: "complete_proceed_to_booking",
+            message: "All questions are complete — proceed to booking: invite them to pick a time on screen, or collect Name/Email/Phone and use book_appointment.",
+          };
+        }
+        return ask(last + 1);
       },
     });
 
