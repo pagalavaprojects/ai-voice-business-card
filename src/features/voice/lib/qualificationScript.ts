@@ -75,6 +75,30 @@ export const TAMIL_QUALIFICATION_SET2: readonly string[] = [
   "இவ்வாறு தொடரலாமா?",
 ] as const;
 
+/** Every authored question, in asking order — the UI's authoritative
+ * source for "which question is on screen right now". */
+export const ALL_TAMIL_QUESTIONS: readonly string[] = [...TAMIL_QUALIFICATION_SET1, ...TAMIL_QUALIFICATION_SET2];
+
+const normalize = (s: string) => s.replace(/\s+/g, " ").replace(/[?？.!]/g, "").trim();
+
+/**
+ * Matches a live assistant transcript against the authored question list
+ * and returns the EXACT authored wording (never the transcript's own
+ * rendering of it) — the UI must always display the authoritative text,
+ * not an ASR/TTS-roundtripped paraphrase. Tolerant of punctuation and
+ * whitespace drift in the transcript; null when the utterance isn't one
+ * of the authored questions.
+ */
+export function matchAuthoredTamilQuestion(transcript: string): string | null {
+  const t = normalize(transcript);
+  if (!t) return null;
+  for (const q of ALL_TAMIL_QUESTIONS) {
+    const nq = normalize(q);
+    if (t.includes(nq) || nq.includes(t)) return q;
+  }
+  return null;
+}
+
 /**
  * The system-prompt section injected for Tamil sessions. Written in English
  * (instructions ABOUT the script don't need to be in Tamil — same

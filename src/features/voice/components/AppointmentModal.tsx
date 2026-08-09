@@ -6,6 +6,7 @@ import { Dialog } from "@/shared/ui/dialog";
 import { Button } from "@/shared/ui/button";
 import { Skeleton } from "@/shared/ui/skeleton";
 import type { LanguageCode } from "@/features/language/config";
+import { TAMIL_QUALIFICATION_SET1, matchAuthoredTamilQuestion } from "@/features/voice/lib/qualificationScript";
 
 interface AppointmentModalProps {
   open: boolean;
@@ -38,6 +39,12 @@ interface AppointmentModalProps {
     callId: string | null;
     startCall: () => void;
     endCall: () => void;
+    /** Live conversation transcript (assistant + visitor) from the session
+     * — the qualification panel renders the current question and the
+     * visitor's REAL answers from this. Never fabricated. */
+    messages?: Array<{ role: "assistant" | "user"; content: string }>;
+    /** The session language — the authored-question matching is Tamil-only. */
+    language?: string;
   };
 }
 
@@ -277,7 +284,60 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
 
             {qualStage === "active" && (
               <div className="p-4 rounded-xl bg-white/[0.04] border border-white/[0.08] space-y-3">
-                <div className="flex items-center gap-2.5">
+                {/* The conversation itself — never just a bare "Listening…".
+                    The AI line shows the AUTHORITATIVE authored question:
+                    seeded with Q1 (it IS the call's opening line), advanced
+                    when a live assistant transcript matches the next
+                    authored question — the exact authored wording is always
+                    what renders, never an ASR paraphrase. The visitor line
+                    is their REAL transcript only; nothing is ever invented. */}
+                {(() => {
+                  const msgs = voice.messages ?? [];
+                  let currentQuestion: string | null = voice.language === "ta" ? TAMIL_QUALIFICATION_SET1[0] : null;
+                  let questionMsgIndex = -1;
+                  for (let i = msgs.length - 1; i >= 0; i--) {
+                    if (msgs[i].role !== "assistant") continue;
+                    const matched = voice.language === "ta" ? matchAuthoredTamilQuestion(msgs[i].content) : null;
+                    if (matched) {
+                      currentQuestion = matched;
+                      questionMsgIndex = i;
+                      break;
+                    }
+                  }
+                  // The visitor's latest utterance SINCE the current question
+                  // was asked — i.e. their in-progress/just-given answer.
+                  let lastUser: { role: string; content: string } | null = null;
+                  for (let i = msgs.length - 1; i > questionMsgIndex; i--) {
+                    if (msgs[i].role === "user") {
+                      lastUser = msgs[i];
+                      break;
+                    }
+                  }
+                  const latestAssistant = [...msgs].reverse().find((m) => m.role === "assistant");
+                  const aiLine = currentQuestion ?? latestAssistant?.content ?? null;
+                  return (
+                    <div className="space-y-2.5" data-testid="qualification-conversation">
+                      {aiLine && (
+                        <div>
+                          <p className="text-[10px] uppercase tracking-wider text-sky-400 font-semibold mb-1">{t("transcript.aiTwin")}</p>
+                          <p className="text-sm text-slate-100 leading-relaxed" data-testid="current-question" lang={voice.language === "ta" ? "ta" : undefined}>
+                            {aiLine}
+                          </p>
+                        </div>
+                      )}
+                      {lastUser && (
+                        <div>
+                          <p className="text-[10px] uppercase tracking-wider text-emerald-400 font-semibold mb-1">{t("transcript.you")}</p>
+                          <p className="text-xs text-slate-300 leading-relaxed" data-testid="user-transcript">
+                            {lastUser.content}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                <div className="flex items-center gap-2.5 pt-2 border-t border-white/[0.06]">
                   <span className={`h-2.5 w-2.5 rounded-full ${voice.voiceState === "idle" ? "bg-slate-500" : "bg-sky-400 animate-pulse"}`} aria-hidden="true" />
                   <span className="text-xs font-semibold text-slate-200" aria-live="polite">
                     {voice.voiceState === "connecting"
@@ -291,13 +351,11 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                             : t("status.availableNow")}
                   </span>
                 </div>
-                <p className="text-xs text-slate-400">
-                  {temperature === null
-                    ? t("appointment.qualifyInProgress")
-                    : temperature === "COLD"
-                      ? t("appointment.qualifyDoneCold")
-                      : t("appointment.qualifyDoneWarm")}
-                </p>
+                {temperature !== null && (
+                  <p className="text-xs text-slate-400">
+                    {temperature === "COLD" ? t("appointment.qualifyDoneCold") : t("appointment.qualifyDoneWarm")}
+                  </p>
+                )}
                 {temperature !== null && (
                   <Button
                     variant="default"

@@ -951,6 +951,8 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
           // elsewhere is unaffected.
           startCall: () => startCall(language === "ta" ? { firstMessage: TAMIL_QUALIFICATION_CALL_OPENING } : undefined),
           endCall,
+          messages,
+          language,
         }}
       />
     </main>
