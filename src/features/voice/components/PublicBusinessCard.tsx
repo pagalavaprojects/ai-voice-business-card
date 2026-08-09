@@ -595,9 +595,15 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
               <p className="text-xs text-slate-400">{company.name}</p>
             </div>
 
-            <Badge variant={isCallActive ? "default" : "success"} aria-live="polite" aria-atomic="true">
-              ● {statusLabel}
-            </Badge>
+            {/* Status badge only DURING a live call — the resting card shows
+                no "Available now" chip (removed by request; the card should
+                present identity + listen actions, not an availability
+                claim). aria-live retained for in-call state announcements. */}
+            {isCallActive && (
+              <Badge variant="default" aria-live="polite" aria-atomic="true">
+                ● {statusLabel}
+              </Badge>
+            )}
           </div>
 
           {/* ---------- Voice ---------- */}
@@ -634,33 +640,36 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
               }}
             />
 
-            <p className="text-sm text-slate-200 text-center font-semibold mt-4">
-              {isPlayingIntro
-                ? t("status.playingIntroduction")
-                : voiceState === "connecting"
-                  ? t("status.preparingVoice")
-                  : isCallActive
-                    ? t("mic.tapToSpeak")
-                    : t("mic.talkWithAI", { name: employee.name.split(" ")[0] })}
-            </p>
-            <p className="text-xs text-slate-400 text-center mt-1 max-w-xs">
-              {isPlayingIntro
-                ? t("mic.introHelper")
-                : voiceState === "connecting"
-                  ? t("mic.connectingHelper")
-                  : voiceState === "thinking"
-                    ? t("mic.thinkingHelper")
-                    : voiceState === "speaking"
-                      ? t("mic.speakingHelper")
-                      : voiceState === "listening"
-                        ? // Exactly once per call — the moment the mic first opens
+            {/* "Talk with {name}'s AI" and the idle mic-permission helper
+                are removed by request — the resting card carries no heading
+                or microphone messaging here. In-call state copy remains. */}
+            {(isPlayingIntro || isCallActive) && (
+              <p className="text-sm text-slate-200 text-center font-semibold mt-4">
+                {isPlayingIntro
+                  ? t("status.playingIntroduction")
+                  : voiceState === "connecting"
+                    ? t("status.preparingVoice")
+                    : t("mic.tapToSpeak")}
+              </p>
+            )}
+            {(isPlayingIntro || isCallActive) && (
+              <p className="text-xs text-slate-400 text-center mt-1 max-w-xs">
+                {isPlayingIntro
+                  ? t("mic.introHelper")
+                  : voiceState === "connecting"
+                    ? t("mic.connectingHelper")
+                    : voiceState === "thinking"
+                      ? t("mic.thinkingHelper")
+                      : voiceState === "speaking"
+                        ? t("mic.speakingHelper")
+                        : // Exactly once per call — the moment the mic first opens
                           // (no messages yet) — before settling into the more
-                          // detailed ongoing-conversation helper text below.
+                          // detailed ongoing-conversation helper text.
                           messages.length === 0
                           ? t("mic.nowYouCanAsk")
-                          : t("mic.listeningHelper")
-                        : t("mic.idleHelper")}
-            </p>
+                          : t("mic.listeningHelper")}
+              </p>
+            )}
 
             {error && (
               <div
@@ -843,69 +852,6 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
             ))}
           </ul>
         </Card>
-
-        {/* ---------- Services ---------- */}
-        {card.services && card.services.length > 0 && (
-          <Card className="glass-panel border-white/[0.08] rounded-3xl p-6" aria-labelledby="services-heading">
-            <h2 id="services-heading" className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-3">
-              {t("sections.whatWeDo")}
-            </h2>
-            <ul className="space-y-4">
-              {card.services.map((s) => (
-                <li key={s.name} className="flex gap-3">
-                  {s.imageUrl && (
-                    /* eslint-disable-next-line @next/next/no-img-element */
-                    <img
-                      src={s.imageUrl}
-                      alt=""
-                      className="h-14 w-14 rounded-xl object-cover border border-white/[0.08] shrink-0"
-                      loading="lazy"
-                    />
-                  )}
-                  <div className="min-w-0 flex-1">
-                  <div className="flex items-baseline justify-between gap-3">
-                    <p className="text-sm font-bold text-slate-100">
-                      {s.name}
-                      {s.featured && (
-                        <span className="ml-2 text-[9px] uppercase tracking-wide text-amber-300 bg-amber-400/10 border border-amber-400/25 rounded-full px-1.5 py-0.5 align-middle">
-                          {t("sections.featured")}
-                        </span>
-                      )}
-                    </p>
-                    {typeof s.price === "number" && s.price > 0 && (
-                      <span className="text-xs font-mono text-sky-400 whitespace-nowrap">
-                        {s.currency === "USD" ? "$" : `${s.currency ?? ""} `}
-                        {s.price}
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-xs text-slate-300 leading-relaxed mt-1">{s.description}</p>
-                  {s.timeline && <p className="text-[11px] text-sky-400 mt-1.5 font-medium">{s.timeline}</p>}
-                  {s.deliverables && s.deliverables.length > 0 && (
-                    <ul className="mt-2 flex flex-wrap gap-1.5">
-                      {s.deliverables.map((d) => (
-                        <li key={d} className="text-[10px] text-slate-300 bg-white/[0.05] border border-white/[0.08] rounded-full px-2.5 py-1">
-                          {d}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                  {s.cta && (
-                    <a
-                      href={s.cta.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-block mt-2 text-[11px] font-semibold text-sky-300 hover:text-sky-200 underline underline-offset-2 focus:outline-none focus:ring-2 focus:ring-sky-500 rounded"
-                    >
-                      {s.cta.label} &rarr;
-                    </a>
-                  )}
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </Card>
-        )}
 
         {/* ---------- Products ---------- */}
         {card.products && card.products.length > 0 && (

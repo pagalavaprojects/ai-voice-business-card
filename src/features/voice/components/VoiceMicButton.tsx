@@ -2,7 +2,7 @@
 
 import React from "react";
 import { motion } from "framer-motion";
-import { Mic, MicOff, Loader2, Volume2 } from "lucide-react";
+import { Mic, MicOff, Loader2, Volume2, Play } from "lucide-react";
 import { WaveformVisualizer } from "./WaveformVisualizer";
 
 export type VoiceState = "idle" | "connecting" | "listening" | "speaking" | "thinking";
@@ -109,6 +109,13 @@ export const VoiceMicButton = React.memo(function VoiceMicButton({
           <MicOff className="h-9 w-9 text-rose-400" />
         ) : state === "speaking" ? (
           <Volume2 className="h-9 w-9 text-white animate-pulse" />
+        ) : state === "idle" ? (
+          // Play, not a microphone: the resting public card presents a
+          // listen-first experience and must not suggest the browser is
+          // about to ask for mic access. Once a call is genuinely live
+          // (listening), the honest Mic icon returns — an open microphone
+          // must never masquerade as a play button.
+          <Play className="h-9 w-9 text-white" />
         ) : (
           <Mic className="h-9 w-9 text-white" />
         )}
