@@ -40,17 +40,15 @@ export const TAMIL_QUALIFICATION_INTRO = `வணக்கம், இந்த �
 இது தான் இந்த card ன் சிறப்பு. நன்றி.`;
 
 /**
- * The qualification call's ACTUAL opening line. Deliberately short — the
- * founder pitch above belongs to the public-card/pitch experience and must
- * NEVER replay after "Book an Appointment". This states the purpose (a few
- * quick questions, answer naturally, skip to booking any time) and then
- * asks QUESTION 1 VERBATIM as part of the opening itself, so reaching Q1
- * is deterministic — not dependent on the model deciding to begin.
+ * The qualification call's ACTUAL opening line: EXACTLY Question 1 —
+ * nothing else. No founder pitch, no greeting, no "let me ask a few
+ * questions" preamble, no filler ("சரி…", "வணக்கம்…"): the product owner's
+ * acceptance criterion is that the first spoken content after "Start AI
+ * Conversation" IS Q1. Reaching Q1 is therefore deterministic — it is the
+ * firstMessage itself, not a model decision.
  */
 export const TAMIL_QUALIFICATION_CALL_OPENING =
-  "வணக்கம்! உங்கள் சந்திப்பை உறுதி செய்யும் முன், உங்கள் தேவைகளை சரியாக புரிந்துகொள்ள சில சிறிய கேள்விகள் கேட்கப்போகிறேன். " +
-  "இயல்பாக பதிலளித்தால் போதும் — விருப்பமில்லை என்றால் எந்த நேரத்திலும் நேரடியாக நேரத்தைத் தேர்வு செய்யலாம். " +
-  "முதல் கேள்வி: உங்கள் வணிகத்தில் முதன்மையாகத் தீர்வு காண விரும்பும் பிரச்சினை என்ன?";
+  "உங்கள் வணிகத்தில் முதன்மையாகத் தீர்வு காண விரும்பும் பிரச்சினை என்ன?";
 
 /** Set 1 — Lead Qualification. Asked in order, verbatim. */
 export const TAMIL_QUALIFICATION_SET1: readonly string[] = [
@@ -93,8 +91,8 @@ export function getTamilQualificationDirective(): string {
     `\n\n=== TAMIL QUALIFICATION SCRIPT (booking flow) ===\n` +
     `When the visitor is being qualified for an appointment, ask the following authored questions IN ORDER, ` +
     `one at a time, EXACTLY as written — do not translate, paraphrase, shorten, reword or renumber them. ` +
-    `If the call's opening line already asked question 1 ("முதல் கேள்வி: ..."), do NOT repeat it — treat the ` +
-    `visitor's first reply as the answer to question 1. Never replay the founder ` +
+    `The call's opening line IS question 1 verbatim — do NOT repeat it, do NOT add any greeting or preamble ` +
+    `around it; treat the visitor's first reply as the answer to question 1. Never replay the founder ` +
     `pitch or any elevator/product/USP content during qualification. If the visitor declines a question, ` +
     `acknowledge it naturally, record nothing invented, and move on — never end or restart ` +
     `the qualification because of a refusal. ` +

@@ -36,18 +36,28 @@ describe("authored Tamil qualification content", () => {
     expect(TAMIL_QUALIFICATION_SET2[9]).toBe("இவ்வாறு தொடரலாமா?");
   });
 
-  describe("qualification call opening (what actually plays after Book an Appointment)", () => {
-    it("is short, states the purpose, and asks Question 1 verbatim as part of the opening", () => {
-      expect(TAMIL_QUALIFICATION_CALL_OPENING.length).toBeLessThan(400);
-      expect(TAMIL_QUALIFICATION_CALL_OPENING).toContain("சில சிறிய கேள்விகள்");
-      expect(TAMIL_QUALIFICATION_CALL_OPENING.endsWith(TAMIL_QUALIFICATION_SET1[0])).toBe(true);
+  describe("qualification call opening (what actually plays after Start AI Conversation)", () => {
+    it("is EXACTLY Question 1 — no greeting, no preamble, no filler", () => {
+      expect(TAMIL_QUALIFICATION_CALL_OPENING).toBe(TAMIL_QUALIFICATION_SET1[0]);
+      expect(TAMIL_QUALIFICATION_CALL_OPENING).toBe("உங்கள் வணிகத்தில் முதன்மையாகத் தீர்வு காண விரும்பும் பிரச்சினை என்ன?");
     });
 
-    it("is NOT the founder pitch — none of the pitch's signature phrases appear", () => {
-      expect(TAMIL_QUALIFICATION_CALL_OPENING).not.toContain("Business Card ஐ கொடுத்திருப்பீங்க");
-      expect(TAMIL_QUALIFICATION_CALL_OPENING).not.toContain("Paper Business Card");
-      expect(TAMIL_QUALIFICATION_CALL_OPENING).not.toContain("Elevator Pitch");
-      expect(TAMIL_QUALIFICATION_CALL_OPENING).not.toContain("no-show");
+    it("contains no forbidden openers or pitch content of any kind", () => {
+      for (const forbidden of [
+        "வணக்கம்", // greeting
+        "சரி", // "okay…" filler
+        "முதல் கேள்வி", // "first question:" preamble
+        "சில சிறிய கேள்விகள்", // "a few quick questions" preamble
+        "Business Card",
+        "Paper",
+        "Elevator",
+        "Pitch",
+        "USP",
+        "no-show",
+        "How can I help",
+      ]) {
+        expect(TAMIL_QUALIFICATION_CALL_OPENING).not.toContain(forbidden);
+      }
       expect(TAMIL_QUALIFICATION_CALL_OPENING).not.toBe(TAMIL_QUALIFICATION_INTRO);
     });
   });
