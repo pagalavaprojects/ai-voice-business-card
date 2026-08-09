@@ -260,11 +260,6 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
             explicit tap; opening the modal never touches the microphone. */}
         {step === 0 && voice && (
           <div className="space-y-4">
-            <div className="space-y-1.5">
-              <h3 className="text-sm font-bold text-slate-100">{t("appointment.qualifyTitle")}</h3>
-              <p className="text-xs text-slate-400">{t("appointment.qualifyIntro", { employeeName })}</p>
-            </div>
-
             {qualStage === "intro" && (
               <Button
                 variant="default"

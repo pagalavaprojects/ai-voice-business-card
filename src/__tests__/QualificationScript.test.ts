@@ -83,9 +83,16 @@ describe("authored Tamil qualification content", () => {
 
     it("handles the opening-already-asked-Q1 case, refusals, and bans pitch replay", () => {
       expect(directive).toContain("do NOT repeat it");
-      expect(directive).toContain("continue with question 2");
       expect(directive).toContain("Never replay the founder");
       expect(directive).toContain("declines a question");
+    });
+
+    it("mandates tool-driven progression — the model may not sequence from memory", () => {
+      expect(directive).toContain("PROGRESSION IS TOOL-DRIVEN");
+      expect(directive).toContain("get_next_qualification_question");
+      expect(directive).toContain("cold_proceed_to_booking");
+      expect(directive).toContain("complete_proceed_to_booking");
+      expect(directive).toContain("Never skip a question the tool returned");
     });
   });
 });

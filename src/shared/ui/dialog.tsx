@@ -22,6 +22,18 @@ const SIZE_CLASS: Record<NonNullable<DialogProps["size"]>, string> = {
 export function Dialog({ open, onClose, title, description, children, size = "md" }: DialogProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const previouslyFocused = useRef<HTMLElement | null>(null);
+  // The focus-management effect below must run ONLY on open/close
+  // transitions. Callers routinely pass an inline onClose (new identity
+  // every render), and with onClose in the dependency array the effect
+  // re-ran on EVERY parent re-render — including each controlled-input
+  // keystroke inside the dialog: its cleanup restored focus to the
+  // element focused before the dialog opened, then the re-run focused the
+  // panel, yanking focus out of the input after every single character.
+  // The handler reads the latest onClose through this ref instead.
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  });
 
   useEffect(() => {
     if (!open) return;
@@ -31,7 +43,7 @@ export function Dialog({ open, onClose, title, description, children, size = "md
 
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (e.key !== "Tab") return;
@@ -55,7 +67,7 @@ export function Dialog({ open, onClose, title, description, children, size = "md
       document.removeEventListener("keydown", onKeyDown);
       previouslyFocused.current?.focus();
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
 

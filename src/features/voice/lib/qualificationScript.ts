@@ -94,10 +94,16 @@ export function getTamilQualificationDirective(): string {
     `When the visitor is being qualified for an appointment, ask the following authored questions IN ORDER, ` +
     `one at a time, EXACTLY as written — do not translate, paraphrase, shorten, reword or renumber them. ` +
     `If the call's opening line already asked question 1 ("முதல் கேள்வி: ..."), do NOT repeat it — treat the ` +
-    `visitor's first reply as the answer to question 1 and continue with question 2. Never replay the founder ` +
+    `visitor's first reply as the answer to question 1. Never replay the founder ` +
     `pitch or any elevator/product/USP content during qualification. If the visitor declines a question, ` +
-    `acknowledge it naturally, record nothing invented, and move to the next question — never end or restart ` +
+    `acknowledge it naturally, record nothing invented, and move on — never end or restart ` +
     `the qualification because of a refusal. ` +
+    `PROGRESSION IS TOOL-DRIVEN, NOT FROM MEMORY: after storing each answer, you MUST call ` +
+    `get_next_qualification_question with the number of the question just answered (and the lead_id from ` +
+    `save_lead), then speak the returned question EXACTLY as given. Obey its action field: ` +
+    `"cold_proceed_to_booking" means skip the remaining questions and warmly invite them to pick a time on ` +
+    `screen; "complete_proceed_to_booking" means move to booking. Never skip a question the tool returned and ` +
+    `never invent a question the tool did not return. ` +
     `After each answer: listen fully, then record what they actually said via save_lead / update_lead_qualification ` +
     `(map naturally: problem -> problem_statement; prior attempts -> current_solution; decision authority -> decision_maker; ` +
     `budget -> budget; start timing -> timeline; importance/urgency -> urgency and buying_intent; obstacles/reasons -> objections ` +
