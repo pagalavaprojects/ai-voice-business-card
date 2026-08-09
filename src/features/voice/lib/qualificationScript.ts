@@ -39,17 +39,6 @@ export const TAMIL_QUALIFICATION_INTRO = `வணக்கம், இந்த �
 
 இது தான் இந்த card ன் சிறப்பு. நன்றி.`;
 
-/**
- * The qualification call's ACTUAL opening line: EXACTLY Question 1 —
- * nothing else. No founder pitch, no greeting, no "let me ask a few
- * questions" preamble, no filler ("சரி…", "வணக்கம்…"): the product owner's
- * acceptance criterion is that the first spoken content after "Start AI
- * Conversation" IS Q1. Reaching Q1 is therefore deterministic — it is the
- * firstMessage itself, not a model decision.
- */
-export const TAMIL_QUALIFICATION_CALL_OPENING =
-  "உங்கள் வணிகத்தில் முதன்மையாகத் தீர்வு காண விரும்பும் பிரச்சினை என்ன?";
-
 /** Set 1 — Lead Qualification. Asked in order, verbatim. */
 export const TAMIL_QUALIFICATION_SET1: readonly string[] = [
   "உங்கள் வணிகத்தில் முதன்மையாகத் தீர்வு காண விரும்பும் பிரச்சினை என்ன?",
@@ -60,6 +49,17 @@ export const TAMIL_QUALIFICATION_SET1: readonly string[] = [
   "இதைத் தொடங்க/வாங்க தாங்கள் எப்பொழுது எண்ணியுள்ளீர்கள்?",
   "இது தங்களுக்கு எவ்வளவு முக்கியத்துவம் வாய்ந்தது — இப்போதே தேவையா, அல்லது யோசிக்கலாமா?",
 ] as const;
+
+/**
+ * The qualification call's ACTUAL opening line: EXACTLY Question 1 — by
+ * reference, not a copied string, so the opening and the question list can
+ * never drift apart. No founder pitch, no greeting, no preamble, no
+ * filler: the product owner's acceptance criterion is that the first
+ * spoken content after "Start AI Conversation" IS Q1, and the AI's
+ * directive tells it the opening already asked Q1 (never repeat it; the
+ * visitor's first reply is Q1's answer).
+ */
+export const TAMIL_QUALIFICATION_CALL_OPENING = TAMIL_QUALIFICATION_SET1[0];
 
 /** Set 2 — Lead Conversion / closing. HOT/WARM leads only, in order, verbatim. */
 export const TAMIL_QUALIFICATION_SET2: readonly string[] = [
