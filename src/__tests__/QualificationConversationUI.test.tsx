@@ -10,7 +10,7 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import { AppointmentModal } from "@/features/voice/components/AppointmentModal";
 import { TAMIL_QUALIFICATION_SET1, matchAuthoredTamilQuestion, ALL_TAMIL_QUESTIONS } from "@/features/voice/lib/qualificationScript";
 
-const t = (key: string) => key;
+const t = (key: string, vars?: Record<string, string>) => (vars?.n ? `${key}:${vars.n}` : key);
 const baseProps = {
   open: true,
   onClose: jest.fn(),
@@ -85,6 +85,54 @@ describe("qualification conversation UI", () => {
     render(<AppointmentModal {...baseProps} voice={voiceWith([{ role: "assistant", content: TAMIL_QUALIFICATION_SET1[0] }])} />);
     startQualification();
     expect(screen.queryByTestId("user-transcript")).toBeNull();
+  });
+
+  it("shows Set-1 progress (question n of 7) and advances it with the question", async () => {
+    const { rerender } = render(<AppointmentModal {...baseProps} voice={voiceWith([])} />);
+    startQualification();
+    expect(screen.getByTestId("qual-progress").textContent).toContain("appointment.progressSet1:1");
+
+    rerender(
+      <AppointmentModal
+        {...baseProps}
+        voice={voiceWith([
+          { role: "assistant", content: TAMIL_QUALIFICATION_SET1[0] },
+          { role: "user", content: "பில்லிங்" },
+          { role: "assistant", content: TAMIL_QUALIFICATION_SET1[1] },
+        ])}
+      />
+    );
+    expect(screen.getByTestId("qual-progress").textContent).toContain("appointment.progressSet1:2");
+  });
+
+  it("shows Set-2 progress once a conversion question is active", async () => {
+    render(
+      <AppointmentModal
+        {...baseProps}
+        voice={voiceWith([{ role: "assistant", content: ALL_TAMIL_QUESTIONS[7] }])}
+      />
+    );
+    startQualification();
+    expect(screen.getByTestId("qual-progress").textContent).toContain("appointment.progressSet2:8");
+  });
+
+  it("keeps previous questions and REAL answers visible as history when the next question starts", async () => {
+    render(
+      <AppointmentModal
+        {...baseProps}
+        voice={voiceWith([
+          { role: "assistant", content: TAMIL_QUALIFICATION_SET1[0] },
+          { role: "user", content: "எங்க பில்லிங் மெதுவா இருக்கு" },
+          { role: "assistant", content: TAMIL_QUALIFICATION_SET1[1] },
+        ])}
+      />
+    );
+    startQualification();
+    const history = screen.getByTestId("qual-history");
+    expect(history.textContent).toContain(TAMIL_QUALIFICATION_SET1[0]);
+    expect(history.textContent).toContain("எங்க பில்லிங் மெதுவா இருக்கு");
+    // And the active question is Q2, outside the history block:
+    expect(screen.getByTestId("current-question").textContent).toContain(TAMIL_QUALIFICATION_SET1[1]);
   });
 });
 

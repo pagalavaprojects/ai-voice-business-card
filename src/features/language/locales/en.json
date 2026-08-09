@@ -128,7 +128,10 @@
     "qualifyInProgress": "Answer naturally — the AI is listening and will guide you.",
     "qualifyDoneCold": "Thanks — that's everything we need. Let's pick your time.",
     "qualifyDoneWarm": "Great fit so far! Keep talking to answer a couple more questions, or continue to pick your time now.",
-    "qualifyContinue": "Continue"
+    "qualifyContinue": "Continue",
+    "progressSet1": "Lead qualification — question {n} of 7",
+    "progressSet2": "Lead conversion — question {n} of 17",
+    "qualComplete": "Qualification complete"
   },
   "gate": {
     "title": "Choose your preferred language",
