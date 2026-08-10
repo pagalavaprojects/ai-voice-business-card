@@ -1129,6 +1129,21 @@ Session of 2026-08-10 (commits `063911f`, `47f2e30`, `76fc685`, `e227316`):
   Q1→Q17 walk with recorded answers still requires one real human voice
   call. Answers are expected to appear in the panel within ~3s of each
   answer, tagged YES/NO/MAYBE.
+- **Closed-ended revision** (same day, commit `baf89ae`): the flow is a
+  strict closed questionnaire — every question is spoken with the
+  mandatory guidance "ஆம், இல்லை அல்லது இருந்தாலும் என பதிலளிக்கவும்."
+  (opening = Q1 + guidance); `get_next_qualification_question` now takes
+  the RAW Tamil reply and classifies it SERVER-side (only
+  ஆம்/இல்லை/இருந்தாலும் + ASR spelling drift are valid — sentences that
+  merely contain a permitted word, English, and fillers get action
+  `reprompt`: same question, nothing stored); the stored English record
+  is the canonical Yes/No/Maybe derived from the classification, so
+  nothing model-generated can be persisted; the transcript line renders
+  `User: YES` only. 52 qualification tests / 483 total green. Live:
+  firstMessage = Q1+guidance verified on production calls; calls from
+  this dev machine keep dropping ~30-40s in (local Daily WSS DNS
+  instability), so the spoken multi-turn loop still awaits one real
+  human call.
 
 ---
 
