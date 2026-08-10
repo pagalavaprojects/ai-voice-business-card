@@ -55,11 +55,28 @@ describe("qualification conversation UI", () => {
     expect(screen.getByTestId("current-question").textContent).toContain("உங்கள் வணிகத்தில் தீர்வு காண வேண்டிய குறிப்பிட்ட பிரச்சினை உள்ளதா?");
   });
 
-  it("keeps the current question visible during listening — never a bare Listening", () => {
+  it("keeps the current question visible during listening — status says 'say your answer'", () => {
     render(<AppointmentModal {...baseProps} voice={voiceWith([], "listening")} />);
     startQualification();
     expect(screen.getByTestId("current-question").textContent).toBeTruthy();
-    expect(screen.getByText("status.listening")).toBeTruthy();
+    expect(screen.getByTestId("qual-status").textContent).toBe("appointment.stateAnswer");
+  });
+
+  it("never shows 'Preparing Voice' once the question is visible — connecting and speaking both read as AI ASKING", () => {
+    for (const state of ["connecting", "speaking"]) {
+      const { unmount } = render(<AppointmentModal {...baseProps} voice={voiceWith([], state)} />);
+      startQualification();
+      expect(screen.getByTestId("current-question").textContent).toBeTruthy();
+      expect(screen.getByTestId("qual-status").textContent).toBe("appointment.stateAsking");
+      expect(screen.queryByText("status.preparingVoice")).toBeNull();
+      unmount();
+    }
+  });
+
+  it("shows PROCESSING wording while the AI is classifying the answer", () => {
+    render(<AppointmentModal {...baseProps} voice={voiceWith([], "thinking")} />);
+    startQualification();
+    expect(screen.getByTestId("qual-status").textContent).toBe("appointment.stateProcessing");
   });
 
   it("advances the displayed question when the assistant transcript matches the next authored question", () => {
@@ -114,7 +131,11 @@ describe("qualification conversation UI", () => {
 
     const history = screen.getByTestId("qual-history");
     expect(history.textContent).toContain("They struggle to generate qualified leads.");
-    expect(screen.getByTestId("answer-1").textContent).toContain("YES");
+    // Spec transcript format: User: YES — "english answer"
+    const line1 = screen.getByTestId("answer-1").textContent ?? "";
+    expect(line1).toContain("User:");
+    expect(line1).toContain("YES");
+    expect(line1).toContain("— “They struggle to generate qualified leads.”");
     expect(screen.getByTestId("answer-2").textContent).toContain("MAYBE");
     // Two answers recorded -> the active question falls forward to Q3 even
     // though the transcript only matched Q1.

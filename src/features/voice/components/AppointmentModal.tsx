@@ -360,9 +360,11 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                                     {authored.question}
                                   </p>
                                 )}
+                                {/* Spec format: User: YES — "english answer" */}
                                 <p className="text-[11px] text-slate-200 leading-snug mt-0.5" data-testid={`answer-${ans.n}`}>
+                                  <span className="text-slate-400 font-semibold mr-1.5">User:</span>
                                   <span
-                                    className={`inline-block mr-1.5 px-1 rounded text-[9px] font-bold align-middle ${
+                                    className={`inline-block px-1 rounded text-[9px] font-bold align-middle ${
                                       ans.c === "YES"
                                         ? "bg-emerald-500/20 text-emerald-300"
                                         : ans.c === "NO"
@@ -372,7 +374,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                                   >
                                     {ans.c}
                                   </span>
-                                  {ans.a}
+                                  {` — “${ans.a}”`}
                                 </p>
                               </div>
                             );
@@ -393,16 +395,14 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
 
                 <div className="flex items-center gap-2.5 pt-2 border-t border-white/[0.06]">
                   <span className={`h-2.5 w-2.5 rounded-full ${voice.voiceState === "idle" ? "bg-slate-500" : "bg-sky-400 animate-pulse"}`} aria-hidden="true" />
-                  <span className="text-xs font-semibold text-slate-200" aria-live="polite">
-                    {voice.voiceState === "connecting"
-                      ? t("status.preparingVoice")
-                      : voice.voiceState === "speaking"
-                        ? t("status.speaking")
-                        : voice.voiceState === "thinking"
-                          ? t("status.thinking")
-                          : voice.voiceState === "listening"
-                            ? t("status.listening")
-                            : t("status.availableNow")}
+                  <span className="text-xs font-semibold text-slate-200" data-testid="qual-status" aria-live="polite">
+                    {voice.voiceState === "connecting" || voice.voiceState === "speaking"
+                      ? t("appointment.stateAsking")
+                      : voice.voiceState === "thinking"
+                        ? t("appointment.stateProcessing")
+                        : voice.voiceState === "listening"
+                          ? t("appointment.stateAnswer")
+                          : t("status.availableNow")}
                   </span>
                 </div>
                 {temperature !== null && (

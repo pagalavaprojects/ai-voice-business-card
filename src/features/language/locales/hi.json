@@ -131,7 +131,10 @@
     "qualifyContinue": "समय चुनने के लिए आगे बढ़ें",
     "progressSet1": "लीड मूल्यांकन — प्रश्न {n} / 7",
     "progressSet2": "रूपांतरण मूल्यांकन — प्रश्न {n} / 17",
-    "qualComplete": "मूल्यांकन पूर्ण"
+    "qualComplete": "मूल्यांकन पूर्ण",
+    "stateAsking": "AI पूछ रहा है…",
+    "stateAnswer": "अपना जवाब बोलें…",
+    "stateProcessing": "आपके जवाब को समझ रहा है…"
   },
   "gate": {
     "title": "अपनी पसंदीदा भाषा चुनें",
