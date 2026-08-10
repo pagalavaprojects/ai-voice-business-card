@@ -360,7 +360,8 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                                     {authored.question}
                                   </p>
                                 )}
-                                {/* Spec format: User: YES — "english answer" */}
+                                {/* Closed-ended spec: the English record is ONLY the
+                                    classification — never model-generated content. */}
                                 <p className="text-[11px] text-slate-200 leading-snug mt-0.5" data-testid={`answer-${ans.n}`}>
                                   <span className="text-slate-400 font-semibold mr-1.5">User:</span>
                                   <span
@@ -374,7 +375,6 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                                   >
                                     {ans.c}
                                   </span>
-                                  {` — “${ans.a}”`}
                                 </p>
                               </div>
                             );

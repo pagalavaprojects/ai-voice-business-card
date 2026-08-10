@@ -10,9 +10,12 @@ import {
   TAMIL_QUALIFICATION_QUESTIONS,
   TAMIL_QUALIFICATION_SET1,
   TAMIL_QUALIFICATION_SET2,
+  TAMIL_ANSWER_GUIDANCE,
   ALL_TAMIL_QUESTIONS,
+  classifyClosedTamilResponse,
   getAuthoredQuestion,
   getTamilQualificationDirective,
+  withAnswerGuidance,
 } from "@/features/voice/lib/qualificationScript";
 
 describe("authored questionnaire (2026-08-10 revision)", () => {
@@ -56,9 +59,16 @@ describe("authored questionnaire (2026-08-10 revision)", () => {
   });
 
   describe("call opening (what plays after Start AI Conversation)", () => {
-    it("is EXACTLY the new Question 1 — no greeting, no preamble, no filler", () => {
-      expect(TAMIL_QUALIFICATION_CALL_OPENING).toBe(TAMIL_QUALIFICATION_SET1[0]);
-      expect(TAMIL_QUALIFICATION_CALL_OPENING).toBe("உங்கள் வணிகத்தில் தீர்வு காண வேண்டிய குறிப்பிட்ட பிரச்சினை உள்ளதா?");
+    it("STARTS with Question 1 exactly, followed only by the closed-answer guidance", () => {
+      expect(TAMIL_QUALIFICATION_CALL_OPENING.startsWith(TAMIL_QUALIFICATION_SET1[0])).toBe(true);
+      expect(TAMIL_QUALIFICATION_CALL_OPENING).toBe(withAnswerGuidance(TAMIL_QUALIFICATION_SET1[0]));
+      expect(TAMIL_QUALIFICATION_CALL_OPENING).toBe(
+        "உங்கள் வணிகத்தில் தீர்வு காண வேண்டிய குறிப்பிட்ட பிரச்சினை உள்ளதா?\n\nஆம், இல்லை அல்லது இருந்தாலும் என பதிலளிக்கவும்."
+      );
+    });
+
+    it("pins the guidance line verbatim", () => {
+      expect(TAMIL_ANSWER_GUIDANCE).toBe("ஆம், இல்லை அல்லது இருந்தாலும் என பதிலளிக்கவும்.");
     });
 
     it("contains no forbidden openers or pitch content", () => {
@@ -66,6 +76,41 @@ describe("authored questionnaire (2026-08-10 revision)", () => {
         expect(TAMIL_QUALIFICATION_CALL_OPENING).not.toContain(forbidden);
       }
       expect(TAMIL_QUALIFICATION_CALL_OPENING).not.toBe(TAMIL_QUALIFICATION_INTRO);
+    });
+  });
+
+  describe("classifyClosedTamilResponse — the SERVER-side closed-answer gate", () => {
+    it("ஆம் → YES, இல்லை → NO, இருந்தாலும் → MAYBE", () => {
+      expect(classifyClosedTamilResponse("ஆம்")).toBe("YES");
+      expect(classifyClosedTamilResponse("இல்லை")).toBe("NO");
+      expect(classifyClosedTamilResponse("இருந்தாலும்")).toBe("MAYBE");
+    });
+
+    it("normalizes obvious ASR variation: punctuation, repetition, spelling drift", () => {
+      expect(classifyClosedTamilResponse("ஆம்.")).toBe("YES");
+      expect(classifyClosedTamilResponse("ஆமாம்")).toBe("YES");
+      expect(classifyClosedTamilResponse("ஆம் ஆம்")).toBe("YES");
+      expect(classifyClosedTamilResponse(" இல்ல ")).toBe("NO");
+      expect(classifyClosedTamilResponse("இருந்தாலும்.")).toBe("MAYBE");
+    });
+
+    it("rejects every disallowed example from the spec — no arbitrary natural language", () => {
+      for (const invalid of [
+        "எங்களுக்கு ஒரு பிரச்சினை இருக்கிறது",
+        "ஆம், இருக்கிறது",
+        "எனக்கு தெரியவில்லை",
+        "சரி",
+        "maybe",
+        "yes we have a problem",
+      ]) {
+        expect(classifyClosedTamilResponse(invalid)).toBeNull();
+      }
+    });
+
+    it("rejects empty/whitespace and mixed-class utterances — never invents a classification", () => {
+      expect(classifyClosedTamilResponse("")).toBeNull();
+      expect(classifyClosedTamilResponse("   ")).toBeNull();
+      expect(classifyClosedTamilResponse("ஆம் இல்லை")).toBeNull();
     });
   });
 
@@ -80,20 +125,23 @@ describe("authored questionnaire (2026-08-10 revision)", () => {
       expect(directive).toContain("no question 13");
     });
 
-    it("mandates the tool contract: English translation, strict YES/NO/MAYBE, tool-driven progression", () => {
-      expect(directive).toContain("ENGLISH sentence");
-      expect(directive).toContain("YES, NO, or MAYBE");
-      expect(directive).toContain("Declined to answer");
+    it("mandates the closed-ended tool contract: raw Tamil reply, SERVER classification, tool-driven progression", () => {
+      expect(directive).toContain("STRICT CLOSED-ENDED questionnaire");
+      expect(directive).toContain(TAMIL_ANSWER_GUIDANCE);
+      expect(directive).toContain("user_response");
+      expect(directive).toContain("the SERVER decides");
+      expect(directive).toContain("You do NOT classify");
       expect(directive).toContain("get_next_qualification_question");
-      expect(directive).toContain("SPEAK IT EXACTLY as returned");
+      expect(directive).toContain("never invent a classification");
       expect(directive).toContain("never skip a question it returned");
     });
 
-    it("bans preamble/pitch replay and mandates re-asking on unclear speech", () => {
-      expect(directive).toContain("opening line IS question 1");
+    it("bans preamble/pitch replay and mandates the reprompt loop on invalid answers", () => {
+      expect(directive).toContain("ALREADY asked question 1");
       expect(directive).toContain("Never replay the founder pitch");
-      expect(directive).toContain("ask the SAME");
-      expect(directive).toContain("do NOT call the tool");
+      expect(directive).toContain('action "reprompt"');
+      expect(directive).toContain("stay on the SAME question");
+      expect(directive).toContain("Never advance past an unaccepted answer");
     });
   });
 });

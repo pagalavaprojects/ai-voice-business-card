@@ -112,14 +112,14 @@ describe("qualification conversation UI", () => {
     expect(screen.queryByTestId("qual-history")).toBeNull();
   });
 
-  it("renders the server-recorded ENGLISH answers with YES/NO/MAYBE tags, and falls forward to the next question", async () => {
+  it("renders the server-recorded answers as classification-only English records, and falls forward to the next question", async () => {
     jest.useFakeTimers();
     mockStatus({
       qualified: false,
       temperature: null,
       answers: [
-        { n: 1, c: "YES", a: "They struggle to generate qualified leads." },
-        { n: 2, c: "MAYBE", a: "Roughly three months, maybe longer." },
+        { n: 1, c: "YES", a: "Yes" },
+        { n: 2, c: "MAYBE", a: "Maybe" },
       ],
     });
     render(<AppointmentModal {...baseProps} voice={voiceWith([{ role: "assistant", content: TAMIL_QUALIFICATION_SET1[0] }])} />);
@@ -130,13 +130,13 @@ describe("qualification conversation UI", () => {
     });
 
     const history = screen.getByTestId("qual-history");
-    expect(history.textContent).toContain("They struggle to generate qualified leads.");
-    // Spec transcript format: User: YES — "english answer"
+    // Closed-ended spec: the English record is ONLY "User:" + the
+    // classification — no free-text content, nothing fabricated.
     const line1 = screen.getByTestId("answer-1").textContent ?? "";
     expect(line1).toContain("User:");
     expect(line1).toContain("YES");
-    expect(line1).toContain("— “They struggle to generate qualified leads.”");
     expect(screen.getByTestId("answer-2").textContent).toContain("MAYBE");
+    expect(history.textContent).not.toContain("Yes,"); // no sentence content ever rendered
     // Two answers recorded -> the active question falls forward to Q3 even
     // though the transcript only matched Q1.
     expect(screen.getByTestId("current-question").textContent).toContain(TAMIL_QUALIFICATION_SET1[2]);
@@ -157,8 +157,15 @@ describe("matchAuthoredTamilQuestion", () => {
     }
   });
 
-  it("returns null for non-question chatter", () => {
+  it("still matches when the closed-answer guidance is spoken after the question (every real utterance)", () => {
+    for (const q of ALL_TAMIL_QUESTIONS) {
+      expect(matchAuthoredTamilQuestion(`${q}\n\nஆம், இல்லை அல்லது இருந்தாலும் என பதிலளிக்கவும்.`)).toBe(q);
+    }
+  });
+
+  it("returns null for non-question chatter, the bare guidance, and empty input", () => {
     expect(matchAuthoredTamilQuestion("நன்றி, அது நல்ல பதில்.")).toBeNull();
+    expect(matchAuthoredTamilQuestion("ஆம், இல்லை அல்லது இருந்தாலும் என பதிலளிக்கவும்.")).toBeNull();
     expect(matchAuthoredTamilQuestion("")).toBeNull();
   });
 });

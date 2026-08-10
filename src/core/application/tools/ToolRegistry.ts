@@ -8,7 +8,7 @@ import { ISettingsRepository } from "../../domain/repositories/ISettingsReposito
 import { IKnowledgeDocumentRepository } from "../../domain/repositories/IKnowledgeDocumentRepository";
 import { OpenAIEmbeddingAdapter } from "../../infrastructure/embeddings/OpenAIEmbeddingAdapter";
 import { getWhatsAppNotifier } from "../../infrastructure/notifications/WhatsAppNotifier";
-import { getAuthoredQuestion } from "@/features/voice/lib/qualificationScript";
+import { classifyClosedTamilResponse, getAuthoredQuestion, TAMIL_ANSWER_GUIDANCE, withAnswerGuidance } from "@/features/voice/lib/qualificationScript";
 import { AppointmentStatus, LeadTemperature, NurtureStatus, LeadQualificationSignalsSchema } from "../../domain/models/types";
 import { Logger } from "@/shared/lib/logger";
 
@@ -598,8 +598,9 @@ export class ToolRegistry {
     this.register({
       name: "get_next_qualification_question",
       description:
-        "REQUIRED after every answered qualification question: records the answer (question number, YES/NO/MAYBE " +
-        "classification, English translation) and returns the exact next authored question to speak verbatim, or a " +
+        "REQUIRED after every visitor reply to a qualification question. The SERVER classifies the raw Tamil reply " +
+        "as YES/NO/MAYBE (only ஆம்/இல்லை/இருந்தாலும் are valid — anything else returns a reprompt: stay on the same " +
+        "question), records accepted answers, and returns the exact next authored question to speak verbatim, or a " +
         "routing action (COLD skips the conversion questions but still gets the calendar-consent questions; after " +
         "the final question, proceed to booking).",
       parameters: {
@@ -607,16 +608,13 @@ export class ToolRegistry {
         properties: {
           last_answered_question: {
             type: "number",
-            description: "The authored number (1-17) of the question the visitor just answered, or 0 before any answer.",
+            description: "The authored number (1-17) of the question the visitor just replied to, or 0 before any answer.",
           },
-          classification: {
+          user_response: {
             type: "string",
-            enum: ["YES", "NO", "MAYBE"],
-            description: "Strict classification of the visitor's actual answer. MAYBE when genuinely ambiguous or declined.",
-          },
-          answer_english: {
-            type: "string",
-            description: "One concise ENGLISH sentence translating what the visitor actually said. Never invented.",
+            description:
+              "The visitor's reply EXACTLY as heard, in Tamil — never cleaned up, translated or invented. The server " +
+              "classifies it; you never do.",
           },
           lead_id: { type: "string", description: "UUID returned by save_lead — required so answers persist and routing uses the real stored temperature." },
         },
@@ -630,19 +628,36 @@ export class ToolRegistry {
         if (!Number.isInteger(last) || last < 0 || last > 17 || last === 13) {
           return { action: "error", message: "last_answered_question must be an integer 0-17 (13 does not exist)." };
         }
-        const classification = typeof args.classification === "string" ? args.classification.toUpperCase() : null;
-        if (last > 0 && classification !== null && !["YES", "NO", "MAYBE"].includes(classification)) {
-          return { action: "error", message: "classification must be exactly YES, NO or MAYBE." };
+
+        // SERVER-side closed-ended classification of the raw Tamil reply.
+        // The model never classifies and never decides validity: anything
+        // that is not clearly ஆம்/இல்லை/இருந்தாலும் is rejected — no answer
+        // is stored, the questionnaire does not advance, and the model is
+        // told to re-speak the guidance and listen to the SAME question.
+        const classification = last > 0 ? classifyClosedTamilResponse(String(args.user_response ?? "")) : null;
+        if (last > 0 && classification === null) {
+          return {
+            action: "reprompt",
+            question_number: last,
+            speak: TAMIL_ANSWER_GUIDANCE,
+            message:
+              "The reply could not be classified as YES/NO/MAYBE — nothing was stored. Speak the guidance verbatim, " +
+              "stay on the SAME question, and listen again. Do NOT advance.",
+          };
         }
 
-        // Record the just-given answer on the lead's existing notes field:
-        // "Qn [YES|NO|MAYBE] (ISO time): english answer". Read-modify-write
-        // append; a persistence hiccup must not stall the conversation.
+        // Record the accepted answer on the lead's existing notes field:
+        // "Qn [YES|NO|MAYBE] (ISO time): canonical English word" — the
+        // English record is derived from the classification, never from
+        // model-generated content, so nothing fabricated can be stored.
+        // Read-modify-write append; a persistence hiccup must not stall
+        // the conversation.
         if (last > 0 && args.lead_id && classification) {
           try {
             const lead = await this.crmRepo.getLeadById(String(args.lead_id));
             if (lead) {
-              const line = `Q${last} [${classification}] (${new Date().toISOString()}): ${String(args.answer_english ?? "").slice(0, 500)}`;
+              const english = classification === "YES" ? "Yes" : classification === "NO" ? "No" : "Maybe";
+              const line = `Q${last} [${classification}] (${new Date().toISOString()}): ${english}`;
               const notes = (lead.qualification_notes ? lead.qualification_notes + "\n" : "") + line;
               await this.crmRepo.updateLeadQualification(lead.id, { qualification_notes: notes });
             }
@@ -654,7 +669,7 @@ export class ToolRegistry {
         const ask = (n: number) => {
           const q = getAuthoredQuestion(n);
           return q
-            ? { action: "ask_verbatim", question_number: q.number, question: q.question }
+            ? { action: "ask_verbatim", question_number: q.number, question: q.question, speak: withAnswerGuidance(q.question) }
             : { action: "error", message: `No authored question ${n}.` };
         };
 
@@ -679,6 +694,7 @@ export class ToolRegistry {
               action: "ask_verbatim",
               question_number: 16,
               question: q16.question,
+              speak: withAnswerGuidance(q16.question),
               note: "Lead is COLD — conversion questions 8-15 are skipped; after questions 16-17, proceed to booking. A COLD lead must always still be able to book.",
             };
           }
