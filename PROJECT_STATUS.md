@@ -40,13 +40,13 @@ inward; repositories abstract Supabase behind interfaces.
 
 | Metric | Value |
 |---|---|
-| Commits | 74 |
+| Commits | 101 |
 | Source | ~22,700 lines TypeScript |
 | API routes | 49 |
 | Dashboard pages | 14 |
 | Database | 27 tables · 39 indexes · 43 FKs · 26 RLS policies |
 | Migrations | 16 tracked, **all 16 applied in production** (the Phase 16 qualification-engine migration was applied 2026-08-08 via `supabase db push` and verified column-by-column against the live schema) |
-| Unit/integration tests | **328 passing**, 1 skipped (documented) |
+| Unit/integration tests | **474 passing**, 1 skipped (documented) |
 | Browser tests | **47 passing** across 3 viewports, 1 pre-existing unrelated finding (§4, Phase 13) |
 | Accessibility | WCAG 2.1 AA — zero violations on every surface this phase touched |
 | Build | Zero warnings, zero build-time error logs |
@@ -1096,6 +1096,39 @@ rejection, nurture-email send-once/no-duplicate). Full gate suite green: tsc,
 lint, 328 unit/integration tests (1 pre-existing skip), production build.
 Not yet pushed; migration not yet applied to production — both held for
 explicit confirmation.
+
+### Phase 17 — Tamil lead qualification conversation (booking modal)
+
+Built across several sessions ending 2026-08-10. The Book-an-Appointment
+modal gained a step-0 "Conversation with AI" panel: a Tamil qualification
+call whose opening IS exactly Q1 of the authored questionnaire (2026-08-10
+revision, Q1–Q17 with no Q13), a server-authoritative sequencing tool
+(`get_next_qualification_question`) that owns branching (COLD→Q16→Q17,
+Q10=NO skips Q11) and records each answer as `Qn [YES|NO|MAYBE] (ts): english`
+in `leads.qualification_notes`, a public `qualification-status` endpoint the
+panel polls to render the English-only transcript
+(`User: YES — "…"` format), and per-question progress ("கேள்வி n / 7").
+
+Session of 2026-08-10 (commits `063911f`, `47f2e30`, `76fc685`, `e227316`):
+- Opening deduplicated as a reference to Q1; new questionnaire wording
+  pinned by tests (full-walk proves sequence 1–12,14–17).
+- Qualification-specific status states in all 6 locales — the panel never
+  shows "Preparing Voice" once the question is visible: connecting/speaking
+  → "AI கேட்கிறது…", listening → "உங்கள் பதிலைச் சொல்லுங்கள்…", thinking →
+  "பதிலைப் புரிந்துகொள்கிறது…".
+- **Root-caused a live regression with a synthesized-speech fake-mic test**:
+  a transient WebRTC drop auto-reconnected via `startCall()` with no
+  arguments, so the retried call opened with the founder pitch instead of
+  Q1 and the question loop never engaged (live call evidence
+  `019fec0f-…fc0669`). Fix: reconnect replays the last explicit call's
+  overrides. Verified live post-fix: a dropped call's auto-reconnect POSTed
+  firstMessage === Q1 (both POSTs of call pair `019fec22-…`).
+- Live verification ceiling (this environment cannot speak Tamil): Q1
+  display+speech, status states, STT hearing an answer and entering
+  processing are all machine-verified on production; a full spoken
+  Q1→Q17 walk with recorded answers still requires one real human voice
+  call. Answers are expected to appear in the panel within ~3s of each
+  answer, tagged YES/NO/MAYBE.
 
 ---
 
