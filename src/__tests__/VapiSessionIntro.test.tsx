@@ -340,6 +340,52 @@ describe("useVapiSession — scripted intro tracking", () => {
     expect(vapi.started.length).toBe(2);
   });
 
+  it("reconnects a dropped qualification call with the SAME firstMessage override — never the default greeting", async () => {
+    // Regression for the live Tamil bug: a transient WebRTC error during the
+    // qualification call auto-reconnected via startCall() with no arguments,
+    // so the retried call opened with the card's founder greeting instead of
+    // Q1 — and the strict question loop never engaged.
+    const Q1 = "உங்கள் வணிகத்தில் தீர்வு காண வேண்டிய குறிப்பிட்ட பிரச்சினை உள்ளதா?";
+    const { result } = renderHook(() =>
+      useVapiSession({ companyId: "c1", employeeId: "e1", vapiPublicKey: REAL_KEY, firstMessage: "வணக்கம். Founder greeting." })
+    );
+
+    await act(async () => {
+      await result.current.startCall({ firstMessage: Q1 });
+    });
+    const vapi = fakeVapiInstances[0];
+    expect((vapi.started[0] as { firstMessage: string }).firstMessage).toBe(Q1);
+
+    act(() => vapi.emit("error", new Error("WebRTC connection lost")));
+    await act(async () => {
+      jest.advanceTimersByTime(1500);
+      await Promise.resolve();
+    });
+
+    expect(vapi.started.length).toBe(2);
+    expect((vapi.started[1] as { firstMessage: string }).firstMessage).toBe(Q1);
+  });
+
+  it("a plain mic-tap call still reconnects with the default greeting, not a stale qualification override", async () => {
+    const { result } = renderHook(() =>
+      useVapiSession({ companyId: "c1", employeeId: "e1", vapiPublicKey: REAL_KEY, firstMessage: "வணக்கம். Founder greeting." })
+    );
+
+    await act(async () => {
+      await result.current.startCall();
+    });
+    const vapi = fakeVapiInstances[0];
+
+    act(() => vapi.emit("error", new Error("WebRTC connection lost")));
+    await act(async () => {
+      jest.advanceTimersByTime(1500);
+      await Promise.resolve();
+    });
+
+    expect(vapi.started.length).toBe(2);
+    expect((vapi.started[1] as { firstMessage: string }).firstMessage).toBe("வணக்கம். Founder greeting.");
+  });
+
   it("never reconnects a call the visitor deliberately ended", async () => {
     const { result } = renderHook(() => useVapiSession({ companyId: "c1", employeeId: "e1", vapiPublicKey: REAL_KEY }));
 

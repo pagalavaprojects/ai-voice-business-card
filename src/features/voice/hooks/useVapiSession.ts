@@ -170,6 +170,10 @@ export function useVapiSession({
   // its latest version through this ref rather than closing over a stale one.
   const startCallRef = useRef<() => void>(() => {});
   const mountedRef = useRef(true);
+  // The overrides of the most recent explicit startCall — replayed by the
+  // automatic reconnect so a dropped qualification call resumes as a
+  // qualification call (opening = Q1), never as a default greeting call.
+  const lastOverridesRef = useRef<{ firstMessage?: string } | undefined>(undefined);
 
   const clearReconnectTimeout = useCallback(() => {
     if (reconnectTimeoutRef.current) {
@@ -410,6 +414,11 @@ export function useVapiSession({
     // (a rapid double-tap, or the auto-start effect racing a manual tap
     // before its own guard ref has committed).
     if (voiceState !== "idle") return;
+    // Remember the caller's overrides so an automatic reconnect restarts the
+    // SAME kind of call. Without this, a qualification call (opening = Q1)
+    // that drops on a transient WebRTC error reconnects as a default card
+    // call and replays the founder greeting instead of the questionnaire.
+    lastOverridesRef.current = overrides;
     // Per-call opening line: the booking flow's qualification call speaks
     // the authored qualification intro instead of the card greeting; a plain
     // mic tap keeps the normal greeting.
@@ -539,7 +548,9 @@ export function useVapiSession({
   // registered once inside the init effect (see reconnect logic above).
   useEffect(() => {
     startCallRef.current = () => {
-      void startCall();
+      // Reconnects replay the last explicit call's overrides — a dropped
+      // qualification call must reopen with Q1, not the default greeting.
+      void startCall(lastOverridesRef.current);
     };
   }, [startCall]);
 
