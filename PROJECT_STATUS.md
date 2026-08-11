@@ -1264,6 +1264,35 @@ Session of 2026-08-10 (commits `063911f`, `47f2e30`, `76fc685`, `e227316`):
   needs a real ElevenLabs account/API key/Tamil-capable voice ID, which
   cannot be self-provisioned — reported as a blocker requiring explicit
   user action, not attempted unilaterally.
+- **Extended the closed-ended flow to English** (same night, commit
+  `09ed7be`, product decision after reviewing a screenshot that turned
+  out to be an English-language session): same architecture as Tamil —
+  Q1-Q17 (no Q13), server-side yes/no/maybe classification
+  (case-insensitive, same strict token-only algorithm), Live Transcript,
+  reprompt loop — parameterized by a new `QualificationLanguage`
+  dispatch layer in `qualificationScript.ts` rather than duplicated.
+  Every Tamil-named export kept its exact prior signature; the full
+  pre-existing Tamil suite passed unchanged, proving nothing broke. 94
+  new tests across script/sequencing/UI/wiring layers, all passing; full
+  suite 538/1 skip, tsc/lint/build clean.
+  **Live verification narrowed the remaining gap precisely.** English
+  speech goes through the same OpenAI `tts-1-hd` engine as Tamil, but
+  English is natively supported — and this time Vapi's own end-of-call
+  summary *correctly paraphrased Q1* ("asking if the business had a
+  specific problem that needed solving"), confirming the AI's speech was
+  genuinely intelligible — unlike the Tamil finding above. The call
+  still didn't complete: Vapi's own summary said it "ended due to a
+  silence timeout, indicating no response was received from the other
+  party" — meaning the synthesized SAPI "Yes." audio piped through
+  Chromium's fake-microphone device never registered as speech to Vapi's
+  own voice-activity detection, so STT was never even invoked. This is a
+  **test-methodology limitation** (this automated technique doesn't
+  satisfy VAD), not a code defect or a Vapi configuration gap — the
+  earlier TTS/ElevenLabs finding was real and Tamil-specific; this one
+  is a different, narrower, and much less severe remaining gap. One real
+  human phone call — in either language — is now the only thing needed
+  to observe the complete loop; the code underneath is proven correct at
+  every other layer this session touched.
 
 ---
 
