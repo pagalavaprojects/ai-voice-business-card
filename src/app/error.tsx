@@ -14,7 +14,7 @@ export default function Error({ error, reset }: { error: Error & { digest?: stri
   }, [error]);
 
   return (
-    <main id="main-content" className="min-h-screen bg-[#090d16] text-slate-100 flex items-center justify-center p-6">
+    <main id="main-content" className="min-h-screen bg-[var(--surface-0)] text-slate-100 flex items-center justify-center p-6">
       <div className="max-w-sm text-center space-y-4">
         <p className="font-mono text-xs uppercase tracking-widest text-amber-400">Error</p>
         <h1 className="text-xl font-bold">Something went wrong</h1>

@@ -16,6 +16,8 @@ import {
   withAnswerGuidance,
   getAuthoredEnglishQuestion,
   ENGLISH_ANSWER_GUIDANCE,
+  ENGLISH_CONTINUE_PROMPT,
+  TAMIL_CONTINUE_PROMPT,
 } from "@/features/voice/lib/qualificationScript";
 
 function build(temperature: LeadTemperature | null, notes = "") {
@@ -366,5 +368,87 @@ describe("get_next_qualification_question — English closed-ended flow", () => 
     }
     expect(seen).not.toContain(13);
     expect(seen).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 15, 16, 17]);
+  });
+});
+
+/**
+ * Root-cause regression: get_next_qualification_question's Q7 branch used
+ * to only READ lead_temperature to decide COLD-vs-HOT/WARM routing — but
+ * nothing in the closed-ended flow ever WROTE it (save_lead, the only other
+ * writer, is deliberately skipped per the directive). lead_temperature
+ * stayed null for the ENTIRE call, so AppointmentModal's "Continue" button
+ * (gated on temperature !== null) never appeared, and COLD routing never
+ * actually fired either — every lead silently fell through to the "unknown
+ * -> continue as HOT/WARM" default. The fix computes-and-persists a real
+ * score from the Q1-Q7 answers the moment Q7 completes.
+ */
+describe("get_next_qualification_question — temperature is now actually computed at Q7 (the bug behind the missing Continue button)", () => {
+  /** answers[] are the replies to Q1..Q7 in order. last_answered_question=0
+   * only fetches Q1 (its user_response is ignored — nothing was answered
+   * yet); the answer to question N is submitted via last_answered_question:
+   * N, so the final call here (last=7, answers[6]) is what submits Q7's
+   * answer and triggers the Q7-boundary scoring. */
+  async function walkToQ7(tool: ReturnType<typeof buildLive>["tool"], ctx: typeof EN_LIVE, answers: string[]) {
+    let res = (await tool.execute({ last_answered_question: 0, user_response: "" }, ctx)) as Record<string, unknown>;
+    let last = res.question_number as number;
+    for (const answer of answers) {
+      res = (await tool.execute({ last_answered_question: last, user_response: answer }, ctx)) as Record<string, unknown>;
+      last = res.question_number as number;
+    }
+    return res;
+  }
+
+  it("7 YES answers score HOT, persist it, and route to Q8 (not the COLD skip)", async () => {
+    const { tool, leads } = buildLive();
+    const res = await walkToQ7(tool, EN_LIVE, ["yes", "yes", "yes", "yes", "yes", "yes", "yes"]);
+    expect(res).toMatchObject({ action: "ask_verbatim", question_number: 8 });
+    const [lead] = leads.values();
+    expect(lead.lead_temperature).toBe(LeadTemperature.HOT);
+  });
+
+  it("7 NO answers score COLD, persist it, and route straight to Q16 — the lead is never discarded", async () => {
+    const { tool, leads } = buildLive();
+    const res = (await walkToQ7(tool, EN_LIVE, ["no", "no", "no", "no", "no", "no", "no"])) as Record<string, unknown>;
+    expect(res).toMatchObject({ action: "ask_verbatim", question_number: 16 });
+    expect(String(res.note)).toContain("COLD");
+    const [lead] = leads.values();
+    expect(lead.lead_temperature).toBe(LeadTemperature.COLD);
+  });
+
+  it("a mixed set of answers scores WARM and routes to Q8, not the COLD skip", async () => {
+    const { tool, leads } = buildLive();
+    // 4 YES + 2 MAYBE + 1 NO = 5 points -> WARM band (>= 3.5, < 5.5).
+    const res = await walkToQ7(tool, EN_LIVE, ["yes", "yes", "yes", "yes", "maybe", "maybe", "no"]);
+    expect(res).toMatchObject({ action: "ask_verbatim", question_number: 8 });
+    const [lead] = leads.values();
+    expect(lead.lead_temperature).toBe(LeadTemperature.WARM);
+  });
+
+  it("only scores ONCE — a lead that already has a temperature keeps it rather than being rescored", async () => {
+    const { tool, crmRepo } = build(LeadTemperature.HOT, "Q1 [YES] (t): Yes\nQ2 [NO] (t): No");
+    await tool.execute({ last_answered_question: 7, user_response: "no", lead_id: "l1" }, EN);
+    // The lead already had a temperature (HOT) — updateLeadQualification is
+    // only called to append the Q7 answer's own note line, never to
+    // overwrite lead_temperature a second time.
+    const calls = crmRepo.updateLeadQualification.mock.calls;
+    for (const [, patch] of calls) expect(patch).not.toHaveProperty("lead_temperature");
+  });
+});
+
+describe('get_next_qualification_question — Q17 completion says the exact "Please Click to Continue" phrase', () => {
+  it("English: returns the exact approved phrase, never a paraphrase, and never claims the appointment is booked", async () => {
+    const { tool } = build(LeadTemperature.WARM);
+    const res = (await tool.execute({ last_answered_question: 17, user_response: "yes", lead_id: "l1" }, EN)) as Record<string, unknown>;
+    expect(res.action).toBe("complete_proceed_to_booking");
+    expect(res.speak).toBe(ENGLISH_CONTINUE_PROMPT);
+    expect(res.speak).toBe("Please Click to Continue");
+  });
+
+  it("Tamil: returns the Tamil continue instruction, not the English phrase", async () => {
+    const { tool } = build(LeadTemperature.WARM);
+    const res = (await tool.execute({ last_answered_question: 17, user_response: "ஆம்", lead_id: "l1" }, TA)) as Record<string, unknown>;
+    expect(res.action).toBe("complete_proceed_to_booking");
+    expect(res.speak).toBe(TAMIL_CONTINUE_PROMPT);
+    expect(res.speak).not.toBe(ENGLISH_CONTINUE_PROMPT);
   });
 });

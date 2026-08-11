@@ -166,29 +166,29 @@ describe("authored questionnaire (2026-08-10 revision)", () => {
  * Tamil tests above still pass unchanged).
  */
 describe("English questionnaire (mirrors the Tamil 2026-08-10 revision)", () => {
-  it("pins Set 1 verbatim", () => {
+  it("pins Set 1 verbatim (2026-08-12 revision)", () => {
     expect(ENGLISH_QUALIFICATION_SET1).toEqual([
-      "Does your business have a specific problem that needs solving?",
-      "Has this problem been going on for more than 3 months?",
-      "Have you tried any other solution before this?",
+      "Do you have a specific problem in your business that needs solving through our service or product?",
+      "Has this problem existed for more than 3 months?",
+      "Have you tried any other service or product before this?",
       "Can you make this decision on your own?",
-      "Is the amount you have in mind within our price range?",
-      "Are you planning to start this within this month?",
-      "Is this something you need right now?",
+      "Have you set aside a specific budget for this already?",
+      "Do you plan to start/purchase our service or product within this month?",
+      "Is our service or product something you need immediately?",
     ]);
   });
 
-  it("pins Set 2 verbatim — 9 questions, no Q13", () => {
+  it("pins Set 2 verbatim — 9 questions, no Q13 (2026-08-12 revision)", () => {
     expect(ENGLISH_QUALIFICATION_SET2).toEqual([
-      "Do you think this solution would be useful for your business?",
-      "Is quality and speed more important to you than price?",
-      "Is there any reason holding you back from moving forward?",
-      "Is that related to price?",
+      "Do you believe our service or product will be useful for your business?",
+      "Is quality/speed more important to you than price?",
+      "Is there anything holding you back from moving forward?",
+      "Is it price-related?",
       "Are you ready to decide today?",
-      "Did this come through a referral?",
+      "Did this come to you through a referral?",
       "Would you like to be connected with customers in your area?",
-      "Now, to move this forward, shall I show you our calendar so you can book a time that suits you?",
-      "Shall we go ahead with that?",
+      "Shall I show you our calendar now, so we can book a convenient time to move this forward?",
+      "Shall we proceed this way?",
     ]);
   });
 
@@ -211,7 +211,7 @@ describe("English questionnaire (mirrors the Tamil 2026-08-10 revision)", () => 
       expect(ENGLISH_QUALIFICATION_CALL_OPENING.startsWith(ENGLISH_QUALIFICATION_SET1[0])).toBe(true);
       expect(ENGLISH_QUALIFICATION_CALL_OPENING).toBe(withAnswerGuidance(ENGLISH_QUALIFICATION_SET1[0], ENGLISH_ANSWER_GUIDANCE));
       expect(ENGLISH_QUALIFICATION_CALL_OPENING).toBe(
-        "Does your business have a specific problem that needs solving?\n\nPlease answer with Yes, No, or Maybe."
+        "Do you have a specific problem in your business that needs solving through our service or product?\n\nPlease answer with Yes, No, or Maybe."
       );
     });
 

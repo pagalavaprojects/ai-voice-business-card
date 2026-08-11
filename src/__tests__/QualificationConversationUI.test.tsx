@@ -257,7 +257,9 @@ describe("qualification conversation UI — English", () => {
   it("shows the English Q1 (exact authored wording) immediately, before any transcript", () => {
     render(<AppointmentModal {...enProps} voice={voiceWith([], "listening", "en")} />);
     startQualification();
-    expect(screen.getByTestId("current-question").textContent).toContain("Does your business have a specific problem that needs solving?");
+    expect(screen.getByTestId("current-question").textContent).toContain(
+      "Do you have a specific problem in your business that needs solving through our service or product?"
+    );
     expect(screen.queryByTestId("qual-transcript-heading")).toBeNull();
   });
 
@@ -269,7 +271,7 @@ describe("qualification conversation UI — English", () => {
           [
             { role: "assistant", content: ENGLISH_QUALIFICATION_SET1[0] },
             { role: "user", content: "Yeah, we have a lead-gen problem" },
-            { role: "assistant", content: "  Has this problem been going on for more than 3 months?  " },
+            { role: "assistant", content: "  Has this problem existed for more than 3 months?  " },
           ],
           "listening",
           "en"

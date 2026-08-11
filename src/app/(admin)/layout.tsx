@@ -6,7 +6,7 @@ import { WorkspaceHeader } from "@/features/dashboard/components/WorkspaceHeader
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   return (
     <CompanyProvider>
-      <div className="flex min-h-screen bg-[#090d16] text-slate-100 antialiased">
+      <div className="flex min-h-screen bg-[var(--surface-0)] text-slate-100 antialiased">
         <Sidebar />
 
         <div className="flex-1 flex flex-col min-w-0 overflow-y-auto">

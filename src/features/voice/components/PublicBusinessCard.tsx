@@ -451,7 +451,7 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
 
   if (!card) {
     return (
-      <main id="main-content" className="min-h-screen bg-[#070b12] flex items-center justify-center p-4">
+      <main id="main-content" className="min-h-screen bg-[var(--surface-0)] flex items-center justify-center p-4">
         <Card className="glass-panel border-white/[0.08] p-8 rounded-3xl max-w-sm text-center space-y-3">
           <h1 className="text-lg font-bold text-slate-100">
             {loadError === "notfound" ? t("cardNotFound") : t("cardUnavailable")}
@@ -512,7 +512,7 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
     // Arabic/Hebrew addition — every string below already flows through
     // t(), so an RTL language needs no further code change here, only its
     // own locale file and this flag flipping true for it.
-    <main id="main-content" lang={language} dir={getLanguageDefinition(language).isRtl ? "rtl" : "ltr"} className="min-h-screen bg-[#070b12] text-slate-100 py-6 px-4 sm:py-10">
+    <main id="main-content" lang={language} dir={getLanguageDefinition(language).isRtl ? "rtl" : "ltr"} className="min-h-screen bg-[var(--surface-0)] text-slate-100 py-6 px-4 sm:py-10">
       <div className="fixed inset-0 pointer-events-none overflow-hidden" aria-hidden="true">
         <div className="absolute -top-24 left-1/2 -translate-x-1/2 w-[34rem] h-[34rem] bg-sky-500/10 blur-[140px] rounded-full" />
         <div className="absolute bottom-0 right-0 w-96 h-96 bg-indigo-500/[0.07] blur-[130px] rounded-full" />
@@ -582,7 +582,7 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
                 </div>
               </div>
               <span
-                className={`absolute bottom-1.5 right-1.5 h-5 w-5 rounded-full border-2 border-[#070b12] ${
+                className={`absolute bottom-1.5 right-1.5 h-5 w-5 rounded-full border-2 border-[var(--surface-0)] ${
                   isCallActive ? "bg-sky-400 animate-pulse shadow-[0_0_0_3px_rgba(56,189,248,0.15),0_0_12px_2px_rgba(56,189,248,0.35)]" : "bg-emerald-400 ai-pulse-glow"
                 }`}
                 aria-hidden="true"

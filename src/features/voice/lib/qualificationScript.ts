@@ -111,30 +111,29 @@ export const TAMIL_QUALIFICATION_CALL_OPENING = withAnswerGuidance(TAMIL_QUALIFI
 
 /**
  * The SAME questionnaire, authored in English — same 16 numbers (1-12,
- * 14-17, no 13), same branching meaning per question, faithful in meaning
- * to the Tamil originals above (which remain the source of truth for that
- * language). Added so the closed-ended flow also works for English
- * sessions, per the product owner's explicit request — the Tamil
- * questions/functions above are untouched.
+ * 14-17, no 13), same branching meaning per question. Product-owner
+ * authored, 2026-08-12 revision (supersedes the earlier translated-from-
+ * Tamil wording) — immutable wording, exactly like the Tamil questions
+ * above. The Tamil questions/functions above are untouched.
  */
 export const ENGLISH_QUALIFICATION_QUESTIONS: readonly AuthoredQuestion[] = [
-  { number: 1, question: "Does your business have a specific problem that needs solving?" },
-  { number: 2, question: "Has this problem been going on for more than 3 months?" },
-  { number: 3, question: "Have you tried any other solution before this?" },
+  { number: 1, question: "Do you have a specific problem in your business that needs solving through our service or product?" },
+  { number: 2, question: "Has this problem existed for more than 3 months?" },
+  { number: 3, question: "Have you tried any other service or product before this?" },
   { number: 4, question: "Can you make this decision on your own?" },
-  { number: 5, question: "Is the amount you have in mind within our price range?" },
-  { number: 6, question: "Are you planning to start this within this month?" },
-  { number: 7, question: "Is this something you need right now?" },
-  { number: 8, question: "Do you think this solution would be useful for your business?" },
-  { number: 9, question: "Is quality and speed more important to you than price?" },
-  { number: 10, question: "Is there any reason holding you back from moving forward?" },
-  { number: 11, question: "Is that related to price?" },
+  { number: 5, question: "Have you set aside a specific budget for this already?" },
+  { number: 6, question: "Do you plan to start/purchase our service or product within this month?" },
+  { number: 7, question: "Is our service or product something you need immediately?" },
+  { number: 8, question: "Do you believe our service or product will be useful for your business?" },
+  { number: 9, question: "Is quality/speed more important to you than price?" },
+  { number: 10, question: "Is there anything holding you back from moving forward?" },
+  { number: 11, question: "Is it price-related?" },
   { number: 12, question: "Are you ready to decide today?" },
   // Q13 is INTENTIONALLY ABSENT — same gap as the Tamil questionnaire.
-  { number: 14, question: "Did this come through a referral?" },
+  { number: 14, question: "Did this come to you through a referral?" },
   { number: 15, question: "Would you like to be connected with customers in your area?" },
-  { number: 16, question: "Now, to move this forward, shall I show you our calendar so you can book a time that suits you?" },
-  { number: 17, question: "Shall we go ahead with that?" },
+  { number: 16, question: "Shall I show you our calendar now, so we can book a convenient time to move this forward?" },
+  { number: 17, question: "Shall we proceed this way?" },
 ] as const;
 
 export function getAuthoredEnglishQuestion(number: number): AuthoredQuestion | null {
@@ -314,6 +313,7 @@ export function getTamilQualificationDirective(): string {
     guidance: TAMIL_ANSWER_GUIDANCE,
     answerWordsClause: "ஆம் (yes), இல்லை (no) or இருந்தாலும் (maybe)",
     spokenLanguageClause: "in Tamil",
+    continuePrompt: TAMIL_CONTINUE_PROMPT,
   });
 }
 
@@ -327,8 +327,20 @@ export function getEnglishQualificationDirective(): string {
     guidance: ENGLISH_ANSWER_GUIDANCE,
     answerWordsClause: "Yes, No, or Maybe",
     spokenLanguageClause: "in English",
+    continuePrompt: ENGLISH_CONTINUE_PROMPT,
   });
 }
+
+/** Spoken verbatim once qualification completes (action
+ * "complete_proceed_to_booking"), inviting the visitor to use the on-screen
+ * Continue button — exact approved wording, product-owner authorized. Never
+ * paraphrase ("Click continue", "Continue to schedule", etc.). */
+export const ENGLISH_CONTINUE_PROMPT = "Please Click to Continue";
+/** Same instruction, natural Tamil — the approved phrase above is English-
+ * only by the product owner's own spec (an authorized NEW instructional
+ * utterance, not a change to any existing authored Tamil question), so a
+ * Tamil call gets an equivalent rather than switching languages mid-call. */
+export const TAMIL_CONTINUE_PROMPT = "தொடர, திரையில் உள்ள Continue பட்டனை கிளிக் செய்யவும்.";
 
 export function getQualificationDirective(language: QualificationLanguage): string {
   return language === "ta" ? getTamilQualificationDirective() : getEnglishQualificationDirective();
@@ -340,8 +352,9 @@ function buildQualificationDirective(opts: {
   guidance: string;
   answerWordsClause: string;
   spokenLanguageClause: string;
+  continuePrompt: string;
 }): string {
-  const { scriptLabel, questions, guidance, answerWordsClause, spokenLanguageClause } = opts;
+  const { scriptLabel, questions, guidance, answerWordsClause, spokenLanguageClause, continuePrompt } = opts;
   const numbered = questions.map((q) => `${q.number}. ${q.question}`).join("\n");
   return (
     `
@@ -371,8 +384,12 @@ function buildQualificationDirective(opts: {
     `and never invent a classification.
 ` +
     `3. When the server returns the next question, SPEAK its "speak" text EXACTLY as returned (it already ends ` +
-    `with the guidance line). Obey its action field: "complete_proceed_to_booking" means move to booking — ` +
-    `warmly invite them to pick a time on screen, or collect Name/Email/Phone and use book_appointment.
+    `with the guidance line). Obey its action field: "complete_proceed_to_booking" means qualification is fully ` +
+    `complete — say EXACTLY: "${continuePrompt}" (never paraphrase this — not "click continue", not "continue to ` +
+    `schedule", exactly this phrase) so they know to use the on-screen Continue button, which is already visible. ` +
+    `Never claim the appointment is booked yet — the visitor still has to pick a time and enter their details on ` +
+    `screen. Only if they explicitly ask to book entirely by voice instead should you collect Name/Email/Phone and ` +
+    `use book_appointment.
 ` +
     `4. After an ACCEPTED answer you may also mirror it into the lead via update_lead_qualification (decision ` +
     `authority -> decision_maker; budget fit -> budget; timing -> timeline; urgency -> urgency and buying_intent; ` +

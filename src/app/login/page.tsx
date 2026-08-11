@@ -49,7 +49,7 @@ export default function LoginPage() {
   };
 
   return (
-    <main id="main-content" className="min-h-screen bg-[#090d16] flex items-center justify-center p-4">
+    <main id="main-content" className="min-h-screen bg-[var(--surface-0)] flex items-center justify-center p-4">
       {/* Glow background */}
       <div className="fixed inset-0 pointer-events-none overflow-hidden" aria-hidden="true">
         <div className="absolute top-1/3 left-1/2 -translate-x-1/2 w-[500px] h-[500px] bg-sky-500/8 blur-[150px] rounded-full" />
@@ -61,7 +61,7 @@ export default function LoginPage() {
           <div className="h-14 w-14 rounded-2xl bg-gradient-to-tr from-sky-500 to-indigo-500 flex items-center justify-center mx-auto shadow-xl shadow-sky-500/30">
             <Bot className="h-7 w-7 text-white" />
           </div>
-          <h1 className="text-2xl font-extrabold text-slate-100 tracking-tight">VoiceCard AI</h1>
+          <h1 className="text-2xl font-extrabold text-slate-100 tracking-tight">Maylaan AI</h1>
           <p className="text-xs text-slate-400">Enterprise Admin Dashboard</p>
         </div>
 

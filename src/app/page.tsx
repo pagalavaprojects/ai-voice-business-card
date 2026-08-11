@@ -4,7 +4,7 @@ import { Bot, Mic, Users, Calendar, Shield, ArrowRight, Zap } from "lucide-react
 import { DEMO_COMPANY_ID, DEMO_EMPLOYEE_ID } from "@/shared/lib/demoCard";
 
 export const metadata: Metadata = {
-  title: "AI Voice Business Card — Enterprise AI Employee Platform",
+  title: "Maylaan AI — Enterprise AI Employee Platform",
   description:
     "Replace static business cards with autonomous AI voice employees that qualify leads, book meetings, and grow your pipeline 24/7.",
 };
@@ -49,7 +49,7 @@ const stats = [
 
 export default function HomePage() {
   return (
-    <main id="main-content" className="min-h-screen bg-[#090d16] text-slate-100 relative overflow-hidden">
+    <main id="main-content" className="min-h-screen bg-[var(--surface-0)] text-slate-100 relative overflow-hidden">
       {/* Glow Background */}
       <div className="fixed inset-0 pointer-events-none" aria-hidden="true">
         <div className="absolute top-0 left-1/4 w-[600px] h-[600px] bg-sky-500/5 blur-[150px] rounded-full" />
@@ -57,13 +57,13 @@ export default function HomePage() {
       </div>
 
       {/* Navigation */}
-      <nav className="relative z-10 border-b border-white/[0.06] bg-[#090d16]/80 backdrop-blur-md">
+      <nav className="relative z-10 border-b border-white/[0.06] bg-[var(--surface-0)]/80 backdrop-blur-md">
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <div className="h-8 w-8 rounded-xl bg-gradient-to-tr from-sky-500 to-indigo-500 flex items-center justify-center shadow-lg shadow-sky-500/30">
               <Bot className="h-4 w-4 text-white" />
             </div>
-            <span className="text-sm font-bold text-slate-100 tracking-tight">VoiceCard AI</span>
+            <span className="text-sm font-bold text-slate-100 tracking-tight">Maylaan AI</span>
           </div>
           <div className="flex items-center gap-3">
             <Link
@@ -163,7 +163,7 @@ export default function HomePage() {
       {/* Footer */}
       <footer className="relative z-10 border-t border-white/[0.06] py-6">
         <div className="max-w-7xl mx-auto px-6 flex flex-col sm:flex-row items-center justify-between gap-4 text-[11px] text-slate-400">
-          <span>&copy; {new Date().getFullYear()} AI Voice Business Card Platform. All rights reserved.</span>
+          <span>&copy; {new Date().getFullYear()} Maylaan AI. All rights reserved.</span>
           <div className="flex items-center gap-4">
             <Link href="/dashboard" className="hover:text-slate-300 transition-colors">Admin</Link>
             <Link href={`/${DEMO_COMPANY_ID}/${DEMO_EMPLOYEE_ID}`} className="hover:text-slate-300 transition-colors">Demo</Link>

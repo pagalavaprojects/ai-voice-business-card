@@ -10,9 +10,11 @@ import { OpenAIEmbeddingAdapter } from "../../infrastructure/embeddings/OpenAIEm
 import { getWhatsAppNotifier } from "../../infrastructure/notifications/WhatsAppNotifier";
 import {
   classifyClosedResponse,
+  ENGLISH_CONTINUE_PROMPT,
   getAuthoredQuestionFor,
   getQualificationGuidance,
   isQualificationSupportedLanguage,
+  TAMIL_CONTINUE_PROMPT,
   withAnswerGuidance,
 } from "@/features/voice/lib/qualificationScript";
 import { AppointmentStatus, LeadTemperature, NurtureStatus, LeadQualificationSignalsSchema } from "../../domain/models/types";
@@ -301,6 +303,33 @@ export class ToolRegistry {
     return result.data;
   }
 
+  /**
+   * Deterministic HOT/WARM/COLD score for the closed-ended voice flow, from
+   * the Q1-Q7 answers already appended to qualification_notes ("Qn [YES|
+   * NO|MAYBE] ..."). Root cause this fixes: the closed-ended directive
+   * deliberately tells the model never to call save_lead early (it has no
+   * name/email/phone yet), so LeadQualificationService.calculateAndSaveLeadScore
+   * — the ONLY other code path that ever writes lead_temperature — never
+   * runs for a pure voice qualification. lead_temperature stayed null for
+   * the entire call, so the booking UI's "Continue" button (gated on
+   * temperature !== null) never appeared — the visitor's only way off the
+   * qualification screen was the secondary "skip" link, with no
+   * acknowledgment qualification had actually completed. Simple equal
+   * weight across the 7 gate questions (YES=1, MAYBE=0.5, NO=0): >=5.5 HOT,
+   * >=3.5 WARM, else COLD.
+   */
+  private scoreClosedEndedQualification(notes: string): LeadTemperature {
+    let points = 0;
+    for (const line of notes.split("\n")) {
+      const m = /^Q([1-7]) \[(YES|NO|MAYBE)\]/.exec(line.trim());
+      if (!m) continue;
+      points += m[2] === "YES" ? 1 : m[2] === "MAYBE" ? 0.5 : 0;
+    }
+    if (points >= 5.5) return LeadTemperature.HOT;
+    if (points >= 3.5) return LeadTemperature.WARM;
+    return LeadTemperature.COLD;
+  }
+
   private registerDefaultTools() {
     // 1. Save Lead Tool
     this.register({
@@ -585,10 +614,13 @@ export class ToolRegistry {
           status: appointment.status,
           confirmed,
           // What the assistant says to the caller. It must not promise a
-          // calendar entry that was never created.
+          // calendar entry that was never created — the exact closing line
+          // is reserved for a REAL confirmed booking only; a REQUESTED
+          // fallback (Cal.com couldn't complete a real slot) gets the
+          // honest "will follow up" message instead, never the closing line.
           message: confirmed
-            ? "Appointment confirmed and a calendar invitation has been sent."
-            : "Preferred time noted. A confirmation will follow shortly by email.",
+            ? 'Appointment confirmed and a calendar invitation has been sent. Say EXACTLY, as your final words: "Thank You for Your Valuable Time and Support. Have a Wonderful Day" — do not shorten or rephrase it.'
+            : "Preferred time noted. A calendar slot could not be reserved automatically, but a follow-up will arrive by email shortly. Do NOT say the closing thank-you line yet — nothing is booked.",
         };
       },
     });
@@ -724,15 +756,27 @@ export class ToolRegistry {
         if (last === 0) return ask(1);
         if (last < 7) return ask(last + 1);
         if (last === 7) {
-          // Temperature gate — from the REAL stored classification, never
-          // the model's impression. COLD skips the conversion questions
-          // (Q8-Q15) but STILL gets the calendar-consent pair Q16-Q17.
-          let temperature: string | null | undefined;
+          // Temperature gate — computed HERE from the REAL stored Q1-Q7
+          // classifications, never the model's impression. Previously this
+          // only READ lead_temperature, which nothing in the closed-ended
+          // flow ever WRITES (save_lead — the only other writer — is
+          // deliberately skipped early per the directive above), so it was
+          // always null: the booking UI's "Continue" button never appeared
+          // and COLD routing never actually fired. Compute-and-persist once,
+          // right when Q1-Q7 are complete. COLD skips the conversion
+          // questions (Q8-Q15) but STILL gets the calendar-consent pair
+          // Q16-Q17.
+          let temperature: LeadTemperature | null | undefined;
           if (leadId) {
             try {
-              temperature = (await this.crmRepo.getLeadById(leadId))?.lead_temperature;
+              const lead = await this.crmRepo.getLeadById(leadId);
+              temperature = lead?.lead_temperature as LeadTemperature | null | undefined;
+              if (!temperature && lead?.qualification_notes) {
+                temperature = this.scoreClosedEndedQualification(lead.qualification_notes);
+                await this.crmRepo.updateLeadQualification(leadId, { lead_temperature: temperature });
+              }
             } catch (err) {
-              Logger.warn("get_next_qualification_question: lead lookup failed", { error: err instanceof Error ? err.message : String(err) });
+              Logger.warn("get_next_qualification_question: lead lookup/scoring failed", { error: err instanceof Error ? err.message : String(err) });
             }
           }
           if (temperature === LeadTemperature.COLD) {
@@ -758,7 +802,11 @@ export class ToolRegistry {
         if (last === 17) {
           return {
             action: "complete_proceed_to_booking",
-            message: "All questions are complete — proceed to booking: invite them to pick a time on screen, or collect Name/Email/Phone and use book_appointment.",
+            speak: language === "ta" ? TAMIL_CONTINUE_PROMPT : ENGLISH_CONTINUE_PROMPT,
+            message:
+              "All questions are complete. SPEAK the 'speak' text EXACTLY as returned — do not paraphrase it. The " +
+              "on-screen Continue button is already visible; the visitor picks a time and enters their details " +
+              "there. The appointment is NOT booked yet — never say it's confirmed until they've actually done that.",
           };
         }
         return ask(last + 1);

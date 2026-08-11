@@ -436,7 +436,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                     variant="default"
                     data-testid="qualification-continue"
                     onClick={advanceToSlots}
-                    className="w-full flex items-center justify-center gap-2 text-xs font-semibold"
+                    className="w-full flex items-center justify-center gap-2 text-xs font-semibold ai-pulse-glow"
                   >
                     {t("appointment.qualifyContinue")} <ArrowRight className="h-4 w-4" aria-hidden="true" />
                   </Button>
