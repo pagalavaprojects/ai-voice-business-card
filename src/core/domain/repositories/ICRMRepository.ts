@@ -15,6 +15,11 @@ export interface LeadFilter {
 export interface ICRMRepository {
   createLead(data: z.infer<typeof CreateLeadSchema>): Promise<Lead>;
   getLeadById(id: string): Promise<Lead | null>;
+  /** Most recent lead linked to a conversation — the server-authoritative way
+   * to resolve a lead for a live voice call without depending on the model
+   * having already called save_lead (which structurally cannot succeed until
+   * contact details are known, sometimes long after qualification starts). */
+  getLeadByConversationId(conversationId: string): Promise<Lead | null>;
   getLeadByEmail(companyId: string, email: string): Promise<Lead | null>;
   updateLeadScore(id: string, score: number, category: Lead["score_category"], reasoning?: string): Promise<Lead>;
   /** Generic partial update for everything LeadQualificationService computes

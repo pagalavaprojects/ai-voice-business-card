@@ -13,6 +13,7 @@ describe("VoiceEngine Tool Execution & Registry", () => {
     mockCrmRepo = {
       createLead: jest.fn(),
       getLeadById: jest.fn(),
+      getLeadByConversationId: jest.fn(),
       getLeadByEmail: jest.fn(),
       updateLeadScore: jest.fn(),
       updateLeadQualification: jest.fn(),

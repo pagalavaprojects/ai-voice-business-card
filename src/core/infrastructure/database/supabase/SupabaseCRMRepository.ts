@@ -107,6 +107,30 @@ export class SupabaseCRMRepository implements ICRMRepository {
     return (lead as Lead) || null;
   }
 
+  /** Most recent lead linked to a given conversation — how the qualification
+   * sequencing tool resolves a lead SERVER-SIDE (from the Vapi call's own
+   * conversation row) instead of trusting the model to have already called
+   * save_lead with a lead_id. No uniqueness constraint on
+   * leads.conversation_id, so this takes the newest match rather than
+   * .single() (which would throw on more than one row) — same pattern the
+   * qualification-status route already uses for this exact lookup. */
+  async getLeadByConversationId(conversationId: string): Promise<Lead | null> {
+    const { data: lead, error } = await this.demoSafe(() =>
+      supabaseAdmin
+        .from("leads")
+        .select()
+        .eq("conversation_id", conversationId)
+        .is("deleted_at", null)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle()
+    );
+    if (error) {
+      throw new Error(`SupabaseCRMRepository.getLeadByConversationId failed: ${error.message}`);
+    }
+    return (lead as Lead) || null;
+  }
+
   async getLeadByEmail(companyId: string, email: string): Promise<Lead | null> {
     const { data: lead, error } = await this.demoSafe(() =>
       supabaseAdmin.from("leads").select().eq("company_id", companyId).eq("email", email).is("deleted_at", null).single()

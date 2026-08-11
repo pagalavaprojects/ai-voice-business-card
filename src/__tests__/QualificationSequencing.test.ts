@@ -16,12 +16,50 @@ function build(temperature: LeadTemperature | null, notes = "") {
   const crmRepo = {
     getLeadById: jest.fn().mockResolvedValue(lead),
     updateLeadQualification: jest.fn().mockResolvedValue({}),
+    getLeadByConversationId: jest.fn().mockResolvedValue(null),
+    createLead: jest.fn(),
   };
   const registry = new ToolRegistry(crmRepo as never, {} as never, {} as never);
   return { tool: registry.getTool("get_next_qualification_question")!, crmRepo };
 }
 
+/** Simulates a REAL live call end-to-end: no test ever hands the model a
+ * lead_id (matching production — the closed-ended directive no longer asks
+ * for one), only a stable conversationId (exactly what the webhook resolves
+ * server-side from the Vapi call). The in-memory store mimics
+ * getLeadByConversationId/getLeadById/createLead/updateLeadQualification
+ * closely enough to prove the SAME lead is created once and reused for
+ * every subsequent answer — the fix for the bug where save_lead could never
+ * succeed in time (it requires name/email/phone, which the visitor only
+ * gives much later in the booking form) so the model never had a lead_id
+ * and every answer silently failed to persist. */
+function buildLive() {
+  const leads = new Map<string, { id: string; conversation_id: string; qualification_notes: string; lead_temperature: string | null }>();
+  let nextId = 0;
+  const crmRepo = {
+    getLeadByConversationId: jest.fn(async (conversationId: string) => {
+      for (const lead of leads.values()) if (lead.conversation_id === conversationId) return lead;
+      return null;
+    }),
+    createLead: jest.fn(async (data: { conversation_id?: string }) => {
+      const id = `auto-lead-${++nextId}`;
+      const lead = { id, conversation_id: data.conversation_id ?? "", qualification_notes: "", lead_temperature: null };
+      leads.set(id, lead);
+      return lead;
+    }),
+    getLeadById: jest.fn(async (id: string) => leads.get(id) ?? null),
+    updateLeadQualification: jest.fn(async (id: string, patch: Record<string, unknown>) => {
+      const lead = leads.get(id)!;
+      Object.assign(lead, patch);
+      return lead;
+    }),
+  };
+  const registry = new ToolRegistry(crmRepo as never, {} as never, {} as never);
+  return { tool: registry.getTool("get_next_qualification_question")!, crmRepo, leads };
+}
+
 const TA = { companyId: "c1", employeeId: "e1", language: "ta" as const };
+const TA_LIVE = { companyId: "c1", employeeId: "e1", language: "ta" as const, conversationId: "conv-1" };
 const q = (n: number) => getAuthoredQuestion(n)!.question;
 
 describe("get_next_qualification_question (closed-ended revision)", () => {
@@ -146,5 +184,75 @@ describe("get_next_qualification_question (closed-ended revision)", () => {
   it("the master list has 16 questions, numbered 1-17 with exactly 13 missing", () => {
     const numbers = TAMIL_QUALIFICATION_QUESTIONS.map((x) => x.number);
     expect(numbers).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 15, 16, 17]);
+  });
+});
+
+describe("get_next_qualification_question — lead resolution WITHOUT a model-supplied lead_id (the real live-call shape)", () => {
+  // Root cause: save_lead's schema REQUIRES name/email/phone, which the
+  // visitor only gives in the booking form — long after (sometimes never,
+  // if they abandon) this closed-ended Q&A completes. The model therefore
+  // routinely has no lead_id to pass, and every prior version of this tool
+  // silently skipped persistence whenever lead_id was absent: the voice
+  // loop SOUNDED like it worked (correct classification, correct next
+  // question spoken) but Live Transcript stayed empty forever. The fix:
+  // resolve the lead from context.conversationId — which the webhook
+  // already establishes deterministically from the Vapi call, with zero
+  // model involvement — creating a minimal placeholder lead on first use.
+
+  it("auto-creates exactly ONE lead for the conversation and persists Q1's answer, with no lead_id ever supplied", async () => {
+    const { tool, crmRepo, leads } = buildLive();
+    const res = await tool.execute({ last_answered_question: 1, user_response: "ஆம்" }, TA_LIVE);
+    expect(res).toMatchObject({ action: "ask_verbatim", question_number: 2 });
+    expect(crmRepo.createLead).toHaveBeenCalledTimes(1);
+    expect(leads.size).toBe(1);
+    const [lead] = leads.values();
+    expect(lead.qualification_notes).toMatch(/^Q1 \[YES\] \([0-9T:.Z-]+\): Yes$/);
+  });
+
+  it("reuses the SAME auto-created lead across the whole call — no duplicate leads, notes accumulate", async () => {
+    const { tool, crmRepo, leads } = buildLive();
+    await tool.execute({ last_answered_question: 1, user_response: "ஆம்" }, TA_LIVE);
+    await tool.execute({ last_answered_question: 2, user_response: "இல்லை" }, TA_LIVE);
+    await tool.execute({ last_answered_question: 3, user_response: "இருந்தாலும்" }, TA_LIVE);
+    expect(crmRepo.createLead).toHaveBeenCalledTimes(1); // one lead for the whole call
+    expect(leads.size).toBe(1);
+    const [lead] = leads.values();
+    expect(lead.qualification_notes.split("\n")).toEqual([
+      expect.stringContaining("Q1 [YES]"),
+      expect.stringContaining("Q2 [NO]"),
+      expect.stringContaining("Q3 [MAYBE]"),
+    ]);
+  });
+
+  it("an explicit lead_id from the model (once it HAS called save_lead) is still honored and takes priority", async () => {
+    const { tool, crmRepo } = build(LeadTemperature.HOT);
+    await tool.execute({ last_answered_question: 3, user_response: "ஆம்", lead_id: "l1" }, TA_LIVE);
+    // conversation-based resolution is never consulted when lead_id is given.
+    expect(crmRepo.getLeadByConversationId).not.toHaveBeenCalled();
+    expect(crmRepo.updateLeadQualification).toHaveBeenCalledWith("l1", expect.anything());
+  });
+
+  describe("integration: Q1 → spoken answer → server classification → Live Transcript-ready record → Q2", () => {
+    it.each([
+      ["ஆம்", "YES"],
+      ["இல்லை", "NO"],
+      ["இருந்தாலும்", "MAYBE"],
+    ])('"%s" is classified %s, persisted, and Q2 becomes the next question — no lead_id ever supplied by the model', async (reply, cls) => {
+      const { tool, leads } = buildLive();
+      const res = (await tool.execute({ last_answered_question: 1, user_response: reply }, TA_LIVE)) as Record<string, unknown>;
+
+      // 1. Server classification succeeded and the exact next question came back.
+      expect(res.action).toBe("ask_verbatim");
+      expect(res.question_number).toBe(2);
+      expect(res.question).toBe(getAuthoredQuestion(2)!.question);
+      expect(res.speak).toBe(withAnswerGuidance(getAuthoredQuestion(2)!.question));
+
+      // 2. The canonical classification was actually persisted — this is
+      // exactly what the qualification-status endpoint parses back out into
+      // the { n: 1, c: "YES"/"NO"/"MAYBE", a: "Yes"/"No"/"Maybe" } shape the
+      // Live Transcript renders as "User: YES/NO/MAYBE".
+      const [lead] = leads.values();
+      expect(lead.qualification_notes).toContain(`Q1 [${cls}]`);
+    });
   });
 });

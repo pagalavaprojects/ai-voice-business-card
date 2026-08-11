@@ -206,8 +206,9 @@ export function getTamilQualificationDirective(): string {
     `AFTER EVERY VISITOR REPLY you MUST:
 ` +
     `1. Call get_next_qualification_question with: last_answered_question (the number of the question they just ` +
-    `replied to), user_response (the visitor's words EXACTLY as you heard them, in Tamil — never cleaned up, ` +
-    `never translated, never invented), and the lead_id from save_lead.
+    `replied to) and user_response (the visitor's words EXACTLY as you heard them, in Tamil — never cleaned up, ` +
+    `never translated, never invented). You do NOT need a lead_id — the server resolves the lead for this call on ` +
+    `its own; do not wait to call save_lead first.
 ` +
     `2. You do NOT classify and you do NOT judge validity — the SERVER decides whether the reply is YES, NO or ` +
     `MAYBE. If the server returns action "reprompt", the answer was not valid: SPEAK the returned text verbatim ` +

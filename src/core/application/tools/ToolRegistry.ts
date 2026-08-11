@@ -616,7 +616,10 @@ export class ToolRegistry {
               "The visitor's reply EXACTLY as heard, in Tamil — never cleaned up, translated or invented. The server " +
               "classifies it; you never do.",
           },
-          lead_id: { type: "string", description: "UUID returned by save_lead — required so answers persist and routing uses the real stored temperature." },
+          lead_id: {
+            type: "string",
+            description: "UUID from save_lead, ONLY if you already called it. Optional — the server resolves the lead for this call on its own otherwise.",
+          },
         },
         required: ["last_answered_question"],
       },
@@ -646,15 +649,49 @@ export class ToolRegistry {
           };
         }
 
+        // Resolve a lead SERVER-SIDE from the call's own conversation,
+        // instead of trusting the model to already have a lead_id from
+        // save_lead. save_lead structurally CANNOT succeed this early: its
+        // schema requires name/email/phone, which the visitor only gives in
+        // the booking form, long after (sometimes never, if they abandon
+        // before booking) this closed-ended Q&A completes. Without this, the
+        // model routinely never has a lead_id, and every answer classifies
+        // correctly but silently fails to persist — the exact bug behind
+        // "the voice loop sounds like it works but Live Transcript never
+        // updates." A minimal placeholder lead is created on first use and
+        // reused (via conversation_id, no uniqueness constraint required)
+        // for the rest of the call; save_lead later still runs normally
+        // once real contact details are known.
+        let leadId = args.lead_id ? String(args.lead_id) : undefined;
+        if (!leadId && context.conversationId) {
+          try {
+            const existing = await this.crmRepo.getLeadByConversationId(context.conversationId);
+            leadId = existing
+              ? existing.id
+              : (
+                  await this.crmRepo.createLead({
+                    company_id: context.companyId,
+                    employee_id: context.employeeId,
+                    conversation_id: context.conversationId,
+                    name: "Voice qualification visitor",
+                    email: `qualifying-${context.conversationId}@placeholder.maylaanai.internal`,
+                    phone: "0000000000",
+                  })
+                ).id;
+          } catch (err) {
+            Logger.warn("get_next_qualification_question: lead resolution failed", { error: err instanceof Error ? err.message : String(err) });
+          }
+        }
+
         // Record the accepted answer on the lead's existing notes field:
         // "Qn [YES|NO|MAYBE] (ISO time): canonical English word" — the
         // English record is derived from the classification, never from
         // model-generated content, so nothing fabricated can be stored.
         // Read-modify-write append; a persistence hiccup must not stall
         // the conversation.
-        if (last > 0 && args.lead_id && classification) {
+        if (last > 0 && leadId && classification) {
           try {
-            const lead = await this.crmRepo.getLeadById(String(args.lead_id));
+            const lead = await this.crmRepo.getLeadById(leadId);
             if (lead) {
               const english = classification === "YES" ? "Yes" : classification === "NO" ? "No" : "Maybe";
               const line = `Q${last} [${classification}] (${new Date().toISOString()}): ${english}`;
@@ -681,9 +718,9 @@ export class ToolRegistry {
           // the model's impression. COLD skips the conversion questions
           // (Q8-Q15) but STILL gets the calendar-consent pair Q16-Q17.
           let temperature: string | null | undefined;
-          if (args.lead_id) {
+          if (leadId) {
             try {
-              temperature = (await this.crmRepo.getLeadById(String(args.lead_id)))?.lead_temperature;
+              temperature = (await this.crmRepo.getLeadById(leadId))?.lead_temperature;
             } catch (err) {
               Logger.warn("get_next_qualification_question: lead lookup failed", { error: err instanceof Error ? err.message : String(err) });
             }
