@@ -1,0 +1,109 @@
+/**
+ * @jest-environment jsdom
+ *
+ * Regression coverage for the exact wiring that keeps the closed-ended
+ * qualification directive scoped to ONLY the booking modal's "Start AI
+ * Conversation" call — never the plain "Talk with AI" mic button on the
+ * card, which must stay a general, open conversation. Both paths call the
+ * SAME startCall() from useVapiSession; the only thing that can keep them
+ * apart is what each caller passes as overrides. Verified here by spying on
+ * startCall and asserting what each button actually invokes it with, in one
+ * test that exercises both — closing the gap where this was previously only
+ * verified by direct code reading, not by a dedicated component test.
+ */
+import "@testing-library/jest-dom";
+import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
+import { PublicBusinessCard } from "@/features/voice/components/PublicBusinessCard";
+import { TAMIL_QUALIFICATION_CALL_OPENING } from "@/features/voice/lib/qualificationScript";
+
+const startCall = jest.fn();
+
+jest.mock("@/features/voice/hooks/useVapiSession", () => ({
+  useVapiSession: () => ({
+    voiceState: "idle",
+    isMuted: false,
+    messages: [],
+    durationSeconds: 0,
+    error: null,
+    isPlayingIntro: false,
+    isDemoMode: true,
+    callId: null,
+    startCall,
+    endCall: jest.fn(),
+    toggleMute: jest.fn(),
+  }),
+}));
+
+function cardResponse() {
+  return {
+    ok: true,
+    status: 200,
+    json: () =>
+      Promise.resolve({
+        company: { name: "Pagalava Data Analytics", website: "https://maylaanai.com", logoUrl: null },
+        employee: { name: "Srinivasan Kandasamy", designation: "Founder", email: "s@pagalava.com", phone: "+911234567890", officeAddress: null, workingHours: null, avatarUrl: null },
+        firstMessage: "வணக்கம்.",
+        systemPrompt: "BASE_SYSTEM_PROMPT_MARKER",
+        language: "ta",
+        enabledLanguages: ["en", "ta", "hi", "kn", "te", "ml"],
+        tools: [],
+        serverUrl: "https://maylaanai.com/api/vapi/webhook",
+      }),
+  };
+}
+
+describe("PublicBusinessCard — mic button vs. qualification call wiring", () => {
+  beforeEach(() => {
+    startCall.mockClear();
+    window.localStorage.clear();
+    // A stored preference skips the LanguageGate entirely, landing straight
+    // on the main card view (mic button + Book an Appointment).
+    window.localStorage.setItem("pagalava.language", "ta");
+    global.fetch = jest.fn(() => Promise.resolve(cardResponse())) as unknown as typeof fetch;
+  });
+
+  it("the plain mic button calls startCall with NO qualification overrides — general conversation, no closed-ended directive", async () => {
+    render(<PublicBusinessCard companyId="comp-1" employeeId="emp-1" />);
+    const mic = await screen.findByTestId("voice-mic-button");
+
+    await act(async () => {
+      fireEvent.click(mic);
+    });
+
+    expect(startCall).toHaveBeenCalledTimes(1);
+    // The button binds startCall directly as its onClick handler, so the
+    // DOM click event is what actually lands in the "overrides" parameter —
+    // what matters is neither qualification field is ever set on it.
+    const arg = startCall.mock.calls[0][0] as { firstMessage?: unknown; systemPrompt?: unknown } | undefined;
+    expect(arg?.firstMessage).toBeUndefined();
+    expect(arg?.systemPrompt).toBeUndefined();
+  });
+
+  it("Book an Appointment → Start AI Conversation calls startCall with the Q1 opening AND the closed-ended directive — never leaking into the plain mic path", async () => {
+    render(<PublicBusinessCard companyId="comp-1" employeeId="emp-1" />);
+    await screen.findByTestId("voice-mic-button");
+
+    fireEvent.click(screen.getByTestId("book-meeting-button"));
+    const startQualification = await screen.findByTestId("start-qualification");
+
+    await act(async () => {
+      fireEvent.click(startQualification);
+    });
+
+    expect(startCall).toHaveBeenCalledTimes(1);
+    const [overrides] = startCall.mock.calls[0] as [{ firstMessage: string; systemPrompt: string }];
+    expect(overrides.firstMessage).toBe(TAMIL_QUALIFICATION_CALL_OPENING);
+    expect(overrides.systemPrompt).toContain("BASE_SYSTEM_PROMPT_MARKER");
+    expect(overrides.systemPrompt).toContain("STRICT CLOSED-ENDED questionnaire");
+
+    // The plain mic button, untouched by the modal interaction above, must
+    // still be wired with no qualification overrides if used afterward.
+    startCall.mockClear();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("voice-mic-button"));
+    });
+    const micArg = startCall.mock.calls[0][0] as { firstMessage?: unknown; systemPrompt?: unknown } | undefined;
+    expect(micArg?.firstMessage).toBeUndefined();
+    expect(micArg?.systemPrompt).toBeUndefined();
+  });
+});

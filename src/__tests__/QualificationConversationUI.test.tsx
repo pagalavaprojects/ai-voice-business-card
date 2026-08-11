@@ -99,6 +99,32 @@ describe("qualification conversation UI", () => {
     expect(screen.getByTestId("qual-progress").textContent).toContain("appointment.progressSet1:2");
   });
 
+  it("an invalid answer keeps Q1 active: the server's reprompt (bare guidance, no new question) never advances the question area", () => {
+    // Simulates a real reprompt cycle: the visitor's reply couldn't be
+    // classified, so the model spoke ONLY the guidance line again (never a
+    // new authored question) and NOTHING was recorded server-side
+    // (qualAnswers stays empty, per the default mockStatus in beforeEach).
+    // matchAuthoredTamilQuestion correctly returns null for a bare guidance
+    // utterance, so the backward scan skips it and keeps resolving to Q1 —
+    // the last message that actually matched an authored question.
+    render(
+      <AppointmentModal
+        {...baseProps}
+        voice={voiceWith([
+          { role: "assistant", content: TAMIL_QUALIFICATION_SET1[0] },
+          { role: "user", content: "ஆம், இருக்கிறது" }, // invalid — contains a permitted word but isn't one
+          { role: "assistant", content: "ஆம், இல்லை அல்லது இருந்தாலும் என பதிலளிக்கவும்." }, // reprompt: guidance only
+        ])}
+      />
+    );
+    startQualification();
+    expect(screen.getByTestId("current-question").textContent).toContain(TAMIL_QUALIFICATION_SET1[0]);
+    expect(screen.getByTestId("qual-progress").textContent).toContain("appointment.progressSet1:1");
+    // Nothing was accepted, so there is nothing to show yet.
+    expect(screen.queryByTestId("qual-transcript-heading")).toBeNull();
+    expect(screen.queryByTestId("qual-history")).toBeNull();
+  });
+
   it("NEVER renders raw Tamil ASR as the visitor transcript — English-only rule", () => {
     render(
       <AppointmentModal
@@ -148,6 +174,43 @@ describe("qualification conversation UI", () => {
     // though the transcript only matched Q1.
     expect(screen.getByTestId("current-question").textContent).toContain(TAMIL_QUALIFICATION_SET1[2]);
     expect(screen.getByTestId("qual-progress").textContent).toContain("appointment.progressSet1:3");
+  });
+
+  it("full end-to-end walk: all 7 Set-1 answers render as English-only classifications, in order, with the question area always on the correct next Tamil question", async () => {
+    jest.useFakeTimers();
+    // Every one of the three canonical answers appears at least once, and
+    // the server-recorded order (not insertion order into some other
+    // structure) is what the transcript must reflect.
+    const classifications = ["YES", "NO", "MAYBE", "YES", "NO", "MAYBE", "YES"] as const;
+    mockStatus({
+      qualified: false,
+      temperature: null,
+      answers: classifications.map((c, i) => ({ n: i + 1, c, a: c === "YES" ? "Yes" : c === "NO" ? "No" : "Maybe" })),
+    });
+    render(<AppointmentModal {...baseProps} voice={voiceWith([{ role: "assistant", content: TAMIL_QUALIFICATION_SET1[0] }])} />);
+    startQualification();
+    await act(async () => {
+      jest.advanceTimersByTime(3100);
+      await Promise.resolve();
+    });
+
+    // Live Transcript: exactly 7 entries, correct classification each, in
+    // authored-question order. Each ANSWER line (the "User:" line, not the
+    // authored Tamil question label shown above it for context) is
+    // English-only: just the classification, never a free-text sentence.
+    const history = screen.getByTestId("qual-history");
+    classifications.forEach((c, i) => {
+      const line = screen.getByTestId(`answer-${i + 1}`).textContent ?? "";
+      expect(line).toContain("User:");
+      expect(line).toContain(c);
+      expect(line).not.toMatch(/Yes,|No,|Maybe,/); // no free-text sentence content
+    });
+    expect(history.textContent).not.toMatch(/Yes,|No,|Maybe,/);
+
+    // All 7 Set-1 questions are answered -> the question area has already
+    // fallen forward into Set-2 (Q8), and progress reflects that set.
+    expect(screen.getByTestId("current-question").textContent).toContain(ALL_TAMIL_QUESTIONS[7]);
+    expect(screen.getByTestId("qual-progress").textContent).toContain("appointment.progressSet2:8");
   });
 
   it("shows Set-2 progress once a conversion question is active", () => {
