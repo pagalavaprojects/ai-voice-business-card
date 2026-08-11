@@ -350,35 +350,40 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                           transcript is a product rule — raw Tamil ASR is
                           never rendered. */}
                       {qualAnswers.length > 0 && (
-                        <div className="space-y-2 max-h-36 overflow-y-auto pr-1" data-testid="qual-history">
-                          {qualAnswers.map((ans) => {
-                            const authored = TAMIL_QUALIFICATION_QUESTIONS.find((q) => q.number === ans.n);
-                            return (
-                              <div key={ans.n} className="border-l-2 border-white/[0.08] pl-2.5">
-                                {authored && (
-                                  <p className="text-[11px] text-slate-400 leading-snug" lang="ta">
-                                    {authored.question}
+                        <div>
+                          <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-1" data-testid="qual-transcript-heading">
+                            {t("transcript.heading", { count: String(qualAnswers.length) })}
+                          </p>
+                          <div className="space-y-2 max-h-36 overflow-y-auto pr-1" data-testid="qual-history">
+                            {qualAnswers.map((ans) => {
+                              const authored = TAMIL_QUALIFICATION_QUESTIONS.find((q) => q.number === ans.n);
+                              return (
+                                <div key={ans.n} className="border-l-2 border-white/[0.08] pl-2.5">
+                                  {authored && (
+                                    <p className="text-[11px] text-slate-400 leading-snug" lang="ta">
+                                      {authored.question}
+                                    </p>
+                                  )}
+                                  {/* Closed-ended spec: the English record is ONLY the
+                                      classification — never model-generated content. */}
+                                  <p className="text-[11px] text-slate-200 leading-snug mt-0.5" data-testid={`answer-${ans.n}`}>
+                                    <span className="text-slate-400 font-semibold mr-1.5">User:</span>
+                                    <span
+                                      className={`inline-block px-1 rounded text-[9px] font-bold align-middle ${
+                                        ans.c === "YES"
+                                          ? "bg-emerald-500/20 text-emerald-300"
+                                          : ans.c === "NO"
+                                            ? "bg-rose-500/20 text-rose-300"
+                                            : "bg-amber-500/20 text-amber-300"
+                                      }`}
+                                    >
+                                      {ans.c}
+                                    </span>
                                   </p>
-                                )}
-                                {/* Closed-ended spec: the English record is ONLY the
-                                    classification — never model-generated content. */}
-                                <p className="text-[11px] text-slate-200 leading-snug mt-0.5" data-testid={`answer-${ans.n}`}>
-                                  <span className="text-slate-400 font-semibold mr-1.5">User:</span>
-                                  <span
-                                    className={`inline-block px-1 rounded text-[9px] font-bold align-middle ${
-                                      ans.c === "YES"
-                                        ? "bg-emerald-500/20 text-emerald-300"
-                                        : ans.c === "NO"
-                                          ? "bg-rose-500/20 text-rose-300"
-                                          : "bg-amber-500/20 text-amber-300"
-                                    }`}
-                                  >
-                                    {ans.c}
-                                  </span>
-                                </p>
-                              </div>
-                            );
-                          })}
+                                </div>
+                              );
+                            })}
+                          </div>
                         </div>
                       )}
                       {aiLine && (

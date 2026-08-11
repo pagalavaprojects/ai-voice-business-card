@@ -53,6 +53,9 @@ describe("qualification conversation UI", () => {
     render(<AppointmentModal {...baseProps} voice={voiceWith([])} />);
     startQualification();
     expect(screen.getByTestId("current-question").textContent).toContain("உங்கள் வணிகத்தில் தீர்வு காண வேண்டிய குறிப்பிட்ட பிரச்சினை உள்ளதா?");
+    // No answer recorded yet — the Live Transcript section has nothing to
+    // show, so it stays absent rather than rendering an empty shell.
+    expect(screen.queryByTestId("qual-transcript-heading")).toBeNull();
   });
 
   it("keeps the current question visible during listening — status says 'say your answer'", () => {
@@ -129,6 +132,10 @@ describe("qualification conversation UI", () => {
       await Promise.resolve();
     });
 
+    // The visible "Live Transcript" section updates in place, mid-call —
+    // no modal close/reopen, no page reload — as soon as the poll picks up
+    // newly-recorded answers.
+    expect(screen.getByTestId("qual-transcript-heading")).toBeTruthy();
     const history = screen.getByTestId("qual-history");
     // Closed-ended spec: the English record is ONLY "User:" + the
     // classification — no free-text content, nothing fabricated.
