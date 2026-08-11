@@ -1205,6 +1205,37 @@ Session of 2026-08-10 (commits `063911f`, `47f2e30`, `76fc685`, `e227316`):
   before. **CODE VERIFIED, LIVE VOICE LOOP NOT VERIFIED** — one real
   human phone call is still needed to see Q1 → ஆம் → "User: YES" → Q2
   happen end-to-end.
+- **A second, deeper root cause — Live Transcript would have stayed empty
+  even with a perfect microphone** (same day, commit `d4634d3`):
+  `get_next_qualification_question` only persisted an accepted answer
+  when the model supplied `lead_id`, which it was expected to obtain by
+  calling `save_lead` first. But `save_lead`'s schema requires
+  name/email/phone — fields the visitor only provides in the booking
+  form's text inputs, well after (sometimes never, if they abandon) the
+  closed-ended Tamil Q&A completes. In the live product `save_lead`
+  therefore can never succeed during qualification, so the model never
+  had a `lead_id`, and every correctly-classified answer silently failed
+  to persist — Live Transcript would have stayed empty and the Q7
+  temperature gate could never see a real value, independent of whether
+  the microphone/STT bug above was ever fixed. Found by tracing the
+  actual persistence path end-to-end rather than trusting the mic fix
+  alone to be sufficient. Fix: the tool now resolves its lead
+  SERVER-SIDE from `context.conversationId` (new
+  `ICRMRepository.getLeadByConversationId`) — which the Vapi webhook
+  already establishes deterministically per call, zero model
+  involvement — auto-creating a minimal placeholder lead on first use
+  and reusing it for the rest of the call; an explicit `lead_id` from
+  the model (once it does call `save_lead`) still takes priority. 5 new
+  tests, including the 3 explicit integration tests proving Q1 →
+  "ஆம்"/"இல்லை"/"இருந்தாலும்" → persisted YES/NO/MAYBE → Q2 with no
+  `lead_id` ever supplied — the real production shape. Full suite 494
+  passed / 1 skipped, tsc/lint/build clean.
+  Live re-verification (7th consecutive attempt tonight, across 3
+  deployed fixes): still blocked by the same ~36s environment ceiling —
+  every call so far has died before a `tool-calls` webhook request ever
+  arrives, so this fix's live persistence behavior is proven by
+  deterministic tests but not yet observed on an actual completed
+  exchange. **CODE VERIFIED, LIVE VOICE LOOP NOT VERIFIED** still stands.
 
 ---
 
