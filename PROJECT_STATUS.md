@@ -1144,6 +1144,28 @@ Session of 2026-08-10 (commits `063911f`, `47f2e30`, `76fc685`, `e227316`):
   this dev machine keep dropping ~30-40s in (local Daily WSS DNS
   instability), so the spoken multi-turn loop still awaits one real
   human call.
+- **Root-cause fix for a self-inflicted regression** (same day, commit
+  `ae52eb3`): the closed-ended revision above dropped the directive's
+  prior conditional framing ("When the visitor is being qualified for an
+  appointment...") and made it unconditional — but `route.ts` appended it
+  to `card.systemPrompt` for EVERY Tamil session regardless of call type,
+  and that systemPrompt is shared by both the plain "Talk with AI" mic tap
+  and the booking modal's qualification call. Net effect: a visitor who
+  just tapped the mic to ask a normal Tamil question would have gotten a
+  system prompt saying "this is a strict closed-ended questionnaire, never
+  ask for explanations" — corrupting general conversation. No prior test
+  caught it (the suite only pinned the directive's static string content,
+  never which calls receive it). Fixed structurally, not by prompt-level
+  self-gating: route.ts no longer appends the directive to the base
+  prompt; `useVapiSession.startCall(overrides)` gained a `systemPrompt`
+  override (mirrors the existing `firstMessage` override, including
+  auto-reconnect replay); `PublicBusinessCard`'s qualification-call
+  `startCall()` now passes both overrides together, scoped to only that
+  call. Live-verified via the actual Vapi POST bodies (not just the API
+  response): plain mic-tap call's systemPrompt = 5565 chars, zero trace of
+  the directive; qualification call's systemPrompt = 8928 chars (base +
+  directive), firstMessage exactly Q1 + guidance. 4 new regression tests,
+  full suite 487/1 skip green.
 
 ---
 
