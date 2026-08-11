@@ -366,6 +366,63 @@ describe("useVapiSession — scripted intro tracking", () => {
     expect((vapi.started[1] as { firstMessage: string }).firstMessage).toBe(Q1);
   });
 
+  it("a per-call systemPrompt override replaces the hook's base systemPrompt for that call", async () => {
+    // Regression: the qualification call must carry the closed-ended
+    // questionnaire directive WITHOUT that directive leaking into the base
+    // systemPrompt used by a plain mic-tap call on the same card.
+    const { result } = renderHook(() =>
+      useVapiSession({ companyId: "c1", employeeId: "e1", vapiPublicKey: REAL_KEY, systemPrompt: "BASE PROMPT" })
+    );
+
+    await act(async () => {
+      await result.current.startCall({ systemPrompt: "BASE PROMPT + QUALIFICATION DIRECTIVE" });
+    });
+    const vapi = fakeVapiInstances[0];
+    expect((vapi.started[0] as { model: { messages: Array<{ role: string; content: string }> } }).model.messages).toEqual([
+      { role: "system", content: "BASE PROMPT + QUALIFICATION DIRECTIVE" },
+    ]);
+  });
+
+  it("omitting the systemPrompt override falls back to the hook's base systemPrompt — the plain mic tap is unaffected", async () => {
+    const { result } = renderHook(() =>
+      useVapiSession({ companyId: "c1", employeeId: "e1", vapiPublicKey: REAL_KEY, systemPrompt: "BASE PROMPT" })
+    );
+
+    await act(async () => {
+      await result.current.startCall();
+    });
+    const vapi = fakeVapiInstances[0];
+    expect((vapi.started[0] as { model: { messages: Array<{ role: string; content: string }> } }).model.messages).toEqual([
+      { role: "system", content: "BASE PROMPT" },
+    ]);
+  });
+
+  it("reconnects a dropped qualification call with the SAME systemPrompt override — never the general-conversation prompt", async () => {
+    // The companion regression to the firstMessage-override reconnect fix
+    // above: a qualification call that drops and auto-reconnects must not
+    // lose the closed-ended questionnaire directive, or the retried call's
+    // model would ask Q1 without knowing it must classify server-side.
+    const { result } = renderHook(() =>
+      useVapiSession({ companyId: "c1", employeeId: "e1", vapiPublicKey: REAL_KEY, systemPrompt: "BASE PROMPT" })
+    );
+
+    await act(async () => {
+      await result.current.startCall({ firstMessage: "Q1", systemPrompt: "BASE PROMPT + QUALIFICATION DIRECTIVE" });
+    });
+    const vapi = fakeVapiInstances[0];
+
+    act(() => vapi.emit("error", new Error("WebRTC connection lost")));
+    await act(async () => {
+      jest.advanceTimersByTime(1500);
+      await Promise.resolve();
+    });
+
+    expect(vapi.started.length).toBe(2);
+    const reconnected = vapi.started[1] as { firstMessage: string; model: { messages: Array<{ role: string; content: string }> } };
+    expect(reconnected.firstMessage).toBe("Q1");
+    expect(reconnected.model.messages).toEqual([{ role: "system", content: "BASE PROMPT + QUALIFICATION DIRECTIVE" }]);
+  });
+
   it("a plain mic-tap call still reconnects with the default greeting, not a stale qualification override", async () => {
     const { result } = renderHook(() =>
       useVapiSession({ companyId: "c1", employeeId: "e1", vapiPublicKey: REAL_KEY, firstMessage: "வணக்கம். Founder greeting." })

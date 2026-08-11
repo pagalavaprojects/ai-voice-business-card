@@ -46,8 +46,8 @@ import { GET } from "@/app/api/public/[companyId]/[employeeId]/route";
 
 const PARAMS = { params: { companyId: "company-1", employeeId: "employee-1" } };
 
-function makeRequest(ip = "10.0.0.1") {
-  return new NextRequest("http://localhost:3000/api/public/company-1/employee-1", {
+function makeRequest(ip = "10.0.0.1", query = "") {
+  return new NextRequest(`http://localhost:3000/api/public/company-1/employee-1${query}`, {
     headers: { "x-forwarded-for": ip },
   });
 }
@@ -100,5 +100,22 @@ describe("GET /api/public/[companyId]/[employeeId]", () => {
     }
     const otherVisitor = await GET(makeRequest("198.51.100.2"), PARAMS);
     expect(otherVisitor.status).toBe(200);
+  });
+
+  it("never bakes the closed-ended qualification directive into the card's base systemPrompt, even for Tamil", async () => {
+    // Regression: this systemPrompt is shared by the plain "Talk with AI"
+    // mic tap AND the booking modal's qualification call — a visitor who
+    // just taps the mic to ask a normal question must get a normal
+    // conversation, not "this is a strict closed-ended questionnaire, never
+    // ask for explanations." The qualification directive is appended
+    // client-side, ONLY for the qualification call, via a systemPrompt
+    // override — never baked into what this route serves.
+    const res = await GET(makeRequest("10.0.0.5", "?lang=ta"), PARAMS);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.systemPrompt).toBeTruthy();
+    expect(body.systemPrompt).not.toContain("STRICT CLOSED-ENDED questionnaire");
+    expect(body.systemPrompt).not.toContain("get_next_qualification_question");
+    expect(body.systemPrompt).not.toContain("ஆம், இல்லை அல்லது இருந்தாலும்");
   });
 });

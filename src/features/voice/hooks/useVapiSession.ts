@@ -172,8 +172,12 @@ export function useVapiSession({
   const mountedRef = useRef(true);
   // The overrides of the most recent explicit startCall — replayed by the
   // automatic reconnect so a dropped qualification call resumes as a
-  // qualification call (opening = Q1), never as a default greeting call.
-  const lastOverridesRef = useRef<{ firstMessage?: string } | undefined>(undefined);
+  // qualification call (opening = Q1, closed-ended systemPrompt), never as
+  // a default greeting call. Both fields must travel together: a
+  // qualification call that reconnected with Q1 but the GENERAL
+  // systemPrompt would have the model asking Q1 without knowing it must
+  // stay closed-ended and call the sequencing tool.
+  const lastOverridesRef = useRef<{ firstMessage?: string; systemPrompt?: string } | undefined>(undefined);
 
   const clearReconnectTimeout = useCallback(() => {
     if (reconnectTimeoutRef.current) {
@@ -409,20 +413,26 @@ export function useVapiSession({
     };
   }, []);
 
-  const startCall = useCallback(async (overrides?: { firstMessage?: string }) => {
+  const startCall = useCallback(async (overrides?: { firstMessage?: string; systemPrompt?: string }) => {
     // Only one active session at a time — guards against a double-invoke
     // (a rapid double-tap, or the auto-start effect racing a manual tap
     // before its own guard ref has committed).
     if (voiceState !== "idle") return;
     // Remember the caller's overrides so an automatic reconnect restarts the
-    // SAME kind of call. Without this, a qualification call (opening = Q1)
-    // that drops on a transient WebRTC error reconnects as a default card
-    // call and replays the founder greeting instead of the questionnaire.
+    // SAME kind of call. Without this, a qualification call (opening = Q1,
+    // closed-ended systemPrompt) that drops on a transient WebRTC error
+    // reconnects as a default card call — replaying the founder greeting
+    // AND losing the closed-ended questionnaire instructions.
     lastOverridesRef.current = overrides;
     // Per-call opening line: the booking flow's qualification call speaks
     // the authored qualification intro instead of the card greeting; a plain
     // mic tap keeps the normal greeting.
     const effectiveFirstMessage = overrides?.firstMessage || firstMessage;
+    // Per-call system prompt: the qualification call's caller passes the
+    // base prompt PLUS the closed-ended questionnaire directive appended —
+    // scoped to only this call so a general "Talk with AI" mic tap never
+    // sees "this is a strict closed-ended questionnaire" mid-conversation.
+    const effectiveSystemPrompt = overrides?.systemPrompt ?? systemPrompt;
 
     setError(null);
 
@@ -491,7 +501,7 @@ export function useVapiSession({
           // prompt + tool registry built server-side never reached a
           // real call, since inline assistant config from the browser
           // is all Vapi's client SDK ever sends unless told otherwise.
-          ...(systemPrompt ? { messages: [{ role: "system" as const, content: systemPrompt }] } : {}),
+          ...(effectiveSystemPrompt ? { messages: [{ role: "system" as const, content: effectiveSystemPrompt }] } : {}),
           ...(tools && tools.length > 0 ? { tools } : {}),
         },
         // The Vapi Web SDK has no output-volume/gain control at all — its

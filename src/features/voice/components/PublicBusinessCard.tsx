@@ -12,7 +12,7 @@ import { Dialog } from "@/shared/ui/dialog";
 import { downloadVCard, imageUrlToDataUri } from "@/features/voice/lib/vcard";
 import { speakPitchWithBrowserTts, stopBrowserTts, pauseBrowserTts, resumeBrowserTts } from "@/features/voice/lib/pitchFallback";
 import { DEMO_COMPANY_ID } from "@/shared/lib/demoCard";
-import { TAMIL_QUALIFICATION_CALL_OPENING } from "@/features/voice/lib/qualificationScript";
+import { TAMIL_QUALIFICATION_CALL_OPENING, getTamilQualificationDirective } from "@/features/voice/lib/qualificationScript";
 import { useLanguage } from "@/features/language/hooks/useLanguage";
 import { LanguageSelector } from "@/features/language/components/LanguageSelector";
 import { LanguageGate } from "@/features/language/components/LanguageGate";
@@ -944,12 +944,21 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
         voice={{
           voiceState,
           callId,
-          // The qualification call opens with the SHORT qualification
-          // instruction that ends by asking Question 1 (Tamil sessions) —
-          // never the founder pitch, which belongs to the card/pitch
-          // experience. Other languages keep their greeting; the mic button
-          // elsewhere is unaffected.
-          startCall: () => startCall(language === "ta" ? { firstMessage: TAMIL_QUALIFICATION_CALL_OPENING } : undefined),
+          // The qualification call opens with Q1 + the closed-answer
+          // guidance (Tamil sessions) — never the founder pitch, which
+          // belongs to the card/pitch experience — AND carries its own
+          // systemPrompt with the closed-ended questionnaire directive
+          // appended. That directive is scoped to ONLY this call: the base
+          // card.systemPrompt (used by the plain mic button below,
+          // unaffected here) never includes it, so a general Tamil
+          // conversation is never told "this is a strict closed-ended
+          // questionnaire." Other languages keep their normal greeting.
+          startCall: () =>
+            startCall(
+              language === "ta"
+                ? { firstMessage: TAMIL_QUALIFICATION_CALL_OPENING, systemPrompt: (card.systemPrompt ?? "") + getTamilQualificationDirective() }
+                : undefined
+            ),
           endCall,
           messages,
           language,

@@ -21,7 +21,6 @@ import {
   isSupportedLanguage,
   DEFAULT_LANGUAGE,
 } from "@/features/language/server";
-import { getTamilQualificationDirective } from "@/features/voice/lib/qualificationScript";
 import QRCode from "qrcode";
 
 // Reads the session cookie and/or query params, so it can never be rendered
@@ -163,12 +162,19 @@ export async function GET(req: NextRequest, { params }: { params: { companyId: s
     // The language directive is appended, not cached with the base prompt —
     // the assembled prompt itself is identical regardless of language, so
     // there's no need to cache a variant per language, only to suffix it.
-    // Tamil sessions additionally carry the founder-authored qualification
-    // script (exact questions, exact order) — layered on top of the
-    // existing sales/booking modules, not replacing them.
-    const systemPrompt = systemPromptBase
-      ? systemPromptBase + getLanguageDirective(language) + (language === "ta" ? getTamilQualificationDirective() : "")
-      : systemPromptBase;
+    //
+    // The Tamil qualification script (exact questions, strict closed-ended
+    // guidance) is deliberately NOT appended here. This systemPrompt is
+    // shared by BOTH the plain "Talk with AI" mic tap AND the booking
+    // modal's "Start AI Conversation" — appending the qualification
+    // directive unconditionally would tell a visitor just asking about
+    // products, in a normal Tamil conversation, "this is a strict
+    // closed-ended questionnaire, never ask for explanations." The client
+    // (PublicBusinessCard) appends getTamilQualificationDirective() itself,
+    // ONLY for the qualification call, via startCall's systemPrompt
+    // override — the same mechanism firstMessage already uses to keep the
+    // qualification opening out of the general greeting.
+    const systemPrompt = systemPromptBase ? systemPromptBase + getLanguageDirective(language) : systemPromptBase;
 
     // Vapi delivers tool-calls from its own cloud, so a localhost callback is
     // unreachable and every save_lead / book_appointment would silently never
