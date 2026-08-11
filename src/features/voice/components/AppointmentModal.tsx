@@ -6,7 +6,14 @@ import { Dialog } from "@/shared/ui/dialog";
 import { Button } from "@/shared/ui/button";
 import { Skeleton } from "@/shared/ui/skeleton";
 import type { LanguageCode } from "@/features/language/config";
-import { TAMIL_QUALIFICATION_SET1, ALL_TAMIL_QUESTIONS, TAMIL_QUALIFICATION_QUESTIONS, matchAuthoredTamilQuestion } from "@/features/voice/lib/qualificationScript";
+import {
+  isQualificationSupportedLanguage,
+  getQualificationSet1,
+  getAllQualificationQuestions,
+  getQualificationQuestions,
+  matchAuthoredQuestion,
+  type QualificationLanguage,
+} from "@/features/voice/lib/qualificationScript";
 
 interface AppointmentModalProps {
   open: boolean;
@@ -306,33 +313,40 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                     is their REAL transcript only; nothing is ever invented. */}
                 {(() => {
                   const msgs = voice.messages ?? [];
+                  // The closed-ended flow is authored for Tamil and English
+                  // — every other language keeps the general conversation
+                  // (currentQuestion stays null, falling back below to the
+                  // raw transcript, exactly as before this was generalized).
+                  const qualLang: QualificationLanguage | null = isQualificationSupportedLanguage(voice.language) ? voice.language : null;
                   // CURRENT question: the last assistant utterance that
                   // matches an authored question — displayed in the exact
                   // AUTHORED wording, never an ASR paraphrase. Seeded with
                   // Q1 (it IS the call's opening line). Falls forward to the
                   // next expected question when the server's answer records
                   // are ahead of the transcript events.
-                  let currentQuestion: string | null = voice.language === "ta" ? TAMIL_QUALIFICATION_SET1[0] : null;
-                  if (voice.language === "ta") {
+                  let currentQuestion: string | null = qualLang ? getQualificationSet1(qualLang)[0] : null;
+                  if (qualLang) {
+                    const allQuestions = getAllQualificationQuestions(qualLang);
+                    const questionList = getQualificationQuestions(qualLang);
                     for (let i = msgs.length - 1; i >= 0; i--) {
                       if (msgs[i].role !== "assistant") continue;
-                      const matched = matchAuthoredTamilQuestion(msgs[i].content);
+                      const matched = matchAuthoredQuestion(qualLang, msgs[i].content);
                       if (matched) {
                         currentQuestion = matched;
                         break;
                       }
                     }
                     const maxAnswered = qualAnswers.reduce((m, a) => Math.max(m, a.n), 0);
-                    const currentNum = currentQuestion ? ALL_TAMIL_QUESTIONS.indexOf(currentQuestion) + 1 : 0;
+                    const currentNum = currentQuestion ? allQuestions.indexOf(currentQuestion) + 1 : 0;
                     if (maxAnswered > 0 && currentNum > 0) {
-                      const currentAuthored = TAMIL_QUALIFICATION_QUESTIONS.find((q) => q.question === currentQuestion);
+                      const currentAuthored = questionList.find((q) => q.question === currentQuestion);
                       if (currentAuthored && currentAuthored.number <= maxAnswered) {
-                        const next = TAMIL_QUALIFICATION_QUESTIONS.find((q) => q.number > maxAnswered);
+                        const next = questionList.find((q) => q.number > maxAnswered);
                         if (next) currentQuestion = next.question;
                       }
                     }
                   }
-                  const qNum = currentQuestion ? TAMIL_QUALIFICATION_QUESTIONS.find((q) => q.question === currentQuestion)?.number ?? 0 : 0;
+                  const qNum = currentQuestion && qualLang ? getQualificationQuestions(qualLang).find((q) => q.question === currentQuestion)?.number ?? 0 : 0;
                   const latestAssistant = [...msgs].reverse().find((m) => m.role === "assistant");
                   const aiLine = currentQuestion ?? latestAssistant?.content ?? null;
                   return (
@@ -356,11 +370,11 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                           </p>
                           <div className="space-y-2 max-h-36 overflow-y-auto pr-1" data-testid="qual-history">
                             {qualAnswers.map((ans) => {
-                              const authored = TAMIL_QUALIFICATION_QUESTIONS.find((q) => q.number === ans.n);
+                              const authored = qualLang ? getQualificationQuestions(qualLang).find((q) => q.number === ans.n) : undefined;
                               return (
                                 <div key={ans.n} className="border-l-2 border-white/[0.08] pl-2.5">
                                   {authored && (
-                                    <p className="text-[11px] text-slate-400 leading-snug" lang="ta">
+                                    <p className="text-[11px] text-slate-400 leading-snug" lang={qualLang ?? undefined}>
                                       {authored.question}
                                     </p>
                                   )}
@@ -389,7 +403,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                       {aiLine && (
                         <div>
                           <p className="text-[10px] uppercase tracking-wider text-sky-400 font-semibold mb-1">{t("transcript.aiTwin")}</p>
-                          <p className="text-sm text-slate-100 leading-relaxed" data-testid="current-question" lang={voice.language === "ta" ? "ta" : undefined}>
+                          <p className="text-sm text-slate-100 leading-relaxed" data-testid="current-question" lang={qualLang ?? undefined}>
                             {aiLine}
                           </p>
                         </div>

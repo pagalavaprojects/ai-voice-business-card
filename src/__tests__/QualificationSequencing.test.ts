@@ -9,7 +9,14 @@
  */
 import { ToolRegistry } from "@/core/application/tools/ToolRegistry";
 import { LeadTemperature } from "@/core/domain/models/types";
-import { getAuthoredQuestion, TAMIL_ANSWER_GUIDANCE, TAMIL_QUALIFICATION_QUESTIONS, withAnswerGuidance } from "@/features/voice/lib/qualificationScript";
+import {
+  getAuthoredQuestion,
+  TAMIL_ANSWER_GUIDANCE,
+  TAMIL_QUALIFICATION_QUESTIONS,
+  withAnswerGuidance,
+  getAuthoredEnglishQuestion,
+  ENGLISH_ANSWER_GUIDANCE,
+} from "@/features/voice/lib/qualificationScript";
 
 function build(temperature: LeadTemperature | null, notes = "") {
   const lead = temperature !== null || notes ? { id: "l1", lead_temperature: temperature, qualification_notes: notes } : null;
@@ -60,7 +67,10 @@ function buildLive() {
 
 const TA = { companyId: "c1", employeeId: "e1", language: "ta" as const };
 const TA_LIVE = { companyId: "c1", employeeId: "e1", language: "ta" as const, conversationId: "conv-1" };
+const EN = { companyId: "c1", employeeId: "e1", language: "en" as const };
+const EN_LIVE = { companyId: "c1", employeeId: "e1", language: "en" as const, conversationId: "conv-en-1" };
 const q = (n: number) => getAuthoredQuestion(n)!.question;
+const qEn = (n: number) => getAuthoredEnglishQuestion(n)!.question;
 
 describe("get_next_qualification_question (closed-ended revision)", () => {
   it("walks Set 1 in exact authored order (0→Q1 … 6→Q7), speaking question+guidance", async () => {
@@ -168,10 +178,18 @@ describe("get_next_qualification_question (closed-ended revision)", () => {
     expect(res).toMatchObject({ action: "ask_verbatim", question_number: 8 });
   });
 
-  it("non-Tamil sessions get the freeform action", async () => {
+  it("sessions in a language the closed-ended flow was never authored for get the freeform action", async () => {
+    const { tool } = build(LeadTemperature.HOT);
+    for (const language of ["hi", "te", "ml", "kn"]) {
+      const res = (await tool.execute({ last_answered_question: 0 }, { ...TA, language })) as { action: string };
+      expect(res.action).toBe("freeform");
+    }
+  });
+
+  it("English sessions get the real closed-ended flow too, not freeform", async () => {
     const { tool } = build(LeadTemperature.HOT);
     const res = (await tool.execute({ last_answered_question: 0 }, { ...TA, language: "en" })) as { action: string };
-    expect(res.action).toBe("freeform");
+    expect(res.action).toBe("ask_verbatim");
   });
 
   it("rejects out-of-range/non-integer inputs", async () => {
@@ -254,5 +272,99 @@ describe("get_next_qualification_question — lead resolution WITHOUT a model-su
       const [lead] = leads.values();
       expect(lead.qualification_notes).toContain(`Q1 [${cls}]`);
     });
+  });
+});
+
+/**
+ * The English counterpart — same server-owned sequencing tool, same
+ * branching rules, exercised in English exactly as the Tamil suite above
+ * exercises it in Tamil. Proves the closed-ended flow genuinely works for
+ * English sessions, not just that the code compiles for them.
+ */
+describe("get_next_qualification_question — English closed-ended flow", () => {
+  it("walks Set 1 in exact authored order (0→Q1 … 6→Q7), speaking question+guidance in English", async () => {
+    const { tool } = build(null);
+    for (let last = 0; last <= 6; last++) {
+      const res = await tool.execute({ last_answered_question: last, user_response: "yes", lead_id: "l1" }, EN);
+      expect(res).toMatchObject({
+        action: "ask_verbatim",
+        question_number: last + 1,
+        question: qEn(last + 1),
+        speak: withAnswerGuidance(qEn(last + 1), ENGLISH_ANSWER_GUIDANCE),
+      });
+    }
+  });
+
+  it.each([
+    ["yes", "YES"],
+    ["no", "NO"],
+    ["maybe", "MAYBE"],
+  ])('"%s" is classified %s, persisted, and Q2 becomes the next question — no lead_id ever supplied by the model (English)', async (reply, cls) => {
+    const { tool, leads } = buildLive();
+    const res = (await tool.execute({ last_answered_question: 1, user_response: reply }, EN_LIVE)) as Record<string, unknown>;
+
+    expect(res.action).toBe("ask_verbatim");
+    expect(res.question_number).toBe(2);
+    expect(res.question).toBe(qEn(2));
+    expect(res.speak).toBe(withAnswerGuidance(qEn(2), ENGLISH_ANSWER_GUIDANCE));
+
+    const [lead] = leads.values();
+    expect(lead.qualification_notes).toContain(`Q1 [${cls}]`);
+  });
+
+  it("an invalid English reply reprompts with the English guidance, stays on the SAME question, and stores NOTHING", async () => {
+    const { tool, crmRepo } = build(LeadTemperature.HOT);
+    for (const invalid of ["yes we have a problem", "sure", "I don't know", "maybe later", ""]) {
+      const res = (await tool.execute({ last_answered_question: 3, user_response: invalid, lead_id: "l1" }, EN)) as Record<string, unknown>;
+      expect(res.action).toBe("reprompt");
+      expect(res.question_number).toBe(3);
+      expect(res.speak).toBe(ENGLISH_ANSWER_GUIDANCE);
+    }
+    expect(crmRepo.updateLeadQualification).not.toHaveBeenCalled();
+  });
+
+  it("Q10 = no skips the conditional Q11 → Q12 (English)", async () => {
+    const { tool } = build(LeadTemperature.HOT);
+    const res = await tool.execute({ last_answered_question: 10, user_response: "no", lead_id: "l1" }, EN);
+    expect(res).toMatchObject({ action: "ask_verbatim", question_number: 12, question: qEn(12) });
+  });
+
+  it.each(["yes", "maybe"])("Q10 = %s asks the conditional Q11 (English)", async (reply) => {
+    const { tool } = build(LeadTemperature.HOT);
+    const res = await tool.execute({ last_answered_question: 10, user_response: reply, lead_id: "l1" }, EN);
+    expect(res).toMatchObject({ action: "ask_verbatim", question_number: 11, question: qEn(11) });
+  });
+
+  it("Q13 is never asked in English either: Q12 → Q14", async () => {
+    const { tool } = build(LeadTemperature.HOT);
+    const res = await tool.execute({ last_answered_question: 12, user_response: "yes", lead_id: "l1" }, EN);
+    expect(res).toMatchObject({ action: "ask_verbatim", question_number: 14, question: qEn(14) });
+  });
+
+  it("COLD after Q7 → Q16 in English too — skips Q8-Q15, still gets calendar consent", async () => {
+    const { tool } = build(LeadTemperature.COLD);
+    const res = (await tool.execute({ last_answered_question: 7, user_response: "no", lead_id: "l1" }, EN)) as Record<string, unknown>;
+    expect(res).toMatchObject({ action: "ask_verbatim", question_number: 16, question: qEn(16) });
+    expect(String(res.note)).toContain("still be able to book");
+  });
+
+  it("Q17 → complete_proceed_to_booking (English)", async () => {
+    const { tool } = build(LeadTemperature.WARM);
+    const done = (await tool.execute({ last_answered_question: 17, user_response: "yes", lead_id: "l1" }, EN)) as { action: string };
+    expect(done.action).toBe("complete_proceed_to_booking");
+  });
+
+  it("no full English walk can ever produce question 13", async () => {
+    const { tool } = build(LeadTemperature.HOT);
+    const seen: number[] = [];
+    let last = 0;
+    for (let guard = 0; guard < 20; guard++) {
+      const res = (await tool.execute({ last_answered_question: last, user_response: "yes", lead_id: "l1" }, EN)) as Record<string, unknown>;
+      if (res.action !== "ask_verbatim") break;
+      seen.push(res.question_number as number);
+      last = res.question_number as number;
+    }
+    expect(seen).not.toContain(13);
+    expect(seen).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 15, 16, 17]);
   });
 });

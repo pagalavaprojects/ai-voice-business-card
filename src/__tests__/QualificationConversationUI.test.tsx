@@ -8,7 +8,13 @@
  */
 import { render, screen, fireEvent, act } from "@testing-library/react";
 import { AppointmentModal } from "@/features/voice/components/AppointmentModal";
-import { TAMIL_QUALIFICATION_SET1, ALL_TAMIL_QUESTIONS, matchAuthoredTamilQuestion } from "@/features/voice/lib/qualificationScript";
+import {
+  TAMIL_QUALIFICATION_SET1,
+  ALL_TAMIL_QUESTIONS,
+  matchAuthoredTamilQuestion,
+  ENGLISH_QUALIFICATION_SET1,
+  ALL_ENGLISH_QUESTIONS,
+} from "@/features/voice/lib/qualificationScript";
 
 const t = (key: string, vars?: Record<string, string>) => (vars?.n ? `${key}:${vars.n}` : key);
 const baseProps = {
@@ -22,8 +28,8 @@ const baseProps = {
   t,
 };
 
-function voiceWith(messages: Array<{ role: "assistant" | "user"; content: string }>, voiceState = "listening") {
-  return { voiceState, callId: "call-1", startCall: jest.fn(), endCall: jest.fn(), messages, language: "ta" };
+function voiceWith(messages: Array<{ role: "assistant" | "user"; content: string }>, voiceState = "listening", language: "ta" | "en" = "ta") {
+  return { voiceState, callId: "call-1", startCall: jest.fn(), endCall: jest.fn(), messages, language };
 }
 
 function startQualification() {
@@ -237,5 +243,114 @@ describe("matchAuthoredTamilQuestion", () => {
     expect(matchAuthoredTamilQuestion("நன்றி, அது நல்ல பதில்.")).toBeNull();
     expect(matchAuthoredTamilQuestion("ஆம், இல்லை அல்லது இருந்தாலும் என பதிலளிக்கவும்.")).toBeNull();
     expect(matchAuthoredTamilQuestion("")).toBeNull();
+  });
+});
+
+/**
+ * The English counterpart to the Tamil UI suite above — same component,
+ * same testids, same behavior, proving the closed-ended flow genuinely
+ * works for English sessions at the UI layer too, not just server-side.
+ */
+describe("qualification conversation UI — English", () => {
+  const enProps = { ...baseProps, language: "en" as const };
+
+  it("shows the English Q1 (exact authored wording) immediately, before any transcript", () => {
+    render(<AppointmentModal {...enProps} voice={voiceWith([], "listening", "en")} />);
+    startQualification();
+    expect(screen.getByTestId("current-question").textContent).toContain("Does your business have a specific problem that needs solving?");
+    expect(screen.queryByTestId("qual-transcript-heading")).toBeNull();
+  });
+
+  it("advances the displayed question when the assistant transcript matches the next authored English question", () => {
+    render(
+      <AppointmentModal
+        {...enProps}
+        voice={voiceWith(
+          [
+            { role: "assistant", content: ENGLISH_QUALIFICATION_SET1[0] },
+            { role: "user", content: "Yeah, we have a lead-gen problem" },
+            { role: "assistant", content: "  Has this problem been going on for more than 3 months?  " },
+          ],
+          "listening",
+          "en"
+        )}
+      />
+    );
+    startQualification();
+    expect(screen.getByTestId("current-question").textContent).toContain(ENGLISH_QUALIFICATION_SET1[1]);
+    expect(screen.getByTestId("qual-progress").textContent).toContain("appointment.progressSet1:2");
+  });
+
+  it("an invalid English answer keeps Q1 active: the server's reprompt never advances the question area", () => {
+    render(
+      <AppointmentModal
+        {...enProps}
+        voice={voiceWith(
+          [
+            { role: "assistant", content: ENGLISH_QUALIFICATION_SET1[0] },
+            { role: "user", content: "yes we have a problem" }, // invalid — a sentence, not the closed word
+            { role: "assistant", content: "Please answer with Yes, No, or Maybe." }, // reprompt: guidance only
+          ],
+          "listening",
+          "en"
+        )}
+      />
+    );
+    startQualification();
+    expect(screen.getByTestId("current-question").textContent).toContain(ENGLISH_QUALIFICATION_SET1[0]);
+    expect(screen.getByTestId("qual-progress").textContent).toContain("appointment.progressSet1:1");
+    expect(screen.queryByTestId("qual-transcript-heading")).toBeNull();
+  });
+
+  it("NEVER renders raw free-text visitor speech as the transcript — English-only-classification rule applies to English sessions too", () => {
+    render(
+      <AppointmentModal
+        {...enProps}
+        voice={voiceWith(
+          [
+            { role: "assistant", content: ENGLISH_QUALIFICATION_SET1[0] },
+            { role: "user", content: "Yeah, we definitely have a lead follow-up problem" },
+          ],
+          "listening",
+          "en"
+        )}
+      />
+    );
+    startQualification();
+    const panel = screen.getByTestId("qualification-conversation");
+    expect(panel.textContent).not.toContain("Yeah, we definitely have a lead follow-up problem");
+    expect(screen.queryByTestId("qual-history")).toBeNull();
+  });
+
+  it("renders server-recorded English answers as classification-only records, and falls forward to the next question", async () => {
+    jest.useFakeTimers();
+    mockStatus({
+      qualified: false,
+      temperature: null,
+      answers: [
+        { n: 1, c: "YES", a: "Yes" },
+        { n: 2, c: "MAYBE", a: "Maybe" },
+      ],
+    });
+    render(<AppointmentModal {...enProps} voice={voiceWith([{ role: "assistant", content: ENGLISH_QUALIFICATION_SET1[0] }], "listening", "en")} />);
+    startQualification();
+    await act(async () => {
+      jest.advanceTimersByTime(3100);
+      await Promise.resolve();
+    });
+
+    expect(screen.getByTestId("qual-transcript-heading")).toBeTruthy();
+    const line1 = screen.getByTestId("answer-1").textContent ?? "";
+    expect(line1).toContain("User:");
+    expect(line1).toContain("YES");
+    expect(screen.getByTestId("answer-2").textContent).toContain("MAYBE");
+    expect(screen.getByTestId("current-question").textContent).toContain(ENGLISH_QUALIFICATION_SET1[2]);
+    expect(screen.getByTestId("qual-progress").textContent).toContain("appointment.progressSet1:3");
+  });
+
+  it("shows Set-2 progress once an English conversion question is active", () => {
+    render(<AppointmentModal {...enProps} voice={voiceWith([{ role: "assistant", content: ALL_ENGLISH_QUESTIONS[7] }], "listening", "en")} />);
+    startQualification();
+    expect(screen.getByTestId("qual-progress").textContent).toContain("appointment.progressSet2:8");
   });
 });

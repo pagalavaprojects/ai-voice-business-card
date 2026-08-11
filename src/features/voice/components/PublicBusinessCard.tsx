@@ -12,7 +12,7 @@ import { Dialog } from "@/shared/ui/dialog";
 import { downloadVCard, imageUrlToDataUri } from "@/features/voice/lib/vcard";
 import { speakPitchWithBrowserTts, stopBrowserTts, pauseBrowserTts, resumeBrowserTts } from "@/features/voice/lib/pitchFallback";
 import { DEMO_COMPANY_ID } from "@/shared/lib/demoCard";
-import { TAMIL_QUALIFICATION_CALL_OPENING, getTamilQualificationDirective } from "@/features/voice/lib/qualificationScript";
+import { isQualificationSupportedLanguage, getQualificationCallOpening, getQualificationDirective } from "@/features/voice/lib/qualificationScript";
 import { useLanguage } from "@/features/language/hooks/useLanguage";
 import { LanguageSelector } from "@/features/language/components/LanguageSelector";
 import { LanguageGate } from "@/features/language/components/LanguageGate";
@@ -945,18 +945,19 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
           voiceState,
           callId,
           // The qualification call opens with Q1 + the closed-answer
-          // guidance (Tamil sessions) — never the founder pitch, which
-          // belongs to the card/pitch experience — AND carries its own
-          // systemPrompt with the closed-ended questionnaire directive
+          // guidance (Tamil and English sessions — the two languages this
+          // closed-ended flow is authored for) — never the founder pitch,
+          // which belongs to the card/pitch experience — AND carries its
+          // own systemPrompt with the closed-ended questionnaire directive
           // appended. That directive is scoped to ONLY this call: the base
           // card.systemPrompt (used by the plain mic button below,
-          // unaffected here) never includes it, so a general Tamil
-          // conversation is never told "this is a strict closed-ended
-          // questionnaire." Other languages keep their normal greeting.
+          // unaffected here) never includes it, so a general conversation
+          // is never told "this is a strict closed-ended questionnaire."
+          // Every other language keeps its normal greeting.
           startCall: () =>
             startCall(
-              language === "ta"
-                ? { firstMessage: TAMIL_QUALIFICATION_CALL_OPENING, systemPrompt: (card.systemPrompt ?? "") + getTamilQualificationDirective() }
+              isQualificationSupportedLanguage(language)
+                ? { firstMessage: getQualificationCallOpening(language), systemPrompt: (card.systemPrompt ?? "") + getQualificationDirective(language) }
                 : undefined
             ),
           endCall,

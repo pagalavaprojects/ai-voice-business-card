@@ -91,9 +91,11 @@ export const TAMIL_QUALIFICATION_SET2: readonly string[] = TAMIL_QUALIFICATION_Q
 export const TAMIL_ANSWER_GUIDANCE = "ஆம், இல்லை அல்லது இருந்தாலும் என பதிலளிக்கவும்.";
 
 /** A question as actually spoken: the authored text followed by the
- * closed-answer guidance. */
-export function withAnswerGuidance(question: string): string {
-  return `${question}\n\n${TAMIL_ANSWER_GUIDANCE}`;
+ * closed-answer guidance. Defaults to the Tamil guidance for every
+ * existing (Tamil-only) call site; English (and any future language)
+ * call sites pass their own guidance explicitly. */
+export function withAnswerGuidance(question: string, guidance: string = TAMIL_ANSWER_GUIDANCE): string {
+  return `${question}\n\n${guidance}`;
 }
 
 /**
@@ -106,6 +108,79 @@ export function withAnswerGuidance(question: string): string {
  * Q1's answer).
  */
 export const TAMIL_QUALIFICATION_CALL_OPENING = withAnswerGuidance(TAMIL_QUALIFICATION_SET1[0]);
+
+/**
+ * The SAME questionnaire, authored in English — same 16 numbers (1-12,
+ * 14-17, no 13), same branching meaning per question, faithful in meaning
+ * to the Tamil originals above (which remain the source of truth for that
+ * language). Added so the closed-ended flow also works for English
+ * sessions, per the product owner's explicit request — the Tamil
+ * questions/functions above are untouched.
+ */
+export const ENGLISH_QUALIFICATION_QUESTIONS: readonly AuthoredQuestion[] = [
+  { number: 1, question: "Does your business have a specific problem that needs solving?" },
+  { number: 2, question: "Has this problem been going on for more than 3 months?" },
+  { number: 3, question: "Have you tried any other solution before this?" },
+  { number: 4, question: "Can you make this decision on your own?" },
+  { number: 5, question: "Is the amount you have in mind within our price range?" },
+  { number: 6, question: "Are you planning to start this within this month?" },
+  { number: 7, question: "Is this something you need right now?" },
+  { number: 8, question: "Do you think this solution would be useful for your business?" },
+  { number: 9, question: "Is quality and speed more important to you than price?" },
+  { number: 10, question: "Is there any reason holding you back from moving forward?" },
+  { number: 11, question: "Is that related to price?" },
+  { number: 12, question: "Are you ready to decide today?" },
+  // Q13 is INTENTIONALLY ABSENT — same gap as the Tamil questionnaire.
+  { number: 14, question: "Did this come through a referral?" },
+  { number: 15, question: "Would you like to be connected with customers in your area?" },
+  { number: 16, question: "Now, to move this forward, shall I show you our calendar so you can book a time that suits you?" },
+  { number: 17, question: "Shall we go ahead with that?" },
+] as const;
+
+export function getAuthoredEnglishQuestion(number: number): AuthoredQuestion | null {
+  return ENGLISH_QUALIFICATION_QUESTIONS.find((q) => q.number === number) ?? null;
+}
+
+export const ENGLISH_QUALIFICATION_SET1: readonly string[] = ENGLISH_QUALIFICATION_QUESTIONS.filter((q) => q.number <= 7).map((q) => q.question);
+export const ENGLISH_QUALIFICATION_SET2: readonly string[] = ENGLISH_QUALIFICATION_QUESTIONS.filter((q) => q.number >= 8).map((q) => q.question);
+export const ALL_ENGLISH_QUESTIONS: readonly string[] = ENGLISH_QUALIFICATION_QUESTIONS.map((q) => q.question);
+
+/** The English closed-answer guidance — same role as TAMIL_ANSWER_GUIDANCE. */
+export const ENGLISH_ANSWER_GUIDANCE = "Please answer with Yes, No, or Maybe.";
+
+export const ENGLISH_QUALIFICATION_CALL_OPENING = withAnswerGuidance(ENGLISH_QUALIFICATION_SET1[0], ENGLISH_ANSWER_GUIDANCE);
+
+/** The languages the closed-ended qualification flow supports. Every other
+ * language keeps the general, open-ended "Talk with AI" experience. */
+export type QualificationLanguage = "ta" | "en";
+
+export function isQualificationSupportedLanguage(language: string | undefined): language is QualificationLanguage {
+  return language === "ta" || language === "en";
+}
+
+export function getQualificationCallOpening(language: QualificationLanguage): string {
+  return language === "ta" ? TAMIL_QUALIFICATION_CALL_OPENING : ENGLISH_QUALIFICATION_CALL_OPENING;
+}
+
+export function getQualificationQuestions(language: QualificationLanguage): readonly AuthoredQuestion[] {
+  return language === "ta" ? TAMIL_QUALIFICATION_QUESTIONS : ENGLISH_QUALIFICATION_QUESTIONS;
+}
+
+export function getQualificationSet1(language: QualificationLanguage): readonly string[] {
+  return language === "ta" ? TAMIL_QUALIFICATION_SET1 : ENGLISH_QUALIFICATION_SET1;
+}
+
+export function getAllQualificationQuestions(language: QualificationLanguage): readonly string[] {
+  return language === "ta" ? ALL_TAMIL_QUESTIONS : ALL_ENGLISH_QUESTIONS;
+}
+
+export function getQualificationGuidance(language: QualificationLanguage): string {
+  return language === "ta" ? TAMIL_ANSWER_GUIDANCE : ENGLISH_ANSWER_GUIDANCE;
+}
+
+export function getAuthoredQuestionFor(language: QualificationLanguage, number: number): AuthoredQuestion | null {
+  return language === "ta" ? getAuthoredQuestion(number) : getAuthoredEnglishQuestion(number);
+}
 
 /**
  * Strict closed-ended classification of the visitor's RAW Tamil response.
@@ -136,14 +211,45 @@ const CLOSED_ANSWER_TOKENS: Record<string, "YES" | "NO" | "MAYBE"> = {
 };
 
 export function classifyClosedTamilResponse(raw: string): "YES" | "NO" | "MAYBE" | null {
-  const tokens = raw
+  return classifyClosedResponseWithTokens(raw, CLOSED_ANSWER_TOKENS, false);
+}
+
+/**
+ * The English counterpart to CLOSED_ANSWER_TOKENS/classifyClosedTamilResponse
+ * — same strict rule: the answer must BE one of these words (or a repeat of
+ * the same word), never a sentence that merely contains one ("yes we have a
+ * problem" is rejected, exactly like the Tamil "ஆம், இருக்கிறது" case).
+ * Case-insensitive (English STT casing is inconsistent; Tamil script has no
+ * case, so the Tamil map above never needed this).
+ */
+const CLOSED_ANSWER_TOKENS_EN: Record<string, "YES" | "NO" | "MAYBE"> = {
+  yes: "YES",
+  yeah: "YES",
+  yep: "YES",
+  yup: "YES",
+  no: "NO",
+  nope: "NO",
+  nah: "NO",
+  maybe: "MAYBE",
+};
+
+export function classifyClosedEnglishResponse(raw: string): "YES" | "NO" | "MAYBE" | null {
+  return classifyClosedResponseWithTokens(raw, CLOSED_ANSWER_TOKENS_EN, true);
+}
+
+export function classifyClosedResponse(language: QualificationLanguage, raw: string): "YES" | "NO" | "MAYBE" | null {
+  return language === "ta" ? classifyClosedTamilResponse(raw) : classifyClosedEnglishResponse(raw);
+}
+
+function classifyClosedResponseWithTokens(raw: string, tokenMap: Record<string, "YES" | "NO" | "MAYBE">, lowercase: boolean): "YES" | "NO" | "MAYBE" | null {
+  const tokens = (lowercase ? raw.toLowerCase() : raw)
     .replace(/[?？.!,;:"'“”‘’()\-]/g, " ")
     .split(/\s+/)
     .filter(Boolean);
   if (tokens.length === 0) return null;
   let result: "YES" | "NO" | "MAYBE" | null = null;
   for (const token of tokens) {
-    const cls = CLOSED_ANSWER_TOKENS[token];
+    const cls = tokenMap[token];
     // Any non-permitted token — or a mix of classes — invalidates the
     // whole utterance: closed-ended means the answer IS the word.
     if (!cls || (result !== null && cls !== result)) return null;
@@ -168,11 +274,26 @@ const normalize = (s: string) => s.replace(/[?？.!,]/g, "").replace(/\s+/g, " "
  * authored questions.
  */
 export function matchAuthoredTamilQuestion(transcript: string): string | null {
-  const guidance = normalize(TAMIL_ANSWER_GUIDANCE);
-  const t = normalize(transcript).split(guidance).join(" ").replace(/\s+/g, " ").trim();
+  return matchAuthoredQuestionAgainst(transcript, ALL_TAMIL_QUESTIONS, TAMIL_ANSWER_GUIDANCE, false);
+}
+
+/** The English counterpart — same tolerant matching, case-insensitive
+ * (English STT casing is inconsistent; Tamil script has no case). */
+export function matchAuthoredEnglishQuestion(transcript: string): string | null {
+  return matchAuthoredQuestionAgainst(transcript, ALL_ENGLISH_QUESTIONS, ENGLISH_ANSWER_GUIDANCE, true);
+}
+
+export function matchAuthoredQuestion(language: QualificationLanguage, transcript: string): string | null {
+  return language === "ta" ? matchAuthoredTamilQuestion(transcript) : matchAuthoredEnglishQuestion(transcript);
+}
+
+function matchAuthoredQuestionAgainst(transcript: string, questions: readonly string[], guidanceText: string, lowercase: boolean): string | null {
+  const norm = (s: string) => normalize(lowercase ? s.toLowerCase() : s);
+  const guidance = norm(guidanceText);
+  const t = norm(transcript).split(guidance).join(" ").replace(/\s+/g, " ").trim();
   if (!t) return null;
-  for (const q of ALL_TAMIL_QUESTIONS) {
-    const nq = normalize(q);
+  for (const q of questions) {
+    const nq = norm(q);
     if (t.includes(nq) || nq.includes(t)) return q;
   }
   return null;
@@ -187,17 +308,51 @@ export function matchAuthoredTamilQuestion(transcript: string): string | null {
  * contract with that tool.
  */
 export function getTamilQualificationDirective(): string {
-  const numbered = TAMIL_QUALIFICATION_QUESTIONS.map((q) => `${q.number}. ${q.question}`).join("\n");
+  return buildQualificationDirective({
+    scriptLabel: "TAMIL",
+    questions: TAMIL_QUALIFICATION_QUESTIONS,
+    guidance: TAMIL_ANSWER_GUIDANCE,
+    answerWordsClause: "ஆம் (yes), இல்லை (no) or இருந்தாலும் (maybe)",
+    spokenLanguageClause: "in Tamil",
+  });
+}
+
+/** The English counterpart — same contract with get_next_qualification_question,
+ * same structural rules (Q13 gap, server-owned sequencing, reprompt loop),
+ * only the embedded questions/guidance and the answer-words clause change. */
+export function getEnglishQualificationDirective(): string {
+  return buildQualificationDirective({
+    scriptLabel: "ENGLISH",
+    questions: ENGLISH_QUALIFICATION_QUESTIONS,
+    guidance: ENGLISH_ANSWER_GUIDANCE,
+    answerWordsClause: "Yes, No, or Maybe",
+    spokenLanguageClause: "in English",
+  });
+}
+
+export function getQualificationDirective(language: QualificationLanguage): string {
+  return language === "ta" ? getTamilQualificationDirective() : getEnglishQualificationDirective();
+}
+
+function buildQualificationDirective(opts: {
+  scriptLabel: string;
+  questions: readonly AuthoredQuestion[];
+  guidance: string;
+  answerWordsClause: string;
+  spokenLanguageClause: string;
+}): string {
+  const { scriptLabel, questions, guidance, answerWordsClause, spokenLanguageClause } = opts;
+  const numbered = questions.map((q) => `${q.number}. ${q.question}`).join("\n");
   return (
     `
 
-=== TAMIL QUALIFICATION SCRIPT (booking flow) ===
+=== ${scriptLabel} QUALIFICATION SCRIPT (booking flow) ===
 ` +
     `This is a STRICT CLOSED-ENDED questionnaire, not a conversation. Ask ONLY the authored questions below, one ` +
     `at a time, EXACTLY as written — never translate, paraphrase, shorten, reword or renumber them, and never ` +
     `invent a question. There is deliberately no question 13 — never ask one. ` +
-    `After EVERY question you must say exactly: "${TAMIL_ANSWER_GUIDANCE}" — the visitor may only answer ` +
-    `ஆம் (yes), இல்லை (no) or இருந்தாலும் (maybe). Never ask for explanations or open-ended answers. ` +
+    `After EVERY question you must say exactly: "${guidance}" — the visitor may only answer ` +
+    `${answerWordsClause}. Never ask for explanations or open-ended answers. ` +
     `The call's opening ALREADY asked question 1 plus that guidance — do NOT repeat it and do NOT add any ` +
     `greeting or preamble; the visitor's first reply is the answer to question 1. Never replay the founder pitch ` +
     `or any elevator/product/USP content during qualification.
@@ -206,9 +361,9 @@ export function getTamilQualificationDirective(): string {
     `AFTER EVERY VISITOR REPLY you MUST:
 ` +
     `1. Call get_next_qualification_question with: last_answered_question (the number of the question they just ` +
-    `replied to) and user_response (the visitor's words EXACTLY as you heard them, in Tamil — never cleaned up, ` +
-    `never translated, never invented). You do NOT need a lead_id — the server resolves the lead for this call on ` +
-    `its own; do not wait to call save_lead first.
+    `replied to) and user_response (the visitor's words EXACTLY as you heard them, ${spokenLanguageClause} — never ` +
+    `cleaned up, never translated, never invented). You do NOT need a lead_id — the server resolves the lead for ` +
+    `this call on its own; do not wait to call save_lead first.
 ` +
     `2. You do NOT classify and you do NOT judge validity — the SERVER decides whether the reply is YES, NO or ` +
     `MAYBE. If the server returns action "reprompt", the answer was not valid: SPEAK the returned text verbatim ` +

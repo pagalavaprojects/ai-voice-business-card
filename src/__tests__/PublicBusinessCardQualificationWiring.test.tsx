@@ -14,7 +14,7 @@
 import "@testing-library/jest-dom";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import { PublicBusinessCard } from "@/features/voice/components/PublicBusinessCard";
-import { TAMIL_QUALIFICATION_CALL_OPENING } from "@/features/voice/lib/qualificationScript";
+import { TAMIL_QUALIFICATION_CALL_OPENING, ENGLISH_QUALIFICATION_CALL_OPENING } from "@/features/voice/lib/qualificationScript";
 
 const startCall = jest.fn();
 
@@ -34,7 +34,7 @@ jest.mock("@/features/voice/hooks/useVapiSession", () => ({
   }),
 }));
 
-function cardResponse() {
+function cardResponse(language: "ta" | "en" = "ta") {
   return {
     ok: true,
     status: 200,
@@ -42,9 +42,9 @@ function cardResponse() {
       Promise.resolve({
         company: { name: "Pagalava Data Analytics", website: "https://maylaanai.com", logoUrl: null },
         employee: { name: "Srinivasan Kandasamy", designation: "Founder", email: "s@pagalava.com", phone: "+911234567890", officeAddress: null, workingHours: null, avatarUrl: null },
-        firstMessage: "வணக்கம்.",
+        firstMessage: language === "ta" ? "வணக்கம்." : "Hello.",
         systemPrompt: "BASE_SYSTEM_PROMPT_MARKER",
-        language: "ta",
+        language,
         enabledLanguages: ["en", "ta", "hi", "kn", "te", "ml"],
         tools: [],
         serverUrl: "https://maylaanai.com/api/vapi/webhook",
@@ -105,5 +105,25 @@ describe("PublicBusinessCard — mic button vs. qualification call wiring", () =
     const micArg = startCall.mock.calls[0][0] as { firstMessage?: unknown; systemPrompt?: unknown } | undefined;
     expect(micArg?.firstMessage).toBeUndefined();
     expect(micArg?.systemPrompt).toBeUndefined();
+  });
+
+  it("English sessions: Start AI Conversation applies the English Q1 opening + directive — proving the override isn't hardcoded to Tamil", async () => {
+    window.localStorage.setItem("pagalava.language", "en");
+    global.fetch = jest.fn(() => Promise.resolve(cardResponse("en"))) as unknown as typeof fetch;
+
+    render(<PublicBusinessCard companyId="comp-1" employeeId="emp-1" />);
+    await screen.findByTestId("voice-mic-button");
+
+    fireEvent.click(screen.getByTestId("book-meeting-button"));
+    const startQualification = await screen.findByTestId("start-qualification");
+    await act(async () => {
+      fireEvent.click(startQualification);
+    });
+
+    expect(startCall).toHaveBeenCalledTimes(1);
+    const [overrides] = startCall.mock.calls[0] as [{ firstMessage: string; systemPrompt: string }];
+    expect(overrides.firstMessage).toBe(ENGLISH_QUALIFICATION_CALL_OPENING);
+    expect(overrides.systemPrompt).toContain("BASE_SYSTEM_PROMPT_MARKER");
+    expect(overrides.systemPrompt).toContain("STRICT CLOSED-ENDED questionnaire");
   });
 });

@@ -8,7 +8,13 @@ import { ISettingsRepository } from "../../domain/repositories/ISettingsReposito
 import { IKnowledgeDocumentRepository } from "../../domain/repositories/IKnowledgeDocumentRepository";
 import { OpenAIEmbeddingAdapter } from "../../infrastructure/embeddings/OpenAIEmbeddingAdapter";
 import { getWhatsAppNotifier } from "../../infrastructure/notifications/WhatsAppNotifier";
-import { classifyClosedTamilResponse, getAuthoredQuestion, TAMIL_ANSWER_GUIDANCE, withAnswerGuidance } from "@/features/voice/lib/qualificationScript";
+import {
+  classifyClosedResponse,
+  getAuthoredQuestionFor,
+  getQualificationGuidance,
+  isQualificationSupportedLanguage,
+  withAnswerGuidance,
+} from "@/features/voice/lib/qualificationScript";
 import { AppointmentStatus, LeadTemperature, NurtureStatus, LeadQualificationSignalsSchema } from "../../domain/models/types";
 import { Logger } from "@/shared/lib/logger";
 
@@ -598,11 +604,11 @@ export class ToolRegistry {
     this.register({
       name: "get_next_qualification_question",
       description:
-        "REQUIRED after every visitor reply to a qualification question. The SERVER classifies the raw Tamil reply " +
-        "as YES/NO/MAYBE (only ஆம்/இல்லை/இருந்தாலும் are valid — anything else returns a reprompt: stay on the same " +
-        "question), records accepted answers, and returns the exact next authored question to speak verbatim, or a " +
-        "routing action (COLD skips the conversion questions but still gets the calendar-consent questions; after " +
-        "the final question, proceed to booking).",
+        "REQUIRED after every visitor reply to a qualification question. The SERVER classifies the raw reply " +
+        "as YES/NO/MAYBE in the call's own language (Tamil: ஆம்/இல்லை/இருந்தாலும், English: yes/no/maybe — anything " +
+        "else returns a reprompt: stay on the same question), records accepted answers, and returns the exact " +
+        "next authored question to speak verbatim, or a routing action (COLD skips the conversion questions but " +
+        "still gets the calendar-consent questions; after the final question, proceed to booking).",
       parameters: {
         type: "object",
         properties: {
@@ -613,8 +619,8 @@ export class ToolRegistry {
           user_response: {
             type: "string",
             description:
-              "The visitor's reply EXACTLY as heard, in Tamil — never cleaned up, translated or invented. The server " +
-              "classifies it; you never do.",
+              "The visitor's reply EXACTLY as heard, in the call's own language — never cleaned up, translated or " +
+              "invented. The server classifies it; you never do.",
           },
           lead_id: {
             type: "string",
@@ -624,25 +630,29 @@ export class ToolRegistry {
         required: ["last_answered_question"],
       },
       execute: async (args, context) => {
-        if (context.language !== "ta") {
+        if (!isQualificationSupportedLanguage(context.language)) {
           return { action: "freeform", message: "No authored script for this language — continue qualifying conversationally per your instructions." };
         }
+        const language = context.language;
         const last = Number(args.last_answered_question);
         if (!Number.isInteger(last) || last < 0 || last > 17 || last === 13) {
           return { action: "error", message: "last_answered_question must be an integer 0-17 (13 does not exist)." };
         }
 
-        // SERVER-side closed-ended classification of the raw Tamil reply.
-        // The model never classifies and never decides validity: anything
-        // that is not clearly ஆம்/இல்லை/இருந்தாலும் is rejected — no answer
-        // is stored, the questionnaire does not advance, and the model is
-        // told to re-speak the guidance and listen to the SAME question.
-        const classification = last > 0 ? classifyClosedTamilResponse(String(args.user_response ?? "")) : null;
+        const guidance = getQualificationGuidance(language);
+
+        // SERVER-side closed-ended classification of the raw reply, in the
+        // call's own language. The model never classifies and never decides
+        // validity: anything that is not clearly one of the three accepted
+        // words is rejected — no answer is stored, the questionnaire does
+        // not advance, and the model is told to re-speak the guidance and
+        // listen to the SAME question.
+        const classification = last > 0 ? classifyClosedResponse(language, String(args.user_response ?? "")) : null;
         if (last > 0 && classification === null) {
           return {
             action: "reprompt",
             question_number: last,
-            speak: TAMIL_ANSWER_GUIDANCE,
+            speak: guidance,
             message:
               "The reply could not be classified as YES/NO/MAYBE — nothing was stored. Speak the guidance verbatim, " +
               "stay on the SAME question, and listen again. Do NOT advance.",
@@ -704,9 +714,9 @@ export class ToolRegistry {
         }
 
         const ask = (n: number) => {
-          const q = getAuthoredQuestion(n);
+          const q = getAuthoredQuestionFor(language, n);
           return q
-            ? { action: "ask_verbatim", question_number: q.number, question: q.question, speak: withAnswerGuidance(q.question) }
+            ? { action: "ask_verbatim", question_number: q.number, question: q.question, speak: withAnswerGuidance(q.question, guidance) }
             : { action: "error", message: `No authored question ${n}.` };
         };
 
@@ -726,12 +736,12 @@ export class ToolRegistry {
             }
           }
           if (temperature === LeadTemperature.COLD) {
-            const q16 = getAuthoredQuestion(16)!;
+            const q16 = getAuthoredQuestionFor(language, 16)!;
             return {
               action: "ask_verbatim",
               question_number: 16,
               question: q16.question,
-              speak: withAnswerGuidance(q16.question),
+              speak: withAnswerGuidance(q16.question, guidance),
               note: "Lead is COLD — conversion questions 8-15 are skipped; after questions 16-17, proceed to booking. A COLD lead must always still be able to book.",
             };
           }
