@@ -54,6 +54,55 @@ export class SupabaseConversationRepository implements IConversationRepository {
     return this.createConversation(companyId, employeeId, vapiCallId, language);
   }
 
+  async getOrCreateConversationByWhatsAppSender(companyId: string, employeeId: string, waId: string, language?: string): Promise<Conversation> {
+    const { data: existing, error: lookupError } = await supabaseAdmin
+      .from("conversations")
+      .select()
+      .eq("whatsapp_wa_id", waId)
+      .maybeSingle();
+
+    if (lookupError) throw new Error(`getOrCreateConversationByWhatsAppSender failed: ${lookupError.message}`);
+    if (existing) return existing as Conversation;
+
+    // A separate insert (not createConversation, which is vapi_call_id-
+    // specific) so the voice path's insert shape is never touched by this
+    // channel's needs — channel/whatsapp_wa_id are the only new fields.
+    const { data, error } = await supabaseAdmin
+      .from("conversations")
+      .insert({
+        company_id: companyId,
+        employee_id: employeeId,
+        channel: "whatsapp",
+        whatsapp_wa_id: waId,
+        status: "ACTIVE",
+        started_at: new Date().toISOString(),
+        language: language || null,
+      })
+      .select()
+      .single();
+
+    if (error) throw new Error(`getOrCreateConversationByWhatsAppSender failed: ${error.message}`);
+    return data as Conversation;
+  }
+
+  async setWhatsAppPendingQuestion(id: string, questionNumber: number | null): Promise<Conversation> {
+    const { data, error } = await supabaseAdmin
+      .from("conversations")
+      .update({ whatsapp_pending_question: questionNumber })
+      .eq("id", id)
+      .select()
+      .single();
+
+    if (error) throw new Error(`setWhatsAppPendingQuestion failed: ${error.message}`);
+    return data as Conversation;
+  }
+
+  async setConversationLanguage(id: string, language: string): Promise<Conversation> {
+    const { data, error } = await supabaseAdmin.from("conversations").update({ language }).eq("id", id).select().single();
+    if (error) throw new Error(`setConversationLanguage failed: ${error.message}`);
+    return data as Conversation;
+  }
+
   async appendToolCalled(id: string, toolName: string): Promise<Conversation> {
     const conversation = await this.getConversationById(id);
     if (!conversation) throw new Error(`appendToolCalled failed: conversation ${id} not found`);

@@ -12,6 +12,7 @@ describe("PromptAssemblyService", () => {
       getCompanyById: jest.fn(),
       getEmployeeById: jest.fn(),
       getEmployeeBySlug: jest.fn(),
+      getEmployeeByWhatsAppPhoneNumberId: jest.fn(),
       getProductsByCompany: jest.fn(),
       getServicesByCompany: jest.fn(),
       getFAQsByCompany: jest.fn(),

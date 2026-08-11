@@ -101,6 +101,13 @@ export interface Employee extends BaseEntity {
    * reachable at its long-form /{companyId}/{employeeId} URL. */
   slug?: string | null;
   deleted_at?: string | null;
+  /** The Meta WhatsApp Business phone_number_id that RECEIVES inbound
+   * messages for this employee's qualification bot. Meta's webhook is one
+   * URL per WhatsApp Business Account with no per-tenant path, so this is
+   * the only signal on an inbound message that identifies which employee's
+   * flow should handle it. Configured from Meta's API Setup page — see
+   * WHATSAPP_ACCESS_TOKEN's own doc comment for where that lives. */
+  whatsapp_phone_number_id?: string | null;
 }
 
 export interface Product extends BaseEntity {
@@ -258,6 +265,17 @@ export interface Conversation extends BaseEntity {
   /** The visitor-chosen language this call was conducted in (e.g. "ta",
    * "en", "hi") — null for calls that predate multilingual support. */
   language?: string | null;
+  /** Which channel this conversation happened on — every conversation
+   * before WhatsApp support defaults to "voice" at the database level. */
+  channel?: "voice" | "whatsapp";
+  /** The WhatsApp sender's stable wa_id — the channel's analogue of
+   * vapi_call_id, looked up on every inbound message since one WhatsApp
+   * conversation spans many messages/days rather than one call. */
+  whatsapp_wa_id?: string | null;
+  /** The authored question number this conversation is currently waiting
+   * on an answer for. A live voice call's LLM holds this in its own
+   * context; WhatsApp's stateless webhook has nothing else to hold it. */
+  whatsapp_pending_question?: number | null;
 }
 
 export interface ConversationMessage extends BaseEntity {

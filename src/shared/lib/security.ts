@@ -66,6 +66,29 @@ export function validateCalcomWebhookSignature(rawBody: string, signatureHeader:
   return timingSafeEqual(a, b);
 }
 
+/** Meta signs every WhatsApp Cloud API webhook delivery as HMAC-SHA256 of
+ * the raw request body using the app secret, sent as `sha256=<hex>` in the
+ * `X-Hub-Signature-256` header — same shape as validateCalcomWebhookSignature
+ * above, just with the `sha256=` prefix Meta adds and Cal.com doesn't.
+ * Verified against the raw body string, never a re-serialized JSON.stringify
+ * of the parsed object (which can differ in key order/whitespace and
+ * silently fail the check). */
+export function validateWhatsAppWebhookSignature(rawBody: string, signatureHeader: string | null): boolean {
+  const secret = process.env.WHATSAPP_APP_SECRET;
+  if (isPlaceholderCredential(secret)) {
+    return process.env.NODE_ENV !== "production";
+  }
+  if (!signatureHeader) return false;
+
+  const provided = signatureHeader.startsWith("sha256=") ? signatureHeader.slice(7) : signatureHeader;
+  const expected = createHmac("sha256", secret as string).update(rawBody).digest("hex");
+
+  const a = Buffer.from(provided);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
+
 export function formatApiResponse<T>(
   data: T,
   status: number = 200,

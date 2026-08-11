@@ -8,6 +8,11 @@ export interface IKnowledgeRepository {
    * applied yet — the short-URL feature is simply unavailable pre-migration,
    * never a crash. */
   getEmployeeBySlug(slug: string): Promise<Employee | null>;
+  /** Resolves the RECEIVING phone_number_id on an inbound WhatsApp webhook
+   * to the employee whose qualification bot should handle it. Same
+   * pre-migration-safe contract as getEmployeeBySlug: null both when
+   * unconfigured for any employee and when the migration hasn't applied. */
+  getEmployeeByWhatsAppPhoneNumberId(phoneNumberId: string): Promise<Employee | null>;
   getProductsByCompany(companyId: string): Promise<Product[]>;
   getServicesByCompany(companyId: string): Promise<Service[]>;
   getFAQsByCompany(companyId: string): Promise<FAQ[]>;
