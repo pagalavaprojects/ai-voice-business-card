@@ -1236,6 +1236,34 @@ Session of 2026-08-10 (commits `063911f`, `47f2e30`, `76fc685`, `e227316`):
   arrives, so this fix's live persistence behavior is proven by
   deterministic tests but not yet observed on an actual completed
   exchange. **CODE VERIFIED, LIVE VOICE LOOP NOT VERIFIED** still stands.
+- **The actual reason no live human answer was ever possible — the AI
+  was never speaking real Tamil** (same night, found via one-shot
+  temporary diagnostic logging of Vapi's raw `conversation-update`
+  payload, reverted before commit — no code change, a **configuration
+  gap**). `resolveVoiceProviderConfig` (`src/shared/lib/voice.ts`) only
+  selects the ElevenLabs provider (the one with real Tamil phoneme
+  support, `eleven_multilingual_v2`) when the platform-wide env var
+  `VOICE_ELEVENLABS_VOICE_ID` is set; otherwise every call — for every
+  tenant, every language, not just the qualification flow — falls back
+  to OpenAI `tts-1-hd`. `vercel env ls production` confirms **no such
+  variable exists in production**. OpenAI `tts-1-hd` has no genuine
+  Tamil support: it reads the Tamil Unicode text using English-oriented
+  pronunciation. Captured live, Vapi's own transcript of the AI
+  attempting to speak Q1 ("உங்கள் வணிகத்தில் தீர்வு காண வேண்டிய
+  குறிப்பிட்ட பிரச்சினை உள்ளதா?") came back as **"Ukuvaniya
+  pidvakanndiya kudipita prachina ulada."** — unintelligible gibberish,
+  not a question any Tamil speaker could understand or answer. This
+  fully explains why 9 consecutive live test attempts across this
+  session never produced a recorded answer, independent of the mic-mute
+  fix, the persistence fix, or any network-ceiling theory: a real human
+  on the call would have heard the same gibberish. Every prior
+  "firstMessage === Q1" payload check verified the TEXT sent to Vapi,
+  never the actual pronunciation — the exact trap the very first
+  directive of this engagement warned against ("do not report PASS
+  merely because Q1 appears in the payload"). **Not fixed here**: this
+  needs a real ElevenLabs account/API key/Tamil-capable voice ID, which
+  cannot be self-provisioned — reported as a blocker requiring explicit
+  user action, not attempted unilaterally.
 
 ---
 
@@ -1258,6 +1286,9 @@ silently pretended to work**:
   (Cal.com event type, email sender name) — configurable in appearance only
 - a fully-built RAG pipeline (upload → chunk → embed → search) with no path
   from a live call to ever reach it
+- a multilingual voice feature where every non-English call ran on a TTS
+  engine with no real support for the spoken language — the payload was
+  always correct, the AI just never said anything a human could understand
 
 Each is now either genuinely working or **failing honestly and loudly**.
 
