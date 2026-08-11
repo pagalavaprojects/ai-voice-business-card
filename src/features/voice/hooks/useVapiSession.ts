@@ -341,7 +341,22 @@ export function useVapiSession({
             speakingTimeoutRef.current = setTimeout(() => {
               speakingTimeoutRef.current = null;
               setVoiceState("listening");
-              if (isIntro) {
+              // Read introGateActiveRef LIVE here rather than closing over
+              // this fragment's own `isIntro` snapshot. A multi-sentence
+              // opening (e.g. the qualification call's Q1 + the closed-answer
+              // guidance) arrives as SEVERAL separate assistant transcript
+              // fragments — confirmed live, Vapi split it into 3 "bot"
+              // messages. Only fragment 1's `isIntro` was ever true; each
+              // later fragment re-armed this timer (via clearSpeakingTimeout
+              // above) with its OWN `isIntro = false` closed in, so whichever
+              // fragment's timer actually survived to fire never reached the
+              // unmute below — the visitor's mic stayed force-muted for the
+              // rest of the call, and Vapi's STT never received a single word
+              // they said. introGateActiveRef is a ref: reading it fresh at
+              // fire-time reflects "are we still inside the scripted
+              // opening" regardless of which fragment's timer wins, so it
+              // fires exactly once per call.
+              if (introGateActiveRef.current) {
                 setIsPlayingIntro(false);
                 // The scripted opening has finished — open the mic and let
                 // the visitor speak. This is the one and only point the

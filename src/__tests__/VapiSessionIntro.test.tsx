@@ -225,6 +225,40 @@ describe("useVapiSession — scripted intro tracking", () => {
     expect(result.current.isPlayingIntro).toBe(false);
   });
 
+  it("unmutes the mic after a MULTI-FRAGMENT intro (the live production bug) — Q1 + guidance spoken as 3 separate assistant messages", async () => {
+    // Root cause of the live "ஆம்/இல்லை/இருந்தாலும் never advances the
+    // flow" bug: Vapi split the qualification opening (Q1 + the
+    // closed-answer guidance, one firstMessage string) into 3 separate
+    // "message" events — confirmed via production webhook diagnostics.
+    // isIntro was computed once per fragment from
+    // hasHadFirstAssistantSpeechRef (flips true on fragment 1), so only
+    // fragment 1's setTimeout closure had isIntro===true; each later
+    // fragment rearmed the timer (clearSpeakingTimeout) with its OWN
+    // isIntro===false baked in. Whichever fragment's timer survived to
+    // fire never reached the unmute — the mic stayed force-muted for the
+    // rest of the call and Vapi's STT never heard the visitor at all.
+    const { result } = renderHook(() => useVapiSession({ companyId: "c1", employeeId: "e1", vapiPublicKey: REAL_KEY }));
+    await act(async () => {});
+    const vapi = fakeVapiInstances[0];
+
+    act(() => vapi.emit("call-start"));
+    expect(vapi.muteCalls).toEqual([true]);
+
+    // 3 fragments arriving close together, each re-arming the 3s timer.
+    act(() => vapi.emit("message", assistantMessage("உங்கள் வணிகத்தில் தீர்வு காண வேண்டிய குறிப்பிட்ட பிரச்சினை உள்ளதா?")));
+    act(() => jest.advanceTimersByTime(500));
+    act(() => vapi.emit("message", assistantMessage("ஆம், இல்லை")));
+    act(() => jest.advanceTimersByTime(500));
+    act(() => vapi.emit("message", assistantMessage("அல்லது இருந்தாலும் என பதிலளிக்கவும்.")));
+
+    // Only the LAST fragment's timer is still pending — advance past it.
+    act(() => jest.advanceTimersByTime(3000));
+
+    expect(result.current.isPlayingIntro).toBe(false);
+    expect(vapi.muteCalls).toEqual([true, false]);
+    expect(result.current.voiceState).toBe("listening");
+  });
+
   it("does not treat a later reply as the intro", async () => {
     const { result } = renderHook(() => useVapiSession({ companyId: "c1", employeeId: "e1", vapiPublicKey: REAL_KEY }));
     // The SDK is dynamically imported now — flush the microtask that
