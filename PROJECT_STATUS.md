@@ -1166,6 +1166,45 @@ Session of 2026-08-10 (commits `063911f`, `47f2e30`, `76fc685`, `e227316`):
   the directive; qualification call's systemPrompt = 8928 chars (base +
   directive), firstMessage exactly Q1 + guidance. 4 new regression tests,
   full suite 487/1 skip green.
+- **The actual reason ஆம்/இல்லை/இருந்தாலும் never advanced the flow**
+  (same day, commit `7aec659`): root-caused via temporary production
+  webhook diagnostics (logged a short excerpt of Vapi's own
+  `conversation-update` events, removed once confirmed). Across every
+  live call, the webhook received `status-update` / `speech-update` /
+  `conversation-update` / `end-of-call-report` but **never** `tool-calls`
+  — the model never once invoked `get_next_qualification_question`. The
+  diagnostic transcript showed why: the AI's own opening (Q1 + the
+  closed-answer guidance, one `firstMessage` string) arrived as 3
+  separate assistant transcript fragments, not one. The intro mic-mute
+  gate (`useVapiSession.ts`, from Phase 11) computed `isIntro` once per
+  fragment from a ref that flips true on fragment 1, then closed over
+  that snapshot inside a 3000ms `setTimeout`. Each later fragment
+  re-armed the same timer (`clearSpeakingTimeout`) with its OWN
+  `isIntro === false` baked in — so whichever fragment's timer actually
+  survived to fire skipped the unmute entirely. `vapi.setMuted(true)`
+  (set at call-start) was never reversed for the rest of the call: the
+  visitor's real microphone audio never reached Vapi's STT, for any
+  question, the whole call. This bug predates the qualification work —
+  it was latent since Phase 11's single-sentence-greeting design — and
+  was only ever exposed once an opening became multi-sentence. Fix: read
+  `introGateActiveRef.current` live at timer-fire time instead of the
+  per-fragment `isIntro` closure — a ref reflects "are we still inside
+  the scripted opening" correctly regardless of which fragment's timer
+  wins. Regression test written and verified BOTH ways (`git stash` the
+  fix): fails on the pre-fix code, passes on the fix. Full gate green:
+  tsc, lint, 488/1 skip, build.
+  **Live verification ceiling, honestly reported**: every call in this
+  dev environment — before AND after the fix, across 5+ independent
+  attempts with two different synthesized-answer strategies — dies at a
+  consistent ~30-38 seconds from a local WebRTC/Daily-media-server
+  reachability issue (previously documented; see
+  [[fake-mic-wav-voice-testing]]), before a full spoken exchange can be
+  observed end-to-end by automation. The fix itself is proven correct by
+  the regression test (deterministic, not timing-dependent); what remains
+  unverified by THIS environment is the full live loop, exactly as
+  before. **CODE VERIFIED, LIVE VOICE LOOP NOT VERIFIED** — one real
+  human phone call is still needed to see Q1 → ஆம் → "User: YES" → Q2
+  happen end-to-end.
 
 ---
 
