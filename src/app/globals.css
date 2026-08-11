@@ -3,15 +3,23 @@
 @tailwind utilities;
 
 /* =====================================================
-   Typography — Inter (modern sans-serif)
+   Typography — Inter (modern sans-serif) & JetBrains Mono
    ===================================================== */
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap");
 
 :root {
-  --background: #090d16;
+  --background: #0b0e15;
   --foreground: #f8fafc;
-  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  --font-mono: "JetBrains Mono", "Fira Code", "Cascadia Code", Consolas, monospace;
+
+  /* Elevation tokens — refined toward the Stitch "Luminal Enterprise AI"
+     design system (deep midnight canvas, tonal layering over heavy
+     shadows). Additive: existing .glass-panel/.glass-button usages
+     throughout the app are unaffected and keep working as-is; these
+     variables are for new/updated surfaces that want the closer match. */
+  --surface-0: #0b0e15;
+  --surface-1: #11131a;
+  --surface-2: #191b22;
+  --surface-border: rgba(255, 255, 255, 0.08);
+  --ai-accent: #22c55e;
 }
 
 /* =====================================================
@@ -21,6 +29,9 @@ html {
   scroll-behavior: smooth;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  /* Prevent horizontal overflow caused by long unbreakable strings
+     (long email addresses, URLs, etc.) on narrow screens (320–375px). */
+  overflow-x: hidden;
 }
 
 body {
@@ -30,6 +41,8 @@ body {
   font-size: 14px;
   line-height: 1.6;
   min-height: 100vh;
+  /* Mirrors html to catch any child that escapes the html overflow guard. */
+  overflow-x: hidden;
 }
 
 code, kbd, samp, pre {
@@ -57,6 +70,14 @@ code, kbd, samp, pre {
 .glass-button:hover {
   background: rgba(255, 255, 255, 0.15);
   border-color: rgba(255, 255, 255, 0.25);
+}
+
+/* AI activity glow — a soft outer glow in the status-green accent,
+   for indicators that mean "the AI is live/active/speaking" (never
+   reused for anything else). Pure presentational: apply to an existing
+   state-driven element, never a signal of its own. */
+.ai-pulse-glow {
+  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.15), 0 0 12px 2px rgba(34, 197, 94, 0.35);
 }
 
 .dashboard-input {
@@ -146,4 +167,22 @@ code, kbd, samp, pre {
 ::selection {
   background: rgba(56, 189, 248, 0.3);
   color: #f0f9ff;
+}
+
+/* Safe area padding for mobile devices (iPhone notch / home indicator) */
+.safe-area-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 1rem);
+}
+
+/* =====================================================
+   Touch target minimum sizes (WCAG 2.5.5)
+   Buttons and links must be at least 44×44px on mobile.
+   Applied as a global guard — individual components may
+   already exceed this; this only affects those that don't.
+   ===================================================== */
+@media (pointer: coarse) {
+  button, a, [role="button"] {
+    min-height: 44px;
+    min-width: 44px;
+  }
 }

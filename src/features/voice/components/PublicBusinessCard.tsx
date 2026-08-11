@@ -583,7 +583,7 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
               </div>
               <span
                 className={`absolute bottom-1.5 right-1.5 h-5 w-5 rounded-full border-2 border-[#070b12] ${
-                  isCallActive ? "bg-sky-400 animate-pulse" : "bg-emerald-400"
+                  isCallActive ? "bg-sky-400 animate-pulse shadow-[0_0_0_3px_rgba(56,189,248,0.15),0_0_12px_2px_rgba(56,189,248,0.35)]" : "bg-emerald-400 ai-pulse-glow"
                 }`}
                 aria-hidden="true"
               />

@@ -371,8 +371,10 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                           <div className="space-y-2 max-h-36 overflow-y-auto pr-1" data-testid="qual-history">
                             {qualAnswers.map((ans) => {
                               const authored = qualLang ? getQualificationQuestions(qualLang).find((q) => q.number === ans.n) : undefined;
+                              const accentBorder =
+                                ans.c === "YES" ? "border-emerald-400/40" : ans.c === "NO" ? "border-rose-400/40" : "border-amber-400/40";
                               return (
-                                <div key={ans.n} className="border-l-2 border-white/[0.08] pl-2.5">
+                                <div key={ans.n} className={`border-l-2 ${accentBorder} pl-2.5`}>
                                   {authored && (
                                     <p className="text-[11px] text-slate-400 leading-snug" lang={qualLang ?? undefined}>
                                       {authored.question}
@@ -383,12 +385,12 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                                   <p className="text-[11px] text-slate-200 leading-snug mt-0.5" data-testid={`answer-${ans.n}`}>
                                     <span className="text-slate-400 font-semibold mr-1.5">User:</span>
                                     <span
-                                      className={`inline-block px-1 rounded text-[9px] font-bold align-middle ${
+                                      className={`inline-block px-1.5 py-0.5 rounded-full text-[9px] font-bold align-middle border ${
                                         ans.c === "YES"
-                                          ? "bg-emerald-500/20 text-emerald-300"
+                                          ? "bg-emerald-500/10 text-emerald-300 border-emerald-400/30"
                                           : ans.c === "NO"
-                                            ? "bg-rose-500/20 text-rose-300"
-                                            : "bg-amber-500/20 text-amber-300"
+                                            ? "bg-rose-500/10 text-rose-300 border-rose-400/30"
+                                            : "bg-amber-500/10 text-amber-300 border-amber-400/30"
                                       }`}
                                     >
                                       {ans.c}
