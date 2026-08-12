@@ -1,6 +1,7 @@
 import { ToolRegistry } from "@/core/application/tools/ToolRegistry";
 import { CalcomAdapter, CalcomUnavailableError } from "@/core/infrastructure/booking/calcom/CalcomAdapter";
 import { AppointmentStatus } from "@/core/domain/models/types";
+import { APPOINTMENT_CONFIRMED_CLOSING } from "@/features/voice/lib/qualificationScript";
 
 /**
  * Regression tests for the most serious defect found in the production audit:
@@ -46,6 +47,62 @@ describe("book_appointment", () => {
     expect(created[0].status).toBe(AppointmentStatus.BOOKED);
     expect(result.confirmed).toBe(true);
     expect(String(result.message)).toMatch(/confirmed/i);
+  });
+
+  // Regression: the closing line used to live only inside the `message`
+  // prose, which the model had to reproduce correctly from an embedded
+  // quote. It now lives in its own `speak` field — the same deterministic
+  // mechanism get_next_qualification_question's Q17 completion already uses
+  // — present ONLY on a genuinely confirmed booking, exact capitalization
+  // and punctuation preserved, never generated on any other path.
+  describe("the confirmed-only `speak` closing line", () => {
+    it("is present and byte-exact when Cal.com genuinely confirms the booking", async () => {
+      const calcom = {
+        createBooking: jest.fn().mockResolvedValue({ id: 7, uid: "cal_real_abc", title: "Meeting", meetingUrl: "https://meet.example/xyz", status: "ACCEPTED" }),
+      } as unknown as CalcomAdapter;
+
+      const { registry } = makeRegistry(calcom, 12345);
+      const result = await registry.getTool("book_appointment")!.execute(ARGS, CTX);
+
+      expect(result.confirmed).toBe(true);
+      expect(result.speak).toBe(APPOINTMENT_CONFIRMED_CLOSING);
+      expect(result.speak).toBe("Thank You for Your Valuable Time and Support. Have a Wonderful Day");
+      expect(String(result.message)).toMatch(/SPEAK the "speak" text EXACTLY/);
+    });
+
+    it("is absent on a REQUESTED (Cal.com unavailable) fallback", async () => {
+      const calcom = {
+        createBooking: jest.fn().mockRejectedValue(new CalcomUnavailableError()),
+      } as unknown as CalcomAdapter;
+
+      const { registry } = makeRegistry(calcom, 12345);
+      const result = await registry.getTool("book_appointment")!.execute(ARGS, CTX);
+
+      expect(result.confirmed).toBe(false);
+      expect(result.speak).toBeUndefined();
+    });
+
+    it("is absent when Cal.com errors (calendar outage)", async () => {
+      const calcom = {
+        createBooking: jest.fn().mockRejectedValue(new Error("cal.com 503")),
+      } as unknown as CalcomAdapter;
+
+      const { registry } = makeRegistry(calcom, 12345);
+      const result = await registry.getTool("book_appointment")!.execute(ARGS, CTX);
+
+      expect(result.confirmed).toBe(false);
+      expect(result.speak).toBeUndefined();
+    });
+
+    it("is absent when no event type is configured (no booking attempted)", async () => {
+      const calcom = { createBooking: jest.fn() } as unknown as CalcomAdapter;
+
+      const { registry } = makeRegistry(calcom, undefined);
+      const result = await registry.getTool("book_appointment")!.execute(ARGS, CTX);
+
+      expect(result.confirmed).toBe(false);
+      expect(result.speak).toBeUndefined();
+    });
   });
 
   it("captures REQUESTED — and does not claim confirmation — when Cal.com is unconfigured", async () => {

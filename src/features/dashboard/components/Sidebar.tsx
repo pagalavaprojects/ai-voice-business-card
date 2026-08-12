@@ -15,6 +15,15 @@ import {
   Package,
   Wrench,
   IdCard,
+  Globe,
+  Building2,
+  FileImage,
+  Search,
+  MessageSquareQuote,
+  HelpCircle,
+  Newspaper,
+  Palette,
+  Layers,
 } from "lucide-react";
 import { cn } from "@/shared/ui/button";
 import { useCompany } from "@/features/dashboard/context/CompanyContext";
@@ -23,12 +32,15 @@ const navItems = [
   { label: "Overview", href: "/dashboard", icon: LayoutDashboard },
   { label: "Analytics", href: "/dashboard/analytics", icon: BarChart3 },
   { label: "Leads", href: "/dashboard/leads", icon: Users },
-  // The agents page has existed since the agents module was built but was
-  // never linked here, so it was only reachable by typing the URL.
   { label: "AI Agents", href: "/dashboard/agents", icon: Bot },
   { label: "Employees", href: "/dashboard/employees", icon: IdCard },
   { label: "Products", href: "/dashboard/products", icon: Package },
   { label: "Services", href: "/dashboard/services", icon: Wrench },
+  { label: "CMS Profile", href: "/dashboard/cms/profile", icon: Building2 },
+  { label: "CMS Offices", href: "/dashboard/cms/offices", icon: Globe },
+  { label: "CMS AI Solutions", href: "/dashboard/cms/solutions", icon: Layers },
+  { label: "Media Library", href: "/dashboard/cms/media", icon: FileImage },
+  { label: "SEO Manager", href: "/dashboard/cms/seo", icon: Search },
   { label: "Knowledge Base", href: "/dashboard/knowledge", icon: BookOpen },
   { label: "Prompt Editor", href: "/dashboard/prompts", icon: FileCode },
   { label: "Appointments", href: "/dashboard/appointments", icon: Calendar },
@@ -57,7 +69,7 @@ export const Sidebar: React.FC = () => {
             <Bot className="h-5 w-5" />
           </div>
           <div>
-            <h2 className="text-sm font-bold text-slate-100 tracking-tight">VoiceCard AI</h2>
+            <h2 className="text-sm font-bold text-slate-100 tracking-tight">Maylaan AI</h2>
             <p className="text-[10px] text-sky-400 font-mono">Enterprise SaaS</p>
           </div>
         </div>

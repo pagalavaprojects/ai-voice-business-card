@@ -342,6 +342,14 @@ export const ENGLISH_CONTINUE_PROMPT = "Please Click to Continue";
  * Tamil call gets an equivalent rather than switching languages mid-call. */
 export const TAMIL_CONTINUE_PROMPT = "தொடர, திரையில் உள்ள Continue பட்டனை கிளிக் செய்யவும்.";
 
+/** Spoken verbatim as the assistant's final words, but ONLY when
+ * book_appointment reports a genuinely confirmed booking (a real Cal.com
+ * event exists) — never on a REQUESTED/unconfirmed fallback, and never
+ * elsewhere. Exact approved wording, product-owner authorized; not
+ * English/Tamil-dispatched like the questions above — this line is
+ * English-only by spec, same as ENGLISH_CONTINUE_PROMPT. */
+export const APPOINTMENT_CONFIRMED_CLOSING = "Thank You for Your Valuable Time and Support. Have a Wonderful Day";
+
 export function getQualificationDirective(language: QualificationLanguage): string {
   return language === "ta" ? getTamilQualificationDirective() : getEnglishQualificationDirective();
 }

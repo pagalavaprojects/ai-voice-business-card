@@ -9,6 +9,7 @@ import { IKnowledgeDocumentRepository } from "../../domain/repositories/IKnowled
 import { OpenAIEmbeddingAdapter } from "../../infrastructure/embeddings/OpenAIEmbeddingAdapter";
 import { getWhatsAppNotifier } from "../../infrastructure/notifications/WhatsAppNotifier";
 import {
+  APPOINTMENT_CONFIRMED_CLOSING,
   classifyClosedResponse,
   ENGLISH_CONTINUE_PROMPT,
   getAuthoredQuestionFor,
@@ -613,13 +614,19 @@ export class ToolRegistry {
           appointment_id: appointment.id,
           status: appointment.status,
           confirmed,
-          // What the assistant says to the caller. It must not promise a
-          // calendar entry that was never created — the exact closing line
-          // is reserved for a REAL confirmed booking only; a REQUESTED
-          // fallback (Cal.com couldn't complete a real slot) gets the
-          // honest "will follow up" message instead, never the closing line.
+          // Same deterministic mechanism as get_next_qualification_question's
+          // Q17 completion: the exact closing line lives in its own field the
+          // model is told to copy verbatim, rather than being embedded only in
+          // prose the model has to reproduce from memory. Present ONLY on a
+          // REAL confirmed booking (a real Cal.com event) — a REQUESTED
+          // fallback (Cal.com couldn't complete a real slot, cancellation,
+          // validation failure, etc.) must never get this field, since the
+          // model has nothing to blindly copy and paraphrase into a false
+          // confirmation.
+          ...(confirmed ? { speak: APPOINTMENT_CONFIRMED_CLOSING } : {}),
           message: confirmed
-            ? 'Appointment confirmed and a calendar invitation has been sent. Say EXACTLY, as your final words: "Thank You for Your Valuable Time and Support. Have a Wonderful Day" — do not shorten or rephrase it.'
+            ? 'Appointment confirmed and a calendar invitation has been sent. SPEAK the "speak" text EXACTLY as ' +
+              "returned, as your final words — do not paraphrase, shorten, lowercase, or rephrase it."
             : "Preferred time noted. A calendar slot could not be reserved automatically, but a follow-up will arrive by email shortly. Do NOT say the closing thank-you line yet — nothing is booked.",
         };
       },
