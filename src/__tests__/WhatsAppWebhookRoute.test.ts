@@ -120,6 +120,18 @@ describe("GET /api/whatsapp/webhook — verification handshake", () => {
     const res = await GET(req);
     expect(res.status).toBe(403);
   });
+
+  it("rejects a correct token with the wrong hub.mode", async () => {
+    const req = new NextRequest(`http://localhost/api/whatsapp/webhook?hub.mode=unsubscribe&hub.verify_token=${VERIFY_TOKEN}&hub.challenge=12345`);
+    const res = await GET(req);
+    expect(res.status).toBe(403);
+  });
+
+  it("rejects a correct mode and token with no hub.challenge", async () => {
+    const req = new NextRequest(`http://localhost/api/whatsapp/webhook?hub.mode=subscribe&hub.verify_token=${VERIFY_TOKEN}`);
+    const res = await GET(req);
+    expect(res.status).toBe(403);
+  });
 });
 
 describe("POST /api/whatsapp/webhook", () => {

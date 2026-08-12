@@ -252,6 +252,48 @@ describe("WhatsAppQualificationChannel — Tamil answer matrix", () => {
   });
 });
 
+describe("WhatsAppQualificationChannel — Q7 temperature scoring is genuinely computed through this channel, not pre-seeded", () => {
+  // Every other test in this file pre-seeds lead_temperature via
+  // buildChannel(LeadTemperature.X) — proving routing given a known
+  // temperature, but never that the temperature was actually COMPUTED from
+  // real WhatsApp answers. buildChannel(null) starts the lead with
+  // lead_temperature: null (exactly as a real new lead does), so this
+  // proves get_next_qualification_question's Q7-boundary scoring genuinely
+  // fires end to end through the WhatsApp adapter, the same deterministic
+  // scoring already proven for voice in QualificationSequencing.test.ts.
+  it("7 real YES answers via WhatsApp compute and persist HOT — not merely routed as if it were", async () => {
+    const { channel, sent, leads, conversations } = buildChannel(null);
+    await channel.handleInboundMessage(msg("Hi"));
+    await channel.handleInboundMessage(msg("English"));
+    for (let q = 1; q <= 6; q++) {
+      await channel.handleInboundMessage(msg("Yes"));
+    }
+    sent.length = 0;
+    await channel.handleInboundMessage(msg("Yes")); // answers Q7 — scoring boundary
+
+    expect(sent[0].body).toContain(getAuthoredQuestionFor("en", 8)!.question);
+    expect([...conversations.values()][0].whatsapp_pending_question).toBe(8);
+    const [lead] = leads.values();
+    expect(lead.lead_temperature).toBe(LeadTemperature.HOT);
+  });
+
+  it("7 real NO answers via WhatsApp compute and persist COLD, routing straight to Q16", async () => {
+    const { channel, sent, leads, conversations } = buildChannel(null);
+    await channel.handleInboundMessage(msg("Hi"));
+    await channel.handleInboundMessage(msg("English"));
+    for (let q = 1; q <= 6; q++) {
+      await channel.handleInboundMessage(msg("No"));
+    }
+    sent.length = 0;
+    await channel.handleInboundMessage(msg("No")); // answers Q7 — scoring boundary
+
+    expect(sent[0].body).toContain(getAuthoredQuestionFor("en", 16)!.question);
+    expect([...conversations.values()][0].whatsapp_pending_question).toBe(16);
+    const [lead] = leads.values();
+    expect(lead.lead_temperature).toBe(LeadTemperature.COLD);
+  });
+});
+
 describe("WhatsAppQualificationChannel — routing and completion (reuses existing rules, invents nothing)", () => {
   it("COLD routing is unaffected by channel: Q7 -> Q16 through WhatsApp exactly as through voice", async () => {
     const { channel, sent, conversations } = buildChannel(LeadTemperature.COLD);
