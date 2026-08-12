@@ -132,6 +132,12 @@ describe("GET /api/whatsapp/webhook — verification handshake", () => {
     const res = await GET(req);
     expect(res.status).toBe(403);
   });
+
+  it("rejects a request that omits hub.verify_token entirely, even with a correctly configured token", async () => {
+    const req = new NextRequest(`http://localhost/api/whatsapp/webhook?hub.mode=subscribe&hub.challenge=12345`);
+    const res = await GET(req);
+    expect(res.status).toBe(403);
+  });
 });
 
 describe("POST /api/whatsapp/webhook", () => {
@@ -152,6 +158,13 @@ describe("POST /api/whatsapp/webhook", () => {
   it("rejects a request with an invalid signature", async () => {
     const body = textMessagePayload();
     const req = signedPost(body, "wrong-secret-1a2b3c4d");
+    const res = await POST(req);
+    expect(res.status).toBe(401);
+    expect(handleInboundMessage).not.toHaveBeenCalled();
+  });
+
+  it("rejects a request with no x-hub-signature-256 header at all, through the real route (not just the isolated validator)", async () => {
+    const req = signedPost(textMessagePayload(), null);
     const res = await POST(req);
     expect(res.status).toBe(401);
     expect(handleInboundMessage).not.toHaveBeenCalled();

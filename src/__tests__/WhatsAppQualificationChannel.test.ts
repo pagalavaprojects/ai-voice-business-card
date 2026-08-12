@@ -292,6 +292,39 @@ describe("WhatsAppQualificationChannel — Q7 temperature scoring is genuinely c
     const [lead] = leads.values();
     expect(lead.lead_temperature).toBe(LeadTemperature.COLD);
   });
+
+  it("a mixed real answer set via WhatsApp (4 YES + 2 MAYBE + 1 NO = 5 points) computes and persists WARM, routing to Q8", async () => {
+    const { channel, sent, leads, conversations } = buildChannel(null);
+    await channel.handleInboundMessage(msg("Hi"));
+    await channel.handleInboundMessage(msg("English"));
+    for (const reply of ["Yes", "Yes", "Yes", "Yes", "Maybe", "Maybe"]) {
+      await channel.handleInboundMessage(msg(reply));
+    }
+    sent.length = 0;
+    await channel.handleInboundMessage(msg("No")); // answers Q7 — scoring boundary
+
+    expect(sent[0].body).toContain(getAuthoredQuestionFor("en", 8)!.question);
+    expect([...conversations.values()][0].whatsapp_pending_question).toBe(8);
+    const [lead] = leads.values();
+    expect(lead.lead_temperature).toBe(LeadTemperature.WARM);
+  });
+});
+
+describe("WhatsAppQualificationChannel — Q13 remains intentionally absent through this channel too", () => {
+  it("walking Q1 through Q12 via real WhatsApp answers sends Q14 next, never Q13", async () => {
+    const { channel, sent, conversations } = buildChannel(LeadTemperature.HOT);
+    await channel.handleInboundMessage(msg("Hi"));
+    await channel.handleInboundMessage(msg("English"));
+    for (let q = 1; q <= 11; q++) {
+      await channel.handleInboundMessage(msg("Yes"));
+    }
+    sent.length = 0;
+    await channel.handleInboundMessage(msg("Yes")); // answers Q12
+
+    expect(sent[0].body).toContain(getAuthoredQuestionFor("en", 14)!.question);
+    expect(sent[0].body).not.toContain("Question 13");
+    expect([...conversations.values()][0].whatsapp_pending_question).toBe(14);
+  });
 });
 
 describe("WhatsAppQualificationChannel — routing and completion (reuses existing rules, invents nothing)", () => {
