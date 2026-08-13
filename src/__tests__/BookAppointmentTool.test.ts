@@ -52,9 +52,10 @@ describe("book_appointment", () => {
   // Regression: the closing line used to live only inside the `message`
   // prose, which the model had to reproduce correctly from an embedded
   // quote. It now lives in its own `speak` field — the same deterministic
-  // mechanism get_next_qualification_question's Q17 completion already uses
-  // — present ONLY on a genuinely confirmed booking, exact capitalization
-  // and punctuation preserved, never generated on any other path.
+  // mechanism get_next_qualification_question's six-question completion
+  // already uses — present ONLY on a genuinely confirmed booking, exact
+  // capitalization and punctuation preserved, never generated on any other
+  // path.
   describe("the confirmed-only `speak` closing line", () => {
     it("is present and byte-exact when Cal.com genuinely confirms the booking", async () => {
       const calcom = {

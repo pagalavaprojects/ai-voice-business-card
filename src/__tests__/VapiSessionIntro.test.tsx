@@ -245,11 +245,13 @@ describe("useVapiSession — scripted intro tracking", () => {
     expect(vapi.muteCalls).toEqual([true]);
 
     // 3 fragments arriving close together, each re-arming the 3s timer.
-    act(() => vapi.emit("message", assistantMessage("உங்கள் வணிகத்தில் தீர்வு காண வேண்டிய குறிப்பிட்ட பிரச்சினை உள்ளதா?")));
+    // Arbitrary sample text — this test exercises fragment-timing/mute
+    // mechanics generically, not any specific authored script.
+    act(() => vapi.emit("message", assistantMessage("இன்று வானிலை மிகவும் நன்றாக இருக்கிறது")));
     act(() => jest.advanceTimersByTime(500));
-    act(() => vapi.emit("message", assistantMessage("ஆம், இல்லை")));
+    act(() => vapi.emit("message", assistantMessage("நான் இதை")));
     act(() => jest.advanceTimersByTime(500));
-    act(() => vapi.emit("message", assistantMessage("அல்லது இருந்தாலும் என பதிலளிக்கவும்.")));
+    act(() => vapi.emit("message", assistantMessage("மூன்று பகுதிகளாகச் சொல்கிறேன்.")));
 
     // Only the LAST fragment's timer is still pending — advance past it.
     act(() => jest.advanceTimersByTime(3000));
@@ -375,20 +377,23 @@ describe("useVapiSession — scripted intro tracking", () => {
   });
 
   it("reconnects a dropped qualification call with the SAME firstMessage override — never the default greeting", async () => {
-    // Regression for the live Tamil bug: a transient WebRTC error during the
-    // qualification call auto-reconnected via startCall() with no arguments,
-    // so the retried call opened with the card's founder greeting instead of
-    // Q1 — and the strict question loop never engaged.
-    const Q1 = "உங்கள் வணிகத்தில் தீர்வு காண வேண்டிய குறிப்பிட்ட பிரச்சினை உள்ளதா?";
+    // Regression for the live production bug: a transient WebRTC error
+    // during the qualification call auto-reconnected via startCall() with
+    // no arguments, so the retried call opened with the card's founder
+    // greeting instead of the qualification opening — and the strict
+    // question loop never engaged. Arbitrary sample override text — this
+    // test exercises the override-survives-reconnect mechanism generically,
+    // not any specific authored script.
+    const QUALIFICATION_OPENING_OVERRIDE = "Is our service or product something you need immediately?\n\nPlease answer with Yes, No, or Maybe.";
     const { result } = renderHook(() =>
       useVapiSession({ companyId: "c1", employeeId: "e1", vapiPublicKey: REAL_KEY, firstMessage: "வணக்கம். Founder greeting." })
     );
 
     await act(async () => {
-      await result.current.startCall({ firstMessage: Q1 });
+      await result.current.startCall({ firstMessage: QUALIFICATION_OPENING_OVERRIDE });
     });
     const vapi = fakeVapiInstances[0];
-    expect((vapi.started[0] as { firstMessage: string }).firstMessage).toBe(Q1);
+    expect((vapi.started[0] as { firstMessage: string }).firstMessage).toBe(QUALIFICATION_OPENING_OVERRIDE);
 
     act(() => vapi.emit("error", new Error("WebRTC connection lost")));
     await act(async () => {
@@ -397,7 +402,7 @@ describe("useVapiSession — scripted intro tracking", () => {
     });
 
     expect(vapi.started.length).toBe(2);
-    expect((vapi.started[1] as { firstMessage: string }).firstMessage).toBe(Q1);
+    expect((vapi.started[1] as { firstMessage: string }).firstMessage).toBe(QUALIFICATION_OPENING_OVERRIDE);
   });
 
   it("a per-call systemPrompt override replaces the hook's base systemPrompt for that call", async () => {
