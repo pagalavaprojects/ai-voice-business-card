@@ -80,6 +80,42 @@ export function buildCardJsonLd({
   };
 }
 
+/** schema.org WebSite + SearchAction structured data for search engine discovery. */
+export function buildWebsiteJsonLd(baseUrl = "https://maylaanai.com"): Record<string, unknown> {
+  return {
+    "@context": "https://schema.org",
+    "@type": "WebSite",
+    name: "Maylaan AI",
+    alternateName: "Maylaan AI Voice Business Card Platform",
+    url: baseUrl,
+    potentialAction: {
+      "@type": "SearchAction",
+      target: {
+        "@type": "EntryPoint",
+        urlTemplate: `${baseUrl}/search?q={search_term_string}`,
+      },
+      "query-input": "required name=search_term_string",
+    },
+  };
+}
+
+/** schema.org FAQPage structured data for suggested questions on the card. */
+export function buildFaqJsonLd(questions: string[]): Record<string, unknown> | null {
+  if (!questions || questions.length === 0) return null;
+  return {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    mainEntity: questions.map((q) => ({
+      "@type": "Question",
+      name: q,
+      acceptedAnswer: {
+        "@type": "Answer",
+        text: `Ask this question directly to the AI Twin on the voice card.`,
+      },
+    })),
+  };
+}
+
 /** Serializes JSON-LD for a <script> tag. Escapes `<` so admin-authored text
  * (a name, a designation) can never smuggle a literal `</script>` and break
  * out of the tag — the same reason Next's own rendering escapes this
