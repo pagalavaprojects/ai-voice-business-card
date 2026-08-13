@@ -139,6 +139,10 @@ export function getQualificationDirective(): string {
 
 === QUALIFICATION SCRIPT (booking flow) ===
 ` +
+    `This section OVERRIDES any "RESPONSE LANGUAGE" instruction elsewhere in this prompt for as long as ` +
+    `qualification is active: every word you speak from here on — the authored questions, the Yes/No/Maybe ` +
+    `guidance, reprompts, and the completion line — is English ONLY, even if the visitor's chosen card language ` +
+    `is Tamil, Hindi, Telugu, Malayalam or Kannada and even if the visitor speaks to you in that language. ` +
     `This is a STRICT CLOSED-ENDED questionnaire, not a conversation. Ask ONLY the authored questions below, one ` +
     `at a time, EXACTLY as written — never translate, paraphrase, shorten, reword or renumber them, and never ` +
     `invent a question. ` +

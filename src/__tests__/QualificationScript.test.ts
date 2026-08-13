@@ -183,6 +183,19 @@ describe("authored questionnaire (2026-08-13 revision — six questions, English
       expect(directive).not.toMatch(/[஀-௿]/); // Tamil Unicode block
     });
 
+    // Regression: a live production capture showed the qualification call's
+    // full system prompt is `card.systemPrompt + getQualificationDirective()`
+    // — for a visitor on a non-English card language, card.systemPrompt ends
+    // with its own "RESPONSE LANGUAGE: Respond entirely in Tamil" instruction,
+    // appended immediately before this directive. Without an explicit
+    // override, nothing stops the model from speaking the guidance/reprompt
+    // lines in that other language even though the authored questions
+    // themselves stay hardcoded English.
+    it("explicitly overrides any preceding RESPONSE LANGUAGE instruction for the duration of qualification", () => {
+      expect(directive).toContain('OVERRIDES any "RESPONSE LANGUAGE" instruction');
+      expect(directive).toMatch(/English ONLY, even if the visitor's chosen card language/);
+    });
+
     it("gives the exact Continue-button instruction on completion, never a paraphrase", () => {
       expect(directive).toContain(`say EXACTLY: "${QUALIFICATION_CONTINUE_PROMPT}"`);
       expect(directive).toContain("never paraphrase this");
