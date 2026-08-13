@@ -100,6 +100,13 @@ describe("composePitchScript", () => {
     }
   });
 
+  it("every language produces a genuinely distinct script per type — no accidental English fallback", () => {
+    for (const type of PITCH_TYPES) {
+      const scripts = SUPPORTED_LANGUAGES.map((l) => composePitchScript(type, l.code, fullData));
+      expect(new Set(scripts).size).toBe(SUPPORTED_LANGUAGES.length);
+    }
+  });
+
   it("keeps proper nouns verbatim inside non-English frames (Tamil)", () => {
     const script = composePitchScript("elevator", "ta", fullData);
     expect(script).toContain("Srinivasan Kandasamy");
