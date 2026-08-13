@@ -263,7 +263,15 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                 >
                   {i + 1}
                 </span>
-                <span className={`text-xs font-semibold ${s.at === 3 ? (step === 3 ? "text-emerald-400" : "text-slate-500") : step >= s.at ? "text-slate-200" : "text-slate-500"}`}>
+                {/* Labels hide below `sm` — at 390px wide the full 4-label row
+                    (longest: "Conversation with AI") overflows its own
+                    horizontally-scrolling container with no visible scroll
+                    affordance, silently clipping "Your Details"/"Done".
+                    Numbered circles + connectors alone are a standard,
+                    self-explanatory stepper pattern once labels don't fit. */}
+                <span
+                  className={`hidden sm:inline text-xs font-semibold ${s.at === 3 ? (step === 3 ? "text-emerald-400" : "text-slate-500") : step >= s.at ? "text-slate-200" : "text-slate-500"}`}
+                >
                   {s.label}
                 </span>
               </div>
