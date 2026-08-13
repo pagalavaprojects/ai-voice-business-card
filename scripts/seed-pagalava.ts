@@ -48,7 +48,7 @@ async function seedPagalava() {
       company_id: COMPANY_ID,
       name: "Srinivasan Kandasamy",
       designation: "Founder",
-      phone: "+91 94431 25639",
+      phone: "+91 93446 25639",
       email: "srinivasan@pagalava.com",
       office_address: "Remote",
       working_hours: "9 AM - 6 PM EST",

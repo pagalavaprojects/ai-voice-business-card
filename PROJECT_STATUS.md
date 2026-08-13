@@ -7,7 +7,7 @@
 | **Live** | https://maylaanai.com (primary) · https://ai-voice-business-card.vercel.app (still live, unchanged) |
 | **Repository** | https://github.com/pagalavaprojects/ai-voice-business-card |
 | **Demo card** | [`/33333333…/44444444…`](https://maylaanai.com/33333333-3333-3333-3333-333333333333/44444444-4444-4444-4444-444444444444) or the short link [`/c/srinivasan`](https://maylaanai.com/c/srinivasan) |
-| **Last updated** | 2026-08-08 (third pass: **Cal.com booking LIVE** — real API key + event type 6597338 configured in Vercel, adapter migrated to API v2 after v1 was decommissioned, real slots verified in production UI; daily WhatsApp 24h-reminder cron added (`/api/cron/reminders`, CRON_SECRET-guarded, inert until WhatsApp credentials exist); earlier same day: persistent pitch-audio storage + browser-TTS fallback, WhatsApp Cloud API notifier, syd1 function co-location) |
+| **Last updated** | 2026-08-13 (Phase 18: **six-question English-only qualification flow replaces the old 17-question system**, live-verified end to end in production browser + network capture; a real production build-breaking bug fixed (`layout.tsx` importing a non-existent `cardMetadata.ts` export — Vercel deploys were silently alternating Ready/Error); **Vapi voice restored** — the account had a zero wallet balance blocking every call, rotated to a new account's keys, live-verified `call/web` now returns 201; **WhatsApp inbound now configured** — `WHATSAPP_APP_SECRET` + a generated `WHATSAPP_VERIFY_TOKEN` added, Meta's webhook verification handshake live-confirmed; founder contact number updated to `+91 93446 25639`) |
 | **Completion** | **~99%** — the Phase 16 lead-qualification migration is now APPLIED in production (15/15 columns + both indexes verified against the live schema, existing leads untouched); Tamil (and Kannada) live voice fixed — Vapi was rejecting `deepgram+ta/kn` with a validation 400 (nova-2 doesn't support them), now routed through the OpenAI transcriber, with Telugu/Malayalam upgraded to Azure (`te-IN`/`ml-IN`), all validated against the live Vapi account; NEW pre-recorded voice pitches on the public card (Elevator ≈30s, Product ≈40s, USP ≈5s — speak-only, no mic, OpenAI TTS server-side, CDN-cached, all six languages); production voice live-verified via real browser automation. Remaining external blockers: real Cal.com credentials (`CALCOM_API_KEY` + `CALCOM_EVENT_TYPE_ID`) for live bookings, and a WhatsApp Business provider + credentials for booking/reminder notifications (no sending architecture or credentials exist — only wa.me deep links) |
 
 > This file is refreshed after every completed module. If it looks stale
@@ -1293,6 +1293,53 @@ Session of 2026-08-10 (commits `063911f`, `47f2e30`, `76fc685`, `e227316`):
   human phone call — in either language — is now the only thing needed
   to observe the complete loop; the code underneath is proven correct at
   every other layer this session touched.
+
+### Phase 18 — Six-question qualification migration, production build fix, Vapi/WhatsApp credential restoration
+
+The old 17-question dual-language (English/Tamil) qualification system was
+deliberately replaced end to end with a single authoritative, English-only,
+six-question flow (`qualificationScript.ts`'s `QUALIFICATION_QUESTIONS`),
+consumed identically by voice (`ToolRegistry.ts`'s
+`get_next_qualification_question`) and WhatsApp (`WhatsAppQualificationChannel.ts`)
+— no duplicated question text, no language branch, no "How can I help you?"
+opener. Qualification completion (Q6 answered) is architecturally decoupled
+from the pre-existing HOT/WARM/COLD lead-scoring subsystem, which remains for
+internal reporting only and no longer gates the customer-facing conversation
+or the Book Appointment UI (which now shows Q&A pairs only). Tamil **pitch**
+playback (Elevator/Product/Why Us) was untouched and verified still fully
+multilingual and architecturally isolated from Vapi — pitch uses OpenAI TTS
+server-side with a browser-`speechSynthesis` fallback, never a Vapi/WebRTC
+session (confirmed live: clicking any of the three pitch buttons produces
+zero `api.vapi.ai` traffic; only "Talk with AI"/qualification does).
+
+A real production defect was found and fixed while verifying the deploy
+itself (not from source reading — Vercel's own deployment history showed
+production silently alternating Ready/Error on the same commit): committed
+`layout.tsx` imported `buildWebsiteJsonLd` from `cardMetadata.ts`, which
+never exported it on `main` (the export existed only in a concurrent
+session's uncommitted local diff, committed here after explicit user
+confirmation since that file was otherwise off-limits this session).
+
+Two external account-level blockers were also cleared this session, not by
+code changes but by credential rotation, both live-verified:
+- **Vapi**: the account behind `VAPI_API_KEY`/`NEXT_PUBLIC_VAPI_PUBLIC_KEY`
+  had a zero wallet balance, rejecting every `POST /call/web` with 400
+  regardless of code correctness. Rotated to a new account's keys via
+  `vercel env rm`/`add` + `vercel redeploy` (deliberately not
+  `vercel deploy --prod`, which would upload the local working tree —
+  including this session's untouched concurrent-session dirty files —
+  instead of rebuilding the actual git commit). `call/web` now returns 201
+  and creates a real Daily.co WebRTC room.
+- **WhatsApp**: `WHATSAPP_APP_SECRET` (from Meta's app dashboard) and a
+  freshly generated `WHATSAPP_VERIFY_TOKEN` were added; Meta's webhook
+  verification handshake was live-confirmed (`hub.challenge` echoed back,
+  200). `WHATSAPP_ACCESS_TOKEN`/`WHATSAPP_PHONE_NUMBER_ID` were already
+  configured from an earlier session. Inbound message delivery through the
+  now-verified subscription has not yet been observed with a real message.
+
+Founder contact number updated at the user's request: `+91 94431 25639` →
+`+91 93446 25639`, across the live `employees` row (Supabase, direct REST
+update), `scripts/seed-pagalava.ts`, and the `VCard.test.ts` fixture.
 
 ---
 

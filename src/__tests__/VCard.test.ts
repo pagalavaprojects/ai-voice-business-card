@@ -3,7 +3,7 @@ import { generateVCard } from "@/features/voice/lib/vcard";
 const CONTACT = {
   name: "Srinivasan Kandasamy",
   email: "srinivasan@pagalava.com",
-  phone: "+91 94431 25639",
+  phone: "+91 93446 25639",
   company: "Pagalava Data Analytics",
   designation: "Founder",
   website: "https://pagalava.com",
