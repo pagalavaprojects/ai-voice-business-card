@@ -163,17 +163,18 @@ export async function GET(req: NextRequest, { params }: { params: { companyId: s
     // the assembled prompt itself is identical regardless of language, so
     // there's no need to cache a variant per language, only to suffix it.
     //
-    // The Tamil qualification script (exact questions, strict closed-ended
-    // guidance) is deliberately NOT appended here. This systemPrompt is
-    // shared by BOTH the plain "Talk with AI" mic tap AND the booking
-    // modal's "Start AI Conversation" — appending the qualification
-    // directive unconditionally would tell a visitor just asking about
-    // products, in a normal Tamil conversation, "this is a strict
-    // closed-ended questionnaire, never ask for explanations." The client
-    // (PublicBusinessCard) appends getTamilQualificationDirective() itself,
-    // ONLY for the qualification call, via startCall's systemPrompt
-    // override — the same mechanism firstMessage already uses to keep the
-    // qualification opening out of the general greeting.
+    // The qualification script (six authoritative questions, strict
+    // closed-ended guidance, English-only regardless of card language) is
+    // deliberately NOT appended here. This systemPrompt is shared by BOTH
+    // the plain "Talk with AI" mic tap AND the booking modal's "Start AI
+    // Conversation" — appending the qualification directive unconditionally
+    // would tell a visitor just asking about products, in a normal general
+    // conversation, "this is a strict closed-ended questionnaire, never ask
+    // for explanations." The client (PublicBusinessCard) appends
+    // getQualificationDirective() itself, ONLY for the qualification call,
+    // via startCall's systemPrompt override — the same mechanism
+    // firstMessage already uses to keep the qualification opening out of
+    // the general greeting.
     const systemPrompt = systemPromptBase ? systemPromptBase + getLanguageDirective(language) : systemPromptBase;
 
     // Vapi delivers tool-calls from its own cloud, so a localhost callback is

@@ -14,7 +14,7 @@
 import "@testing-library/jest-dom";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import { PublicBusinessCard } from "@/features/voice/components/PublicBusinessCard";
-import { TAMIL_QUALIFICATION_CALL_OPENING, ENGLISH_QUALIFICATION_CALL_OPENING } from "@/features/voice/lib/qualificationScript";
+import { QUALIFICATION_CALL_OPENING } from "@/features/voice/lib/qualificationScript";
 
 const startCall = jest.fn();
 
@@ -92,7 +92,7 @@ describe("PublicBusinessCard — mic button vs. qualification call wiring", () =
 
     expect(startCall).toHaveBeenCalledTimes(1);
     const [overrides] = startCall.mock.calls[0] as [{ firstMessage: string; systemPrompt: string }];
-    expect(overrides.firstMessage).toBe(TAMIL_QUALIFICATION_CALL_OPENING);
+    expect(overrides.firstMessage).toBe(QUALIFICATION_CALL_OPENING);
     expect(overrides.systemPrompt).toContain("BASE_SYSTEM_PROMPT_MARKER");
     expect(overrides.systemPrompt).toContain("STRICT CLOSED-ENDED questionnaire");
 
@@ -107,7 +107,7 @@ describe("PublicBusinessCard — mic button vs. qualification call wiring", () =
     expect(micArg?.systemPrompt).toBeUndefined();
   });
 
-  it("English sessions: Start AI Conversation applies the English Q1 opening + directive — proving the override isn't hardcoded to Tamil", async () => {
+  it("an English-language card gets the IDENTICAL qualification opening + directive as a Tamil-language card — qualification is English-only and language-independent, never substituting a per-language script", async () => {
     window.localStorage.setItem("pagalava.language", "en");
     global.fetch = jest.fn(() => Promise.resolve(cardResponse("en"))) as unknown as typeof fetch;
 
@@ -122,8 +122,10 @@ describe("PublicBusinessCard — mic button vs. qualification call wiring", () =
 
     expect(startCall).toHaveBeenCalledTimes(1);
     const [overrides] = startCall.mock.calls[0] as [{ firstMessage: string; systemPrompt: string }];
-    expect(overrides.firstMessage).toBe(ENGLISH_QUALIFICATION_CALL_OPENING);
+    expect(overrides.firstMessage).toBe(QUALIFICATION_CALL_OPENING);
+    expect(overrides.firstMessage).toBe("Is our service or product something you need immediately?\n\nPlease answer with Yes, No, or Maybe.");
     expect(overrides.systemPrompt).toContain("BASE_SYSTEM_PROMPT_MARKER");
     expect(overrides.systemPrompt).toContain("STRICT CLOSED-ENDED questionnaire");
+    expect(overrides.systemPrompt).not.toMatch(/[஀-௿]/); // no Tamil script anywhere in the qualification directive
   });
 });

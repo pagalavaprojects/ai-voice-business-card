@@ -3,17 +3,15 @@
  * never sequences, never persists directly — every one of those still
  * flows through the real get_next_qualification_question tool (the exact
  * ToolRegistry instance, not a mock of it), the same one the Vapi webhook
- * calls for voice. What's tested here is only what's new for this
- * channel: language selection, pending-question tracking across separate
- * (stateless) calls, and that invalid/valid answers behave identically to
- * the already-tested voice contract.
+ * calls for voice, and the SAME six-question authoritative script (2026-
+ * 08-13 revision — English-only, no language-selection step: the first
+ * inbound message goes straight into question 1).
  */
 import { ToolRegistry } from "@/core/application/tools/ToolRegistry";
-import { LeadTemperature } from "@/core/domain/models/types";
 import { WhatsAppQualificationChannel, WhatsAppInboundMessage } from "@/core/application/services/WhatsAppQualificationChannel";
 import { IConversationRepository } from "@/core/domain/repositories/IConversationRepository";
 import { Conversation } from "@/core/domain/models/types";
-import { getAuthoredQuestionFor } from "@/features/voice/lib/qualificationScript";
+import { getAuthoredQuestion } from "@/features/voice/lib/qualificationScript";
 
 function buildConversationRepo() {
   const conversations = new Map<string, Conversation>();
@@ -82,7 +80,7 @@ function buildNotifier() {
 /** The exact same in-memory lead store shape as QualificationSequencing's
  * buildLive() — proves the WhatsApp path exercises the SAME auto-create-
  * lead-by-conversationId fix, not a reimplementation of it. */
-function buildCrmRepo(temperature: LeadTemperature | null = null) {
+function buildCrmRepo() {
   const leads = new Map<string, { id: string; conversation_id: string; qualification_notes: string; lead_temperature: string | null }>();
   let nextId = 0;
   return {
@@ -94,7 +92,7 @@ function buildCrmRepo(temperature: LeadTemperature | null = null) {
       }),
       createLead: jest.fn(async (data: { conversation_id?: string }) => {
         const id = `lead-${++nextId}`;
-        const lead = { id, conversation_id: data.conversation_id ?? "", qualification_notes: "", lead_temperature: temperature };
+        const lead = { id, conversation_id: data.conversation_id ?? "", qualification_notes: "", lead_temperature: null };
         leads.set(id, lead);
         return lead;
       }),
@@ -108,10 +106,10 @@ function buildCrmRepo(temperature: LeadTemperature | null = null) {
   };
 }
 
-function buildChannel(temperature: LeadTemperature | null = null) {
+function buildChannel() {
   const { repo: conversationRepo, conversations } = buildConversationRepo();
   const { notifier, sent } = buildNotifier();
-  const { crmRepo, leads } = buildCrmRepo(temperature);
+  const { crmRepo, leads } = buildCrmRepo();
   const toolRegistry = new ToolRegistry(crmRepo as never, {} as never, {} as never);
   const channel = new WhatsAppQualificationChannel(toolRegistry, conversationRepo, notifier);
   return { channel, conversations, sent, leads };
@@ -120,42 +118,25 @@ function buildChannel(temperature: LeadTemperature | null = null) {
 const BASE = { companyId: "c1", employeeId: "e1", waId: "919999999999" };
 const msg = (text: string, overrides: Partial<WhatsAppInboundMessage> = {}): WhatsAppInboundMessage => ({ ...BASE, text, ...overrides });
 
-describe("WhatsAppQualificationChannel — language selection", () => {
-  it("a brand-new sender is sent the language prompt and no qualification question yet", async () => {
+describe("WhatsAppQualificationChannel — first contact goes straight to question 1", () => {
+  it("a brand-new sender's first message is answered with Q1 + guidance immediately — no language prompt, no generic greeting", async () => {
     const { channel, sent, conversations } = buildChannel();
     await channel.handleInboundMessage(msg("Hi"));
     expect(sent).toHaveLength(1);
-    expect(sent[0].body).toContain("Tamil");
+    expect(sent[0].body).toBe(getAuthoredQuestion(1)!.question + "\n\nPlease answer with Yes, No, or Maybe.");
+    for (const forbidden of ["How can I help", "How may I help", "What can I help", "Tamil", "English"]) {
+      expect(sent[0].body).not.toContain(forbidden);
+    }
     const [conv] = conversations.values();
-    expect(conv.language).toBeNull();
-    expect(conv.whatsapp_pending_question).toBeNull();
-  });
-
-  it("selecting Tamil persists the language and immediately sends Q1 + guidance in Tamil", async () => {
-    const { channel, sent, conversations } = buildChannel();
-    await channel.handleInboundMessage(msg("Hi"));
-    await channel.handleInboundMessage(msg("தமிழ்"));
-    expect(sent).toHaveLength(2);
-    expect(sent[1].body).toBe(getAuthoredQuestionFor("ta", 1)!.question + "\n\nஆம், இல்லை அல்லது இருந்தாலும் என பதிலளிக்கவும்.");
-    const [conv] = conversations.values();
-    expect(conv.language).toBe("ta");
     expect(conv.whatsapp_pending_question).toBe(1);
   });
 
-  it("selecting English persists the language and sends the authored English Q1 + guidance", async () => {
-    const { channel, sent, conversations } = buildChannel();
-    await channel.handleInboundMessage(msg("Hello"));
-    await channel.handleInboundMessage(msg("English"));
-    expect(sent[1].body).toBe(getAuthoredQuestionFor("en", 1)!.question + "\n\nPlease answer with Yes, No, or Maybe.");
-    expect([...conversations.values()][0].language).toBe("en");
-  });
-
-  it("an unrecognized reply re-sends the language prompt rather than guessing", async () => {
-    const { channel, sent } = buildChannel();
-    await channel.handleInboundMessage(msg("Hi"));
-    await channel.handleInboundMessage(msg("what is this"));
-    expect(sent).toHaveLength(2);
-    expect(sent[1].body).toContain("Tamil");
+  it("works identically no matter what the visitor's opening message says — no language gate to satisfy first", async () => {
+    for (const opener of ["Hi", "Hello", "vanakkam", "hey there, tell me more", ""]) {
+      const { channel, sent } = buildChannel();
+      await channel.handleInboundMessage(msg(opener || " "));
+      expect(sent[0].body).toBe(getAuthoredQuestion(1)!.question + "\n\nPlease answer with Yes, No, or Maybe.");
+    }
   });
 });
 
@@ -163,19 +144,16 @@ describe("WhatsAppQualificationChannel — conversation identity", () => {
   it("a new sender creates exactly one conversation", async () => {
     const { channel, conversations } = buildChannel();
     await channel.handleInboundMessage(msg("Hi"));
-    await channel.handleInboundMessage(msg("Hi again"));
+    await channel.handleInboundMessage(msg("Yes"));
     expect(conversations.size).toBe(1);
   });
 
   it("an existing sender's second message reuses the SAME conversation — state persists across separate calls, exactly like separate webhook requests", async () => {
-    const { channel, conversations } = buildChannel(LeadTemperature.HOT);
+    const { channel, conversations } = buildChannel();
     await channel.handleInboundMessage(msg("Hi"));
-    await channel.handleInboundMessage(msg("English"));
-    expect(conversations.size).toBe(1);
-    const [conv] = conversations.values();
-    expect(conv.whatsapp_pending_question).toBe(1);
+    expect([...conversations.values()][0].whatsapp_pending_question).toBe(1);
 
-    // A THIRD, fully independent call — simulating a fresh webhook request
+    // A SECOND, fully independent call — simulating a fresh webhook request
     // with no shared in-memory state — must continue from Q1, not restart.
     await channel.handleInboundMessage(msg("Yes"));
     expect(conversations.size).toBe(1);
@@ -183,28 +161,26 @@ describe("WhatsAppQualificationChannel — conversation identity", () => {
   });
 });
 
-describe("WhatsAppQualificationChannel — English answer matrix (reuses the real classifier/sequencer)", () => {
+describe("WhatsAppQualificationChannel — answer matrix (reuses the real classifier/sequencer)", () => {
   it.each([
     ["Yes", "YES"],
     ["No", "NO"],
     ["Maybe", "MAYBE"],
   ])('"%s" is classified %s, persisted, Live Transcript data available, and Q2 is sent', async (reply, cls) => {
-    const { channel, sent, leads } = buildChannel(LeadTemperature.HOT);
+    const { channel, sent, leads } = buildChannel();
     await channel.handleInboundMessage(msg("Hi"));
-    await channel.handleInboundMessage(msg("English"));
     sent.length = 0; // only inspect what happens for the actual answer
     await channel.handleInboundMessage(msg(reply));
 
     expect(sent).toHaveLength(1);
-    expect(sent[0].body).toBe(getAuthoredQuestionFor("en", 2)!.question + "\n\nPlease answer with Yes, No, or Maybe.");
+    expect(sent[0].body).toBe(getAuthoredQuestion(2)!.question + "\n\nPlease answer with Yes, No, or Maybe.");
     const [lead] = leads.values();
     expect(lead.qualification_notes).toContain(`Q1 [${cls}]`);
   });
 
-  it('an invalid English reply ("I think so") does not persist, does not advance, and repeats the guidance', async () => {
-    const { channel, sent, leads } = buildChannel(LeadTemperature.HOT);
+  it('an invalid reply ("I think so") does not persist, does not advance, and repeats the guidance', async () => {
+    const { channel, sent, leads } = buildChannel();
     await channel.handleInboundMessage(msg("Hi"));
-    await channel.handleInboundMessage(msg("English"));
     sent.length = 0;
     await channel.handleInboundMessage(msg("I think so"));
 
@@ -223,149 +199,69 @@ describe("WhatsAppQualificationChannel — English answer matrix (reuses the rea
   });
 });
 
-describe("WhatsAppQualificationChannel — Tamil answer matrix", () => {
-  it.each([
-    ["ஆம்", "YES"],
-    ["இல்லை", "NO"],
-    ["இருந்தாலும்", "MAYBE"],
-  ])('"%s" is classified %s and Q2 is sent in Tamil', async (reply, cls) => {
-    const { channel, sent, leads } = buildChannel(LeadTemperature.HOT);
-    await channel.handleInboundMessage(msg("வணக்கம்"));
-    await channel.handleInboundMessage(msg("தமிழ்"));
-    sent.length = 0;
-    await channel.handleInboundMessage(msg(reply));
-
-    expect(sent[0].body).toBe(getAuthoredQuestionFor("ta", 2)!.question + "\n\nஆம், இல்லை அல்லது இருந்தாலும் என பதிலளிக்கவும்.");
-    const [lead] = leads.values();
-    expect(lead.qualification_notes).toContain(`Q1 [${cls}]`);
-  });
-
-  it("an invalid Tamil reply does not advance, repeats the Tamil guidance, and creates no lead", async () => {
-    const { channel, sent, leads } = buildChannel(LeadTemperature.HOT);
-    await channel.handleInboundMessage(msg("வணக்கம்"));
-    await channel.handleInboundMessage(msg("தமிழ்"));
-    sent.length = 0;
-    await channel.handleInboundMessage(msg("ஆம், இருக்கிறது")); // sentence, not the closed word
-
-    expect(sent[0].body).toBe("ஆம், இல்லை அல்லது இருந்தாலும் என பதிலளிக்கவும்.");
-    expect(leads.size).toBe(0);
-  });
-});
-
-describe("WhatsAppQualificationChannel — Q7 temperature scoring is genuinely computed through this channel, not pre-seeded", () => {
-  // Every other test in this file pre-seeds lead_temperature via
-  // buildChannel(LeadTemperature.X) — proving routing given a known
-  // temperature, but never that the temperature was actually COMPUTED from
-  // real WhatsApp answers. buildChannel(null) starts the lead with
-  // lead_temperature: null (exactly as a real new lead does), so this
-  // proves get_next_qualification_question's Q7-boundary scoring genuinely
-  // fires end to end through the WhatsApp adapter, the same deterministic
-  // scoring already proven for voice in QualificationSequencing.test.ts.
-  it("7 real YES answers via WhatsApp compute and persist HOT — not merely routed as if it were", async () => {
-    const { channel, sent, leads, conversations } = buildChannel(null);
+describe("WhatsAppQualificationChannel — qualification never computes or persists lead_temperature through this channel", () => {
+  // Root cause this guards against regressing: qualification completion
+  // and lead scoring are deliberately separate concerns (2026-08-13
+  // decision) — this tool must never gate or auto-score through WhatsApp,
+  // same as through voice.
+  it("walking all six questions never sets lead_temperature", async () => {
+    const { channel, leads } = buildChannel();
     await channel.handleInboundMessage(msg("Hi"));
-    await channel.handleInboundMessage(msg("English"));
-    for (let q = 1; q <= 6; q++) {
-      await channel.handleInboundMessage(msg("Yes"));
-    }
-    sent.length = 0;
-    await channel.handleInboundMessage(msg("Yes")); // answers Q7 — scoring boundary
-
-    expect(sent[0].body).toContain(getAuthoredQuestionFor("en", 8)!.question);
-    expect([...conversations.values()][0].whatsapp_pending_question).toBe(8);
-    const [lead] = leads.values();
-    expect(lead.lead_temperature).toBe(LeadTemperature.HOT);
-  });
-
-  it("7 real NO answers via WhatsApp compute and persist COLD, routing straight to Q16", async () => {
-    const { channel, sent, leads, conversations } = buildChannel(null);
-    await channel.handleInboundMessage(msg("Hi"));
-    await channel.handleInboundMessage(msg("English"));
-    for (let q = 1; q <= 6; q++) {
-      await channel.handleInboundMessage(msg("No"));
-    }
-    sent.length = 0;
-    await channel.handleInboundMessage(msg("No")); // answers Q7 — scoring boundary
-
-    expect(sent[0].body).toContain(getAuthoredQuestionFor("en", 16)!.question);
-    expect([...conversations.values()][0].whatsapp_pending_question).toBe(16);
-    const [lead] = leads.values();
-    expect(lead.lead_temperature).toBe(LeadTemperature.COLD);
-  });
-
-  it("a mixed real answer set via WhatsApp (4 YES + 2 MAYBE + 1 NO = 5 points) computes and persists WARM, routing to Q8", async () => {
-    const { channel, sent, leads, conversations } = buildChannel(null);
-    await channel.handleInboundMessage(msg("Hi"));
-    await channel.handleInboundMessage(msg("English"));
-    for (const reply of ["Yes", "Yes", "Yes", "Yes", "Maybe", "Maybe"]) {
+    for (const reply of ["Yes", "Yes", "Yes", "Yes", "Yes"]) {
       await channel.handleInboundMessage(msg(reply));
     }
-    sent.length = 0;
-    await channel.handleInboundMessage(msg("No")); // answers Q7 — scoring boundary
-
-    expect(sent[0].body).toContain(getAuthoredQuestionFor("en", 8)!.question);
-    expect([...conversations.values()][0].whatsapp_pending_question).toBe(8);
     const [lead] = leads.values();
-    expect(lead.lead_temperature).toBe(LeadTemperature.WARM);
+    expect(lead.lead_temperature).toBeNull();
   });
 });
 
-describe("WhatsAppQualificationChannel — Q13 remains intentionally absent through this channel too", () => {
-  it("walking Q1 through Q12 via real WhatsApp answers sends Q14 next, never Q13", async () => {
-    const { channel, sent, conversations } = buildChannel(LeadTemperature.HOT);
+describe("WhatsAppQualificationChannel — exactly six questions, no old Q7+ fragments reachable", () => {
+  it("walking Q1 through Q5 sends Q6 (the calendar-consent question) next, never a seventh question", async () => {
+    const { channel, sent, conversations } = buildChannel();
     await channel.handleInboundMessage(msg("Hi"));
-    await channel.handleInboundMessage(msg("English"));
-    for (let q = 1; q <= 11; q++) {
+    for (let i = 0; i < 4; i++) {
       await channel.handleInboundMessage(msg("Yes"));
     }
     sent.length = 0;
-    await channel.handleInboundMessage(msg("Yes")); // answers Q12
+    await channel.handleInboundMessage(msg("Yes")); // answers Q5
 
-    expect(sent[0].body).toContain(getAuthoredQuestionFor("en", 14)!.question);
-    expect(sent[0].body).not.toContain("Question 13");
-    expect([...conversations.values()][0].whatsapp_pending_question).toBe(14);
+    expect(sent[0].body).toContain(getAuthoredQuestion(6)!.question);
+    expect(sent[0].body).toContain("Shall I show you our calendar now");
+    expect([...conversations.values()][0].whatsapp_pending_question).toBe(6);
   });
 });
 
-describe("WhatsAppQualificationChannel — routing and completion (reuses existing rules, invents nothing)", () => {
-  it("COLD routing is unaffected by channel: Q7 -> Q16 through WhatsApp exactly as through voice", async () => {
-    const { channel, sent, conversations } = buildChannel(LeadTemperature.COLD);
+describe("WhatsAppQualificationChannel — completion and booking handoff (reuses existing rules, invents nothing)", () => {
+  it("Q6 completes the questionnaire, sends a completion message with the booking link when provided, and clears the pending question", async () => {
+    const { channel, sent, conversations } = buildChannel();
     await channel.handleInboundMessage(msg("Hi"));
-    await channel.handleInboundMessage(msg("English"));
-    for (let q = 1; q <= 6; q++) {
-      await channel.handleInboundMessage(msg("Yes"));
-    }
+    for (let i = 0; i < 5; i++) await channel.handleInboundMessage(msg("Yes"));
+    expect([...conversations.values()][0].whatsapp_pending_question).toBe(6);
     sent.length = 0;
-    await channel.handleInboundMessage(msg("Yes")); // answers Q7
-    expect(sent[0].body).toContain(getAuthoredQuestionFor("en", 16)!.question);
-    expect([...conversations.values()][0].whatsapp_pending_question).toBe(16);
-  });
-
-  it("Q17 completes the questionnaire, sends a completion message with the booking link when provided, and clears the pending question", async () => {
-    // WARM walks all 16 authored numbers (1-12,14-17); pending starts at 1
-    // (Q1 already sent). 15 "Yes" replies advance from Q1-answered through
-    // Q16-answered (pending=17); the 16th reply answers Q17 and completes.
-    const { channel, sent, conversations } = buildChannel(LeadTemperature.WARM);
-    await channel.handleInboundMessage(msg("Hi"));
-    await channel.handleInboundMessage(msg("English"));
-    for (let q = 0; q < 15; q++) {
-      await channel.handleInboundMessage(msg("Yes"));
-    }
-    expect([...conversations.values()][0].whatsapp_pending_question).toBe(17);
-    sent.length = 0;
-    await channel.handleInboundMessage(msg("Yes", { bookingUrl: "https://maylaanai.com/c/founder" })); // answers Q17
+    await channel.handleInboundMessage(msg("Yes", { bookingUrl: "https://maylaanai.com/c/founder" })); // answers Q6
     expect(sent[0].body).toContain("complete");
     expect(sent[0].body).toContain("https://maylaanai.com/c/founder");
     expect([...conversations.values()][0].whatsapp_pending_question).toBeNull();
+    // No second booking engine: WhatsApp hands off to the existing web
+    // flow rather than claiming a booking itself.
+    expect(sent[0].body).not.toMatch(/confirmed|booked/i);
   });
 
   it("never fabricates a booking link when the caller doesn't supply one", async () => {
-    const { channel, sent } = buildChannel(LeadTemperature.WARM);
+    const { channel, sent } = buildChannel();
     await channel.handleInboundMessage(msg("Hi"));
-    await channel.handleInboundMessage(msg("English"));
-    for (let q = 0; q < 15; q++) await channel.handleInboundMessage(msg("Yes"));
+    for (let i = 0; i < 5; i++) await channel.handleInboundMessage(msg("Yes"));
     sent.length = 0;
-    await channel.handleInboundMessage(msg("Yes"));
+    await channel.handleInboundMessage(msg("Yes")); // answers Q6, no bookingUrl supplied
     expect(sent[0].body).not.toMatch(/https?:\/\//);
+  });
+
+  it("does not send the voice-only 'Please Click to Continue' wording — WhatsApp uses its own channel-appropriate completion text", async () => {
+    const { channel, sent } = buildChannel();
+    await channel.handleInboundMessage(msg("Hi"));
+    for (let i = 0; i < 5; i++) await channel.handleInboundMessage(msg("Yes"));
+    sent.length = 0;
+    await channel.handleInboundMessage(msg("Yes")); // answers Q6
+    expect(sent[0].body).not.toContain("Please Click to Continue");
   });
 });

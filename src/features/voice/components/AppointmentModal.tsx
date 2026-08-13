@@ -6,14 +6,7 @@ import { Dialog } from "@/shared/ui/dialog";
 import { Button } from "@/shared/ui/button";
 import { Skeleton } from "@/shared/ui/skeleton";
 import type { LanguageCode } from "@/features/language/config";
-import {
-  isQualificationSupportedLanguage,
-  getQualificationSet1,
-  getAllQualificationQuestions,
-  getQualificationQuestions,
-  matchAuthoredQuestion,
-  type QualificationLanguage,
-} from "@/features/voice/lib/qualificationScript";
+import { ALL_QUESTIONS, QUALIFICATION_QUESTIONS, getAuthoredQuestion, matchAuthoredQuestion } from "@/features/voice/lib/qualificationScript";
 
 interface AppointmentModalProps {
   open: boolean;
@@ -34,13 +27,12 @@ interface AppointmentModalProps {
    * opens on a voice-qualification step BEFORE slot selection: the visitor
    * explicitly starts the AI conversation (microphone/Vapi are never
    * initialized merely by opening the modal), the conversation qualifies
-   * them through the existing save_lead/update_lead_qualification tools,
-   * and this modal polls the qualification-status endpoint (keyed by the
-   * live callId) for the resulting temperature. HOT/WARM are invited to
-   * keep talking through the conversion-assessment questions; COLD skips
-   * straight to slot selection — either way the visitor is never trapped:
-   * a skip control is always available. Absent (older callers/tests), the
-   * modal behaves exactly as before, opening directly on slot selection. */
+   * them through the six authoritative questions (get_next_qualification_
+   * question), and this modal polls the qualification-status endpoint
+   * (keyed by the live callId) for completion. The visitor is never
+   * trapped: a skip control is always available regardless of progress.
+   * Absent (older callers/tests), the modal behaves exactly as before,
+   * opening directly on slot selection. */
   voice?: {
     voiceState: string;
     callId: string | null;
@@ -50,8 +42,6 @@ interface AppointmentModalProps {
      * — the qualification panel renders the current question and the
      * visitor's REAL answers from this. Never fabricated. */
     messages?: Array<{ role: "assistant" | "user"; content: string }>;
-    /** The session language — the authored-question matching is Tamil-only. */
-    language?: string;
   };
 }
 
@@ -98,7 +88,10 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   // to us; without one the flow starts on slot selection as it always did.
   const [step, setStep] = useState<0 | 1 | 2 | 3>(voice ? 0 : 1);
   const [qualStage, setQualStage] = useState<"intro" | "active">("intro");
-  const [temperature, setTemperature] = useState<"HOT" | "WARM" | "COLD" | null>(null);
+  // True once the visitor has answered all six authoritative questions
+  // (the server's qualification-status endpoint reports this directly —
+  // completion is no longer inferred from a lead-scoring byproduct).
+  const [qualComplete, setQualComplete] = useState(false);
   // Per-question answer records from the server (question number,
   // YES/NO/MAYBE, ENGLISH transcript) — the transcript shown to the
   // visitor is English-only by product rule; raw Tamil ASR is never
@@ -203,25 +196,21 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
     }
   };
 
-  // Polls the lead's temperature while the qualification conversation is
-  // live. The interval is modest (3s) and stops itself the moment the modal
-  // closes, the step advances, or a temperature arrives — the HOT/WARM
-  // invitation to keep talking doesn't need continued polling; routing only
-  // needs the first classification.
+  // Polls qualification progress while the conversation is live. The
+  // interval is modest (3s) and stops itself the moment the modal closes or
+  // the step advances.
   useEffect(() => {
-    // Polls for the WHOLE active conversation (not just until the
-    // temperature lands): the answers feed is what renders the visitor's
-    // English transcript. Stops on modal close or leaving the step.
+    // Polls for the WHOLE active conversation (not just until completion):
+    // the answers feed is what renders the visitor's transcript. Stops on
+    // modal close or leaving the step.
     if (!open || step !== 0 || qualStage !== "active" || !voice?.callId) return;
     const timer = setInterval(() => {
       fetch(`/api/public/${companyId}/${employeeId}/qualification-status?callId=${encodeURIComponent(voice.callId!)}`)
         .then((res) => (res.ok ? res.json() : null))
-        .then(
-          (data: { qualified?: boolean; temperature?: "HOT" | "WARM" | "COLD" | null; answers?: Array<{ n: number; c: string; a: string }> } | null) => {
-            if (data?.qualified && data.temperature) setTemperature(data.temperature);
-            if (Array.isArray(data?.answers)) setQualAnswers(data!.answers!);
-          }
-        )
+        .then((data: { qualified?: boolean; answers?: Array<{ n: number; c: string; a: string }> } | null) => {
+          if (data?.qualified) setQualComplete(true);
+          if (Array.isArray(data?.answers)) setQualAnswers(data!.answers!);
+        })
         .catch(() => undefined);
     }, 3000);
     return () => clearInterval(timer);
@@ -238,7 +227,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
     if (qualStageRef.current === "active") voice?.endCall();
     setStep(voice ? 0 : 1);
     setQualStage("intro");
-    setTemperature(null);
+    setQualComplete(false);
     setQualAnswers([]);
     setFormData({ name: "", email: "", phone: "", notes: "" });
     setOutcome(null);
@@ -313,56 +302,43 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                     is their REAL transcript only; nothing is ever invented. */}
                 {(() => {
                   const msgs = voice.messages ?? [];
-                  // The closed-ended flow is authored for Tamil and English
-                  // — every other language keeps the general conversation
-                  // (currentQuestion stays null, falling back below to the
-                  // raw transcript, exactly as before this was generalized).
-                  const qualLang: QualificationLanguage | null = isQualificationSupportedLanguage(voice.language) ? voice.language : null;
                   // CURRENT question: the last assistant utterance that
                   // matches an authored question — displayed in the exact
                   // AUTHORED wording, never an ASR paraphrase. Seeded with
                   // Q1 (it IS the call's opening line). Falls forward to the
                   // next expected question when the server's answer records
-                  // are ahead of the transcript events.
-                  let currentQuestion: string | null = qualLang ? getQualificationSet1(qualLang)[0] : null;
-                  if (qualLang) {
-                    const allQuestions = getAllQualificationQuestions(qualLang);
-                    const questionList = getQualificationQuestions(qualLang);
-                    for (let i = msgs.length - 1; i >= 0; i--) {
-                      if (msgs[i].role !== "assistant") continue;
-                      const matched = matchAuthoredQuestion(qualLang, msgs[i].content);
-                      if (matched) {
-                        currentQuestion = matched;
-                        break;
-                      }
-                    }
-                    const maxAnswered = qualAnswers.reduce((m, a) => Math.max(m, a.n), 0);
-                    const currentNum = currentQuestion ? allQuestions.indexOf(currentQuestion) + 1 : 0;
-                    if (maxAnswered > 0 && currentNum > 0) {
-                      const currentAuthored = questionList.find((q) => q.question === currentQuestion);
-                      if (currentAuthored && currentAuthored.number <= maxAnswered) {
-                        const next = questionList.find((q) => q.number > maxAnswered);
-                        if (next) currentQuestion = next.question;
-                      }
+                  // are ahead of the transcript events. The qualification
+                  // script is always English regardless of the card's
+                  // chosen language.
+                  let currentQuestion: string | null = QUALIFICATION_QUESTIONS[0].question;
+                  for (let i = msgs.length - 1; i >= 0; i--) {
+                    if (msgs[i].role !== "assistant") continue;
+                    const matched = matchAuthoredQuestion(msgs[i].content);
+                    if (matched) {
+                      currentQuestion = matched;
+                      break;
                     }
                   }
-                  const qNum = currentQuestion && qualLang ? getQualificationQuestions(qualLang).find((q) => q.question === currentQuestion)?.number ?? 0 : 0;
+                  const maxAnswered = qualAnswers.reduce((m, a) => Math.max(m, a.n), 0);
+                  const currentNum = currentQuestion ? ALL_QUESTIONS.indexOf(currentQuestion) + 1 : 0;
+                  if (maxAnswered > 0 && currentNum > 0 && currentNum <= maxAnswered) {
+                    const next = QUALIFICATION_QUESTIONS.find((q) => q.number > maxAnswered);
+                    if (next) currentQuestion = next.question;
+                  }
+                  const qNum = currentQuestion ? QUALIFICATION_QUESTIONS.find((q) => q.question === currentQuestion)?.number ?? 0 : 0;
                   const latestAssistant = [...msgs].reverse().find((m) => m.role === "assistant");
                   const aiLine = currentQuestion ?? latestAssistant?.content ?? null;
                   return (
                     <div className="space-y-2.5" data-testid="qualification-conversation">
                       {qNum > 0 && (
                         <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold" data-testid="qual-progress">
-                          {qNum <= 7
-                            ? t("appointment.progressSet1", { n: String(qNum) })
-                            : t("appointment.progressSet2", { n: String(qNum) })}
+                          {t("appointment.qualifyProgress", { n: String(qNum), total: String(QUALIFICATION_QUESTIONS.length) })}
                         </p>
                       )}
-                      {/* Answered questions: authored Tamil question + the
-                          visitor's ENGLISH answer + its YES/NO/MAYBE tag,
-                          exactly as the server recorded them. English-only
-                          transcript is a product rule — raw Tamil ASR is
-                          never rendered. */}
+                      {/* Answered questions: the authored question + the
+                          visitor's answer + its YES/NO/MAYBE tag, exactly as
+                          the server recorded them — never reconstructed or
+                          invented client-side. */}
                       {qualAnswers.length > 0 && (
                         <div>
                           <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-1" data-testid="qual-transcript-heading">
@@ -370,13 +346,13 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                           </p>
                           <div className="space-y-2 max-h-36 overflow-y-auto pr-1" data-testid="qual-history">
                             {qualAnswers.map((ans) => {
-                              const authored = qualLang ? getQualificationQuestions(qualLang).find((q) => q.number === ans.n) : undefined;
+                              const authored = getAuthoredQuestion(ans.n);
                               const accentBorder =
                                 ans.c === "YES" ? "border-emerald-400/40" : ans.c === "NO" ? "border-rose-400/40" : "border-amber-400/40";
                               return (
                                 <div key={ans.n} className={`border-l-2 ${accentBorder} pl-2.5`}>
                                   {authored && (
-                                    <p className="text-[11px] text-slate-400 leading-snug" lang={qualLang ?? undefined}>
+                                    <p className="text-[11px] text-slate-400 leading-snug" lang="en">
                                       {authored.question}
                                     </p>
                                   )}
@@ -405,7 +381,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                       {aiLine && (
                         <div>
                           <p className="text-[10px] uppercase tracking-wider text-sky-400 font-semibold mb-1">{t("transcript.aiTwin")}</p>
-                          <p className="text-sm text-slate-100 leading-relaxed" data-testid="current-question" lang={qualLang ?? undefined}>
+                          <p className="text-sm text-slate-100 leading-relaxed" data-testid="current-question" lang="en">
                             {aiLine}
                           </p>
                         </div>
@@ -426,12 +402,8 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                           : t("status.availableNow")}
                   </span>
                 </div>
-                {temperature !== null && (
-                  <p className="text-xs text-slate-400">
-                    {temperature === "COLD" ? t("appointment.qualifyDoneCold") : t("appointment.qualifyDoneWarm")}
-                  </p>
-                )}
-                {temperature !== null && (
+                {qualComplete && <p className="text-xs text-slate-400">{t("appointment.qualifyDone")}</p>}
+                {qualComplete && (
                   <Button
                     variant="default"
                     data-testid="qualification-continue"

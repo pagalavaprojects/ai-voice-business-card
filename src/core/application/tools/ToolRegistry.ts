@@ -11,11 +11,9 @@ import { getWhatsAppNotifier } from "../../infrastructure/notifications/WhatsApp
 import {
   APPOINTMENT_CONFIRMED_CLOSING,
   classifyClosedResponse,
-  ENGLISH_CONTINUE_PROMPT,
-  getAuthoredQuestionFor,
-  getQualificationGuidance,
-  isQualificationSupportedLanguage,
-  TAMIL_CONTINUE_PROMPT,
+  getAuthoredQuestion,
+  QUALIFICATION_ANSWER_GUIDANCE,
+  QUALIFICATION_CONTINUE_PROMPT,
   withAnswerGuidance,
 } from "@/features/voice/lib/qualificationScript";
 import { AppointmentStatus, LeadTemperature, NurtureStatus, LeadQualificationSignalsSchema } from "../../domain/models/types";
@@ -304,33 +302,6 @@ export class ToolRegistry {
     return result.data;
   }
 
-  /**
-   * Deterministic HOT/WARM/COLD score for the closed-ended voice flow, from
-   * the Q1-Q7 answers already appended to qualification_notes ("Qn [YES|
-   * NO|MAYBE] ..."). Root cause this fixes: the closed-ended directive
-   * deliberately tells the model never to call save_lead early (it has no
-   * name/email/phone yet), so LeadQualificationService.calculateAndSaveLeadScore
-   * — the ONLY other code path that ever writes lead_temperature — never
-   * runs for a pure voice qualification. lead_temperature stayed null for
-   * the entire call, so the booking UI's "Continue" button (gated on
-   * temperature !== null) never appeared — the visitor's only way off the
-   * qualification screen was the secondary "skip" link, with no
-   * acknowledgment qualification had actually completed. Simple equal
-   * weight across the 7 gate questions (YES=1, MAYBE=0.5, NO=0): >=5.5 HOT,
-   * >=3.5 WARM, else COLD.
-   */
-  private scoreClosedEndedQualification(notes: string): LeadTemperature {
-    let points = 0;
-    for (const line of notes.split("\n")) {
-      const m = /^Q([1-7]) \[(YES|NO|MAYBE)\]/.exec(line.trim());
-      if (!m) continue;
-      points += m[2] === "YES" ? 1 : m[2] === "MAYBE" ? 0.5 : 0;
-    }
-    if (points >= 5.5) return LeadTemperature.HOT;
-    if (points >= 3.5) return LeadTemperature.WARM;
-    return LeadTemperature.COLD;
-  }
-
   private registerDefaultTools() {
     // 1. Save Lead Tool
     this.register({
@@ -615,8 +586,8 @@ export class ToolRegistry {
           status: appointment.status,
           confirmed,
           // Same deterministic mechanism as get_next_qualification_question's
-          // Q17 completion: the exact closing line lives in its own field the
-          // model is told to copy verbatim, rather than being embedded only in
+          // completion (question 6): the exact closing line lives in its own
+          // field the model is told to copy verbatim, rather than being embedded only in
           // prose the model has to reproduce from memory. Present ONLY on a
           // REAL confirmed booking (a real Cal.com event) — a REQUESTED
           // fallback (Cal.com couldn't complete a real slot, cancellation,
@@ -633,33 +604,31 @@ export class ToolRegistry {
     });
 
     // 2b. Qualification sequencing tool — the SERVER owns the authored
-    // question order and every branching rule: the Q10->Q11 condition, the
-    // deliberate Q13 gap, and COLD routing (skip Q8-Q15, still ask the
-    // calendar-consent questions Q16-Q17 — a COLD lead always still books).
-    // It also RECORDS each answer: question number, YES/NO/MAYBE, the
-    // English transcript and a timestamp are appended to the lead's
-    // existing qualification_notes field (no schema change), which is what
-    // the qualification-status endpoint serves back to the booking UI.
+    // question order: exactly six questions, no gaps, no branching. It also
+    // RECORDS each answer: question number, YES/NO/MAYBE, the English
+    // transcript and a timestamp are appended to the lead's existing
+    // qualification_notes field (no schema change), which is what the
+    // qualification-status endpoint serves back to the booking UI.
+    // Deliberately English-only and language-agnostic: this is the single
+    // authoritative qualification script regardless of which language the
+    // visitor's card/pitch experience is in (2026-08-13 product decision).
     this.register({
       name: "get_next_qualification_question",
       description:
         "REQUIRED after every visitor reply to a qualification question. The SERVER classifies the raw reply " +
-        "as YES/NO/MAYBE in the call's own language (Tamil: ஆம்/இல்லை/இருந்தாலும், English: yes/no/maybe — anything " +
-        "else returns a reprompt: stay on the same question), records accepted answers, and returns the exact " +
-        "next authored question to speak verbatim, or a routing action (COLD skips the conversion questions but " +
-        "still gets the calendar-consent questions; after the final question, proceed to booking).",
+        "as YES/NO/MAYBE (anything else returns a reprompt: stay on the same question), records accepted " +
+        "answers, and returns the exact next authored question to speak verbatim; after the sixth question, " +
+        "proceed to booking.",
       parameters: {
         type: "object",
         properties: {
           last_answered_question: {
             type: "number",
-            description: "The authored number (1-17) of the question the visitor just replied to, or 0 before any answer.",
+            description: "The authored number (1-6) of the question the visitor just replied to, or 0 before any answer.",
           },
           user_response: {
             type: "string",
-            description:
-              "The visitor's reply EXACTLY as heard, in the call's own language — never cleaned up, translated or " +
-              "invented. The server classifies it; you never do.",
+            description: "The visitor's reply EXACTLY as heard — never cleaned up, translated or invented. The server classifies it; you never do.",
           },
           lead_id: {
             type: "string",
@@ -669,29 +638,23 @@ export class ToolRegistry {
         required: ["last_answered_question"],
       },
       execute: async (args, context) => {
-        if (!isQualificationSupportedLanguage(context.language)) {
-          return { action: "freeform", message: "No authored script for this language — continue qualifying conversationally per your instructions." };
-        }
-        const language = context.language;
         const last = Number(args.last_answered_question);
-        if (!Number.isInteger(last) || last < 0 || last > 17 || last === 13) {
-          return { action: "error", message: "last_answered_question must be an integer 0-17 (13 does not exist)." };
+        if (!Number.isInteger(last) || last < 0 || last > 6) {
+          return { action: "error", message: "last_answered_question must be an integer 0-6." };
         }
 
-        const guidance = getQualificationGuidance(language);
-
-        // SERVER-side closed-ended classification of the raw reply, in the
-        // call's own language. The model never classifies and never decides
-        // validity: anything that is not clearly one of the three accepted
-        // words is rejected — no answer is stored, the questionnaire does
-        // not advance, and the model is told to re-speak the guidance and
-        // listen to the SAME question.
-        const classification = last > 0 ? classifyClosedResponse(language, String(args.user_response ?? "")) : null;
+        // SERVER-side closed-ended classification of the raw reply. The
+        // model never classifies and never decides validity: anything that
+        // is not clearly one of the three accepted words is rejected — no
+        // answer is stored, the questionnaire does not advance, and the
+        // model is told to re-speak the guidance and listen to the SAME
+        // question.
+        const classification = last > 0 ? classifyClosedResponse(String(args.user_response ?? "")) : null;
         if (last > 0 && classification === null) {
           return {
             action: "reprompt",
             question_number: last,
-            speak: guidance,
+            speak: QUALIFICATION_ANSWER_GUIDANCE,
             message:
               "The reply could not be classified as YES/NO/MAYBE — nothing was stored. Speak the guidance verbatim, " +
               "stay on the SAME question, and listen again. Do NOT advance.",
@@ -705,12 +668,11 @@ export class ToolRegistry {
         // the booking form, long after (sometimes never, if they abandon
         // before booking) this closed-ended Q&A completes. Without this, the
         // model routinely never has a lead_id, and every answer classifies
-        // correctly but silently fails to persist — the exact bug behind
-        // "the voice loop sounds like it works but Live Transcript never
-        // updates." A minimal placeholder lead is created on first use and
-        // reused (via conversation_id, no uniqueness constraint required)
-        // for the rest of the call; save_lead later still runs normally
-        // once real contact details are known.
+        // correctly but silently fails to persist. A minimal placeholder
+        // lead is created on first use and reused (via conversation_id, no
+        // uniqueness constraint required) for the rest of the call;
+        // save_lead later still runs normally once real contact details are
+        // known.
         let leadId = args.lead_id ? String(args.lead_id) : undefined;
         if (!leadId && context.conversationId) {
           try {
@@ -753,70 +715,27 @@ export class ToolRegistry {
         }
 
         const ask = (n: number) => {
-          const q = getAuthoredQuestionFor(language, n);
+          const q = getAuthoredQuestion(n);
           return q
-            ? { action: "ask_verbatim", question_number: q.number, question: q.question, speak: withAnswerGuidance(q.question, guidance) }
+            ? { action: "ask_verbatim", question_number: q.number, question: q.question, speak: withAnswerGuidance(q.question) }
             : { action: "error", message: `No authored question ${n}.` };
         };
 
-        // Branch rules, in authored-number space:
-        if (last === 0) return ask(1);
-        if (last < 7) return ask(last + 1);
-        if (last === 7) {
-          // Temperature gate — computed HERE from the REAL stored Q1-Q7
-          // classifications, never the model's impression. Previously this
-          // only READ lead_temperature, which nothing in the closed-ended
-          // flow ever WRITES (save_lead — the only other writer — is
-          // deliberately skipped early per the directive above), so it was
-          // always null: the booking UI's "Continue" button never appeared
-          // and COLD routing never actually fired. Compute-and-persist once,
-          // right when Q1-Q7 are complete. COLD skips the conversion
-          // questions (Q8-Q15) but STILL gets the calendar-consent pair
-          // Q16-Q17.
-          let temperature: LeadTemperature | null | undefined;
-          if (leadId) {
-            try {
-              const lead = await this.crmRepo.getLeadById(leadId);
-              temperature = lead?.lead_temperature as LeadTemperature | null | undefined;
-              if (!temperature && lead?.qualification_notes) {
-                temperature = this.scoreClosedEndedQualification(lead.qualification_notes);
-                await this.crmRepo.updateLeadQualification(leadId, { lead_temperature: temperature });
-              }
-            } catch (err) {
-              Logger.warn("get_next_qualification_question: lead lookup/scoring failed", { error: err instanceof Error ? err.message : String(err) });
-            }
-          }
-          if (temperature === LeadTemperature.COLD) {
-            const q16 = getAuthoredQuestionFor(language, 16)!;
-            return {
-              action: "ask_verbatim",
-              question_number: 16,
-              question: q16.question,
-              speak: withAnswerGuidance(q16.question, guidance),
-              note: "Lead is COLD — conversion questions 8-15 are skipped; after questions 16-17, proceed to booking. A COLD lead must always still be able to book.",
-            };
-          }
-          // HOT/WARM — and when unknown, continuing is the safe default.
-          return ask(8);
-        }
-        if (last === 10) {
-          // Conditional Q11: only when Q10 was YES or MAYBE. Q10 = NO means
-          // nothing is blocking them — asking "is it price-related?" would
-          // make no sense. Enforced HERE, never left to the model.
-          return classification === "NO" ? ask(12) : ask(11);
-        }
-        if (last === 12) return ask(14); // Q13 does not exist — never asked.
-        if (last === 17) {
-          return {
-            action: "complete_proceed_to_booking",
-            speak: language === "ta" ? TAMIL_CONTINUE_PROMPT : ENGLISH_CONTINUE_PROMPT,
-            message:
-              "All questions are complete. SPEAK the 'speak' text EXACTLY as returned — do not paraphrase it. The " +
-              "on-screen Continue button is already visible; the visitor picks a time and enters their details " +
-              "there. The appointment is NOT booked yet — never say it's confirmed until they've actually done that.",
-          };
-        }
-        return ask(last + 1);
+        // Exactly six questions, straight sequence, no gaps, no branching,
+        // no scoring gate — qualification completion is decoupled from lead
+        // scoring (calculateAndSaveLeadScore, triggered separately by
+        // save_lead/update_lead_qualification, remains the only place
+        // HOT/WARM/COLD is computed; it is informational for internal
+        // reporting only and never blocks or reroutes this sequence).
+        if (last < 6) return ask(last + 1);
+        return {
+          action: "complete_proceed_to_booking",
+          speak: QUALIFICATION_CONTINUE_PROMPT,
+          message:
+            "All six questions are complete. SPEAK the 'speak' text EXACTLY as returned — do not paraphrase it. The " +
+            "on-screen Continue button is already visible; the visitor picks a time and enters their details " +
+            "there. The appointment is NOT booked yet — never say it's confirmed until they've actually done that.",
+        };
       },
     });
 

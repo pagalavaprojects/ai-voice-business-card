@@ -12,7 +12,7 @@ import { Dialog } from "@/shared/ui/dialog";
 import { downloadVCard, imageUrlToDataUri } from "@/features/voice/lib/vcard";
 import { speakPitchWithBrowserTts, stopBrowserTts, pauseBrowserTts, resumeBrowserTts } from "@/features/voice/lib/pitchFallback";
 import { DEMO_COMPANY_ID } from "@/shared/lib/demoCard";
-import { isQualificationSupportedLanguage, getQualificationCallOpening, getQualificationDirective } from "@/features/voice/lib/qualificationScript";
+import { QUALIFICATION_CALL_OPENING, getQualificationDirective } from "@/features/voice/lib/qualificationScript";
 import { useLanguage } from "@/features/language/hooks/useLanguage";
 import { LanguageSelector } from "@/features/language/components/LanguageSelector";
 import { LanguageGate } from "@/features/language/components/LanguageGate";
@@ -944,25 +944,22 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
         voice={{
           voiceState,
           callId,
-          // The qualification call opens with Q1 + the closed-answer
-          // guidance (Tamil and English sessions — the two languages this
-          // closed-ended flow is authored for) — never the founder pitch,
-          // which belongs to the card/pitch experience — AND carries its
-          // own systemPrompt with the closed-ended questionnaire directive
-          // appended. That directive is scoped to ONLY this call: the base
-          // card.systemPrompt (used by the plain mic button below,
-          // unaffected here) never includes it, so a general conversation
-          // is never told "this is a strict closed-ended questionnaire."
-          // Every other language keeps its normal greeting.
+          // The qualification call always opens with Q1 + the closed-answer
+          // guidance, in English — never the founder pitch, which belongs
+          // to the card/pitch experience — AND carries its own systemPrompt
+          // with the closed-ended questionnaire directive appended. That
+          // directive is scoped to ONLY this call: the base card.
+          // systemPrompt (used by the plain mic button below, unaffected
+          // here) never includes it, so a general conversation is never
+          // told "this is a strict closed-ended questionnaire." The
+          // qualification script itself is English-only by product
+          // decision regardless of the card's chosen display language —
+          // pitch playback and general conversation remain fully
+          // multilingual and are untouched by this.
           startCall: () =>
-            startCall(
-              isQualificationSupportedLanguage(language)
-                ? { firstMessage: getQualificationCallOpening(language), systemPrompt: (card.systemPrompt ?? "") + getQualificationDirective(language) }
-                : undefined
-            ),
+            startCall({ firstMessage: QUALIFICATION_CALL_OPENING, systemPrompt: (card.systemPrompt ?? "") + getQualificationDirective() }),
           endCall,
           messages,
-          language,
         }}
       />
     </main>

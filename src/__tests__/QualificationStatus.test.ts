@@ -1,7 +1,10 @@
 /**
  * The booking flow's qualification poll must expose ONLY the routing
- * signal (qualified + temperature bucket) — never lead PII — and must be
- * scoped to the caller's own live call id.
+ * signal (qualified + parsed answers) — never lead PII — and must be
+ * scoped to the caller's own live call id. "Qualified" means genuine
+ * completion of all six authoritative questions (question 6 answered),
+ * not a lead-scoring byproduct — qualification completion and lead
+ * scoring are deliberately separate concerns (2026-08-13 revision).
  */
 import { NextRequest } from "next/server";
 
@@ -34,6 +37,12 @@ const params = { companyId: "c1", employeeId: "e1" };
 const request = (callId?: string) =>
   new NextRequest(`http://localhost/api/public/c1/e1/qualification-status${callId ? `?callId=${callId}` : ""}`);
 
+function notesThrough(n: number): string {
+  const lines = [];
+  for (let i = 1; i <= n; i++) lines.push(`Q${i} [YES] (2026-08-13T10:0${i}:00.000Z): Yes`);
+  return lines.join("\n");
+}
+
 describe("qualification-status", () => {
   beforeEach(() => {
     conversationRow = null;
@@ -47,46 +56,61 @@ describe("qualification-status", () => {
 
   it("reports unqualified while no conversation exists yet for the call", async () => {
     const json = await (await GET(request("call-abc-123"), { params })).json();
-    expect(json).toEqual({ qualified: false, temperature: null, answers: [] });
+    expect(json).toEqual({ qualified: false, answers: [] });
   });
 
-  it("reports unqualified while the lead has no temperature yet", async () => {
+  it("reports unqualified while no answers have been recorded yet", async () => {
     conversationRow = { id: "conv-1" };
-    leadRow = { lead_temperature: null };
+    leadRow = { qualification_notes: "" };
     const json = await (await GET(request("call-abc-123"), { params })).json();
-    expect(json).toEqual({ qualified: false, temperature: null, answers: [] });
+    expect(json).toEqual({ qualified: false, answers: [] });
   });
 
-  it.each(["HOT", "WARM", "COLD"] as const)("reports %s once the engine has classified the lead", async (temp) => {
+  it.each([1, 2, 3, 4, 5])("reports unqualified while only question %i of 6 has been answered", async (n) => {
     conversationRow = { id: "conv-1" };
-    leadRow = { lead_temperature: temp };
+    leadRow = { qualification_notes: notesThrough(n) };
+    const json = await (await GET(request("call-abc-123"), { params })).json();
+    expect(json.qualified).toBe(false);
+    expect(json.answers).toHaveLength(n);
+  });
+
+  it("reports qualified: true exactly once question 6 has been answered — completion, not a scoring byproduct", async () => {
+    conversationRow = { id: "conv-1" };
+    leadRow = { qualification_notes: notesThrough(6) };
     const res = await GET(request("call-abc-123"), { params });
     const json = await res.json();
-    expect(json).toEqual({ qualified: true, temperature: temp, answers: [] });
+    expect(json.qualified).toBe(true);
+    expect(json.answers).toHaveLength(6);
     expect(res.headers.get("Cache-Control")).toBe("no-store");
   });
 
-  it("never leaks lead fields beyond the routing signal", async () => {
+  it("is qualified even when lead_temperature was never set — completion never depends on scoring", async () => {
     conversationRow = { id: "conv-1" };
-    leadRow = { lead_temperature: "HOT", name: "Private Person", email: "p@x.com", phone: "+91 90000 00000" };
+    leadRow = { lead_temperature: null, qualification_notes: notesThrough(6) };
     const json = await (await GET(request("call-abc-123"), { params })).json();
-    expect(Object.keys(json).sort()).toEqual(["answers", "qualified", "temperature"]);
+    expect(json.qualified).toBe(true);
+  });
+
+  it("never leaks lead fields beyond the routing signal — no temperature field at all anymore", async () => {
+    conversationRow = { id: "conv-1" };
+    leadRow = { lead_temperature: "HOT", name: "Private Person", email: "p@x.com", phone: "+91 90000 00000", qualification_notes: notesThrough(6) };
+    const json = await (await GET(request("call-abc-123"), { params })).json();
+    expect(Object.keys(json).sort()).toEqual(["answers", "qualified"]);
   });
 
   it("parses the recorded answers out of qualification_notes and exposes ONLY the structured lines", async () => {
     conversationRow = { id: "conv-1" };
     leadRow = {
-      lead_temperature: "WARM",
       qualification_notes: [
         "internal AI reasoning line that must never leak",
-        "Q1 [YES] (2026-08-10T10:00:00.000Z): They struggle to generate leads.",
-        "Q2 [MAYBE] (2026-08-10T10:01:00.000Z): About three months.",
+        "Q1 [YES] (2026-08-13T10:00:00.000Z): They need it immediately.",
+        "Q2 [MAYBE] (2026-08-13T10:01:00.000Z): Some budget set aside.",
       ].join("\n"),
     };
     const json = await (await GET(request("call-abc-123"), { params })).json();
     expect(json.answers).toEqual([
-      { n: 1, c: "YES", a: "They struggle to generate leads." },
-      { n: 2, c: "MAYBE", a: "About three months." },
+      { n: 1, c: "YES", a: "They need it immediately." },
+      { n: 2, c: "MAYBE", a: "Some budget set aside." },
     ]);
     expect(JSON.stringify(json)).not.toContain("internal AI reasoning");
   });
