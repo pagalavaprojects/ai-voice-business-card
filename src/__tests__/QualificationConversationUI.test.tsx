@@ -127,6 +127,61 @@ describe("qualification conversation UI", () => {
     expect(screen.queryByTestId("qual-history")).toBeNull();
   });
 
+  // Regression: the qualification-status poll fires every 3s with no
+  // sequencing between ticks. Real network timing does not guarantee
+  // responses resolve in the order they were requested — a slower EARLIER
+  // request resolving after a faster LATER one previously overwrote
+  // qualAnswers with stale (older) data, visibly regressing the displayed
+  // question/progress even though the server's actual state only ever
+  // moved forward. This is the class of bug behind "the flow doesn't
+  // reliably progress" reports where the underlying voice conversation and
+  // persistence were both actually fine.
+  it("a slower earlier poll response arriving after a faster later one does not regress the displayed progress", async () => {
+    jest.useFakeTimers();
+    const resolvers: Array<(payload: unknown) => void> = [];
+    global.fetch = jest.fn((url: RequestInfo | URL) => {
+      const u = String(url);
+      if (u.includes("qualification-status")) {
+        return new Promise((resolve) => {
+          resolvers.push((payload) => resolve({ ok: true, json: async () => payload } as Response));
+        });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({ slots: [] }) } as Response);
+    }) as never;
+
+    render(
+      <AppointmentModal {...baseProps} voice={voiceWith([{ role: "assistant", content: QUALIFICATION_QUESTIONS[0].question }])} />
+    );
+    startQualification();
+
+    // Tick 1 issues request #1, left unresolved (simulating a slow response).
+    await act(async () => {
+      jest.advanceTimersByTime(3100);
+    });
+    expect(resolvers).toHaveLength(1);
+
+    // Tick 2 issues request #2 before request #1 has resolved.
+    await act(async () => {
+      jest.advanceTimersByTime(3000);
+    });
+    expect(resolvers).toHaveLength(2);
+
+    // Request #2 (newer) resolves FIRST, with real progress recorded.
+    await act(async () => {
+      resolvers[1]({ qualified: false, answers: [{ n: 1, c: "YES", a: "Yes" }, { n: 2, c: "NO", a: "No" }] });
+      await Promise.resolve();
+    });
+    expect(screen.getByTestId("qual-progress").textContent).toBe("appointment.qualifyProgress:3/6");
+
+    // Request #1 (older, stale) resolves SECOND, with empty answers — must
+    // be discarded rather than regressing the display back to Q1.
+    await act(async () => {
+      resolvers[0]({ qualified: false, answers: [] });
+      await Promise.resolve();
+    });
+    expect(screen.getByTestId("qual-progress").textContent).toBe("appointment.qualifyProgress:3/6");
+  });
+
   it("NEVER renders raw free-text visitor speech as the transcript — classification-only rule", () => {
     render(
       <AppointmentModal

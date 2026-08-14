@@ -204,10 +204,23 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
     // the answers feed is what renders the visitor's transcript. Stops on
     // modal close or leaving the step.
     if (!open || step !== 0 || qualStage !== "active" || !voice?.callId) return;
+    // Sequence guard against out-of-order responses: each tick's fetch can
+    // resolve in any order relative to the others (normal network jitter —
+    // no server-side change makes this impossible). Without this, a slow
+    // EARLIER request resolving AFTER a fast LATER one overwrites qualAnswers
+    // with stale data, visibly regressing the displayed question/progress
+    // even though the server's actual state only ever moved forward. A
+    // response is applied only if no later-issued request has already been
+    // applied.
+    let requestSeq = 0;
+    let latestAppliedSeq = 0;
     const timer = setInterval(() => {
+      const thisSeq = ++requestSeq;
       fetch(`/api/public/${companyId}/${employeeId}/qualification-status?callId=${encodeURIComponent(voice.callId!)}`)
         .then((res) => (res.ok ? res.json() : null))
         .then((data: { qualified?: boolean; answers?: Array<{ n: number; c: string; a: string }> } | null) => {
+          if (thisSeq < latestAppliedSeq) return;
+          latestAppliedSeq = thisSeq;
           if (data?.qualified) setQualComplete(true);
           if (Array.isArray(data?.answers)) setQualAnswers(data!.answers!);
         })
