@@ -182,6 +182,34 @@ describe("qualification conversation UI", () => {
     expect(screen.getByTestId("qual-progress").textContent).toBe("appointment.qualifyProgress:3/6");
   });
 
+  // The answers array is complete and frozen the moment qualified:true
+  // comes back — Q6's completion routes straight to booking, never back
+  // through get_next_qualification_question — so continuing to poll after
+  // that point can never learn anything new. It only wastes a request every
+  // 3s until the visitor gets around to clicking Continue.
+  it("stops polling qualification-status once qualified:true is received — no wasted requests after completion", async () => {
+    jest.useFakeTimers();
+    mockStatus({ qualified: true, answers: [{ n: 6, c: "YES", a: "Yes" }] });
+    render(<AppointmentModal {...baseProps} voice={voiceWith([{ role: "assistant", content: QUALIFICATION_QUESTIONS[5].question }])} />);
+    startQualification();
+
+    await act(async () => {
+      jest.advanceTimersByTime(3100);
+      await Promise.resolve();
+    });
+    const statusCallsAfterCompletion = (global.fetch as jest.Mock).mock.calls.filter((c) => String(c[0]).includes("qualification-status")).length;
+    expect(statusCallsAfterCompletion).toBe(1);
+    expect(screen.getByTestId("qualification-continue")).toBeTruthy();
+
+    // Further ticks must not issue any additional qualification-status request.
+    await act(async () => {
+      jest.advanceTimersByTime(9000);
+      await Promise.resolve();
+    });
+    const statusCallsAfterMoreTicks = (global.fetch as jest.Mock).mock.calls.filter((c) => String(c[0]).includes("qualification-status")).length;
+    expect(statusCallsAfterMoreTicks).toBe(1);
+  });
+
   it("NEVER renders raw free-text visitor speech as the transcript — classification-only rule", () => {
     render(
       <AppointmentModal

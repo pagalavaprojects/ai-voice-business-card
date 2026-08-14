@@ -197,13 +197,14 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   };
 
   // Polls qualification progress while the conversation is live. The
-  // interval is modest (3s) and stops itself the moment the modal closes or
-  // the step advances.
+  // interval is modest (3s) and stops itself the moment the modal closes,
+  // the step advances, OR qualification completes — once qualComplete is
+  // true the answers array already holds all six records and nothing
+  // further can change (the directive routes Q6's completion straight to
+  // booking, never back through this tool), so continuing to poll is pure
+  // waste until the visitor gets around to clicking Continue.
   useEffect(() => {
-    // Polls for the WHOLE active conversation (not just until completion):
-    // the answers feed is what renders the visitor's transcript. Stops on
-    // modal close or leaving the step.
-    if (!open || step !== 0 || qualStage !== "active" || !voice?.callId) return;
+    if (!open || step !== 0 || qualStage !== "active" || qualComplete || !voice?.callId) return;
     // Sequence guard against out-of-order responses: each tick's fetch can
     // resolve in any order relative to the others (normal network jitter —
     // no server-side change makes this impossible). Without this, a slow
@@ -227,7 +228,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
         .catch(() => undefined);
     }, 3000);
     return () => clearInterval(timer);
-  }, [open, step, qualStage, voice?.callId, companyId, employeeId]);
+  }, [open, step, qualStage, qualComplete, voice?.callId, companyId, employeeId]);
 
   const advanceToSlots = () => {
     // The visitor is done talking (or never wanted to) — the mic must not
