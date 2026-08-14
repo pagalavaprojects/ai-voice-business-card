@@ -100,6 +100,11 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   const [qualAnswers, setQualAnswers] = useState<Array<{ n: number; c: string; a: string }>>([]);
   const qualStageRef = useRef(qualStage);
   qualStageRef.current = qualStage;
+  // Which callId the qualification-status poll is CURRENTLY set up for —
+  // lets a stale response from an ended/replaced call recognize itself as
+  // stale and discard, even though clearing the poll's interval can never
+  // cancel a fetch already in flight. See the poll effect below.
+  const activeCallIdRef = useRef<string | null>(null);
   const [slots, setSlots] = useState<CalcomSlot[]>([]);
   const [slotsLoading, setSlotsLoading] = useState(false);
   // Distinguishes WHY the slot list is empty — "unconfigured" (this company
@@ -205,21 +210,36 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   // waste until the visitor gets around to clicking Continue.
   useEffect(() => {
     if (!open || step !== 0 || qualStage !== "active" || qualComplete || !voice?.callId) return;
-    // Sequence guard against out-of-order responses: each tick's fetch can
-    // resolve in any order relative to the others (normal network jitter —
-    // no server-side change makes this impossible). Without this, a slow
-    // EARLIER request resolving AFTER a fast LATER one overwrites qualAnswers
-    // with stale data, visibly regressing the displayed question/progress
-    // even though the server's actual state only ever moved forward. A
-    // response is applied only if no later-issued request has already been
-    // applied.
+    // callId guard: a close-then-reopen (or a reconnect that hands out a new
+    // Vapi call) starts a NEW effect invocation, but does nothing to cancel
+    // a fetch already in flight from the PREVIOUS one — clearInterval only
+    // stops future ticks, never an already-issued request. If that stale
+    // request resolves after the new session has started, it would silently
+    // apply the ENDED call's answers on top of the NEW call's (freshly
+    // empty) state, showing the visitor someone else's — or their own
+    // previous, abandoned — answers as if they belonged to the call
+    // actually in progress. activeCallIdRef always holds whichever callId
+    // the effect is CURRENTLY set up for, so a response is discarded
+    // outright the moment it no longer matches, regardless of its own
+    // sequence number.
+    const callIdForThisEffect = voice.callId;
+    activeCallIdRef.current = callIdForThisEffect;
+    // Sequence guard against out-of-order responses WITHIN this same call:
+    // each tick's fetch can resolve in any order relative to the others
+    // (normal network jitter — no server-side change makes this
+    // impossible). Without this, a slow EARLIER request resolving AFTER a
+    // fast LATER one overwrites qualAnswers with stale data, visibly
+    // regressing the displayed question/progress even though the server's
+    // actual state only ever moved forward. A response is applied only if
+    // no later-issued request has already been applied.
     let requestSeq = 0;
     let latestAppliedSeq = 0;
     const timer = setInterval(() => {
       const thisSeq = ++requestSeq;
-      fetch(`/api/public/${companyId}/${employeeId}/qualification-status?callId=${encodeURIComponent(voice.callId!)}`)
+      fetch(`/api/public/${companyId}/${employeeId}/qualification-status?callId=${encodeURIComponent(callIdForThisEffect)}`)
         .then((res) => (res.ok ? res.json() : null))
         .then((data: { qualified?: boolean; answers?: Array<{ n: number; c: string; a: string }> } | null) => {
+          if (activeCallIdRef.current !== callIdForThisEffect) return;
           if (thisSeq < latestAppliedSeq) return;
           latestAppliedSeq = thisSeq;
           if (data?.qualified) setQualComplete(true);

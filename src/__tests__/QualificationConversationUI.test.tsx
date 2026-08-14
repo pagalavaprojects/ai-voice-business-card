@@ -182,6 +182,74 @@ describe("qualification conversation UI", () => {
     expect(screen.getByTestId("qual-progress").textContent).toBe("appointment.qualifyProgress:3/6");
   });
 
+  // Regression: clearInterval on cleanup stops FUTURE ticks, but can never
+  // cancel a fetch already in flight. A close-then-reopen (or a Vapi
+  // reconnect that hands out a new call) starts a brand new poll effect
+  // for the NEW callId while the OLD callId's request is still pending. If
+  // that stale request finally resolves after the new session is already
+  // underway, applying it would show the visitor answers from an ended,
+  // abandoned call as if they belonged to the one actually in progress —
+  // the per-tick sequence guard above does not catch this, because it only
+  // orders responses WITHIN a single effect invocation, not across two.
+  it("a stale response from an ENDED call never applies after a new call replaces it — no cross-session data bleed", async () => {
+    jest.useFakeTimers();
+    const resolvers: Array<{ url: string; resolve: (payload: unknown) => void }> = [];
+    global.fetch = jest.fn((url: RequestInfo | URL) => {
+      const u = String(url);
+      if (u.includes("qualification-status")) {
+        return new Promise((resolve) => {
+          resolvers.push({ url: u, resolve: (payload) => resolve({ ok: true, json: async () => payload } as Response) });
+        });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({ slots: [] }) } as Response);
+    }) as never;
+
+    const voiceA = voiceWith([{ role: "assistant", content: QUALIFICATION_QUESTIONS[0].question }]);
+    const { rerender } = render(<AppointmentModal {...baseProps} voice={voiceA} />);
+    startQualification();
+
+    // Tick 1 issues call-1's poll request — left unresolved, simulating a
+    // slow response that outlives the call itself.
+    await act(async () => {
+      jest.advanceTimersByTime(3100);
+    });
+    const staleRequest = resolvers.find((r) => r.url.includes("callId=call-1"));
+    expect(staleRequest).toBeTruthy();
+
+    // The underlying call changes (reconnect, or a close+reopen that starts
+    // a fresh session) while qualification stays active.
+    rerender(<AppointmentModal {...baseProps} voice={{ ...voiceA, callId: "call-2" }} />);
+
+    await act(async () => {
+      jest.advanceTimersByTime(3100);
+    });
+    const freshRequest = resolvers.find((r) => r.url.includes("callId=call-2"));
+    expect(freshRequest).toBeTruthy();
+
+    // The new call's own (fresh) response resolves first.
+    await act(async () => {
+      freshRequest!.resolve({ qualified: false, answers: [] });
+      await Promise.resolve();
+    });
+    expect(screen.getByTestId("qual-progress").textContent).toBe("appointment.qualifyProgress:1/6");
+
+    // The old call's stale response FINALLY resolves, with answers
+    // belonging to the abandoned session — must be discarded, not applied
+    // on top of the new session's state.
+    await act(async () => {
+      staleRequest!.resolve({
+        qualified: false,
+        answers: [
+          { n: 1, c: "YES", a: "Yes" },
+          { n: 2, c: "NO", a: "No" },
+          { n: 3, c: "YES", a: "Yes" },
+        ],
+      });
+      await Promise.resolve();
+    });
+    expect(screen.getByTestId("qual-progress").textContent).toBe("appointment.qualifyProgress:1/6");
+  });
+
   // The answers array is complete and frozen the moment qualified:true
   // comes back — Q6's completion routes straight to booking, never back
   // through get_next_qualification_question — so continuing to poll after
