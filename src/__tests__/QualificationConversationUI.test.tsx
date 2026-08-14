@@ -284,7 +284,9 @@ describe("qualification conversation UI", () => {
 
     // Visitor closes the modal (handleReset) before the request resolves —
     // step/qualStage reset immediately back to a fresh intro state.
-    fireEvent.click(screen.getByRole("button", { name: "Close dialog" }));
+    // The close button's accessible name routes through t() now
+    // (buttons.close) — the key-echo stub above renders the key itself.
+    fireEvent.click(screen.getByRole("button", { name: "buttons.close" }));
     expect(screen.getByTestId("start-qualification")).toBeTruthy();
 
     // The stale request FINALLY resolves, with a fully-answered call —

@@ -42,6 +42,11 @@ interface AppointmentModalProps {
      * — the qualification panel renders the current question and the
      * visitor's REAL answers from this. Never fabricated. */
     messages?: Array<{ role: "assistant" | "user"; content: string }>;
+    /** The session's own (already-localized) error text. Without this the
+     * card's error alert renders BEHIND the modal backdrop, so a failed
+     * start (mic denied, connection error) left the modal showing Q1 with
+     * no hint anything went wrong. */
+    error?: string | null;
   };
 }
 
@@ -114,8 +119,13 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   // "this company doesn't support online booking," which isn't true.
   const [slotsReason, setSlotsReason] = useState<"unconfigured" | "error" | "rate_limited" | null>(null);
   const [selectedSlot, setSelectedSlot] = useState<string | null>(null);
-  const [formData, setFormData] = useState({ name: "", email: "", phone: "", notes: "" });
+  const [formData, setFormData] = useState({ name: "", email: "", phone: "" });
   const [submitting, setSubmitting] = useState(false);
+  // Bumped on every close/reset. A booking POST that resolves AFTER the
+  // visitor closed the modal must not re-apply its outcome on top of the
+  // freshly reset state — without this, the next open landed on the Done
+  // screen for a booking whose details the visitor never saw confirmed.
+  const bookingSessionRef = useRef(0);
   // A translation KEY, not display text — resolved through t() at render
   // time, same reasoning as `outcome` below: the server's raw HTTP status
   // maps to one of a fixed set of localized messages, never the server's
@@ -159,6 +169,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   const handleBook = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedSlot) return;
+    const session = bookingSessionRef.current;
     setSubmitting(true);
     setSubmitErrorKey(null);
     try {
@@ -170,13 +181,15 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
           name: formData.name,
           email: formData.email,
           phone: formData.phone,
-          notes: formData.notes || undefined,
           startTime: selectedSlot,
           timeZone,
           language,
         }),
       });
       const data = await res.json();
+      // The visitor closed the modal while this was in flight — the reset
+      // state below this point belongs to the NEXT open, not this booking.
+      if (bookingSessionRef.current !== session) return;
       if (!res.ok || !data.success) {
         setSubmitErrorKey(
           res.status === 429
@@ -195,7 +208,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
       setOutcome({ confirmed: Boolean(data.confirmed) });
       setStep(3);
     } catch {
-      setSubmitErrorKey("appointment.submitErrorNetwork");
+      if (bookingSessionRef.current === session) setSubmitErrorKey("appointment.submitErrorNetwork");
     } finally {
       setSubmitting(false);
     }
@@ -269,18 +282,20 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   const handleReset = () => {
     if (qualStageRef.current === "active") voice?.endCall();
     activeCallIdRef.current = null;
+    // Invalidates any booking POST still in flight (see bookingSessionRef).
+    bookingSessionRef.current++;
     setStep(voice ? 0 : 1);
     setQualStage("intro");
     setQualComplete(false);
     setQualAnswers([]);
-    setFormData({ name: "", email: "", phone: "", notes: "" });
+    setFormData({ name: "", email: "", phone: "" });
     setOutcome(null);
     setSubmitErrorKey(null);
     onClose();
   };
 
   return (
-    <Dialog open={open} onClose={handleReset} title={t("appointment.title")} size="md">
+    <Dialog open={open} onClose={handleReset} title={t("appointment.title")} size="md" closeLabel={t("buttons.close")}>
       <div className="space-y-6">
         {/* Progress Bar — the Qualify step appears only when this modal was
             lent a live voice session. */}
@@ -454,6 +469,15 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                           : t("status.availableNow")}
                   </span>
                 </div>
+                {/* The session's own localized error, surfaced INSIDE the
+                    modal — the card-level alert is visually behind the
+                    backdrop. Skip stays available either way, so a failed
+                    voice start never traps the visitor. */}
+                {voice.error && !qualComplete && (
+                  <p className="text-xs text-rose-300" role="alert" data-testid="qual-voice-error">
+                    {voice.error}
+                  </p>
+                )}
                 {qualComplete && <p className="text-xs text-slate-400">{t("appointment.qualifyDone")}</p>}
                 {qualComplete && (
                   <Button
@@ -530,6 +554,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                     key={slot.time}
                     type="button"
                     onClick={() => setSelectedSlot(slot.time)}
+                    aria-pressed={selectedSlot === slot.time}
                     className={`w-full flex items-center justify-between p-3 rounded-xl border text-xs font-medium transition-all ${
                       selectedSlot === slot.time
                         ? "bg-sky-500/10 border-sky-500/40 text-sky-300 shadow-md shadow-sky-500/10"

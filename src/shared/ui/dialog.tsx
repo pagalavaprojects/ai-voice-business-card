@@ -11,6 +11,10 @@ interface DialogProps {
   description?: string;
   children: React.ReactNode;
   size?: "sm" | "md" | "lg";
+  /** Accessible name for the icon-only close button. Callers on localized
+   * surfaces should pass a translated string; the default keeps existing
+   * (admin/untranslated) callers working unchanged. */
+  closeLabel?: string;
 }
 
 const SIZE_CLASS: Record<NonNullable<DialogProps["size"]>, string> = {
@@ -19,7 +23,7 @@ const SIZE_CLASS: Record<NonNullable<DialogProps["size"]>, string> = {
   lg: "max-w-3xl",
 };
 
-export function Dialog({ open, onClose, title, description, children, size = "md" }: DialogProps) {
+export function Dialog({ open, onClose, title, description, children, size = "md", closeLabel = "Close dialog" }: DialogProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const previouslyFocused = useRef<HTMLElement | null>(null);
   // The focus-management effect below must run ONLY on open/close
@@ -47,8 +51,12 @@ export function Dialog({ open, onClose, title, description, children, size = "md
         return;
       }
       if (e.key !== "Tab") return;
+      // Disabled controls are excluded: they are not tabbable, so if the
+      // first/last match were a disabled button the trap would either hand
+      // focus to an element that refuses it or let Tab escape to the
+      // obscured page behind the backdrop.
       const focusables = panelRef.current?.querySelectorAll<HTMLElement>(
-        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
       );
       if (!focusables || focusables.length === 0) return;
       const first = focusables[0];
@@ -99,7 +107,7 @@ export function Dialog({ open, onClose, title, description, children, size = "md
           </div>
           <button
             onClick={onClose}
-            aria-label="Close dialog"
+            aria-label={closeLabel}
             className="text-slate-500 hover:text-slate-200 transition-colors rounded p-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500"
           >
             <X className="h-4 w-4" />

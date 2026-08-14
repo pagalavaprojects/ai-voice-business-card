@@ -26,9 +26,15 @@ export const dynamic = "force-dynamic";
  */
 export async function GET(req: NextRequest, { params }: { params: { companyId: string; employeeId: string } }) {
   const identifier = req.headers.get("x-forwarded-for") || "unknown";
-  // Polled every few seconds during an active qualification call, so the
-  // window is generous but still bounds enumeration attempts.
-  const { allowed } = await checkRateLimitDistributed(`qual-status:${identifier}`, 120, 10 * 60_000);
+  // The booking modal polls every 3s while qualification is active — that
+  // alone is 200 requests per 10-minute window, so the previous limit of
+  // 120 starved any conversation running longer than ~6 minutes: every
+  // later poll got a silent 429 and the Continue button could never
+  // appear even after Q6 completed. 480 covers one full-window poller
+  // twice over (two visitors behind one NAT IP) while still bounding
+  // callId enumeration, which is additionally guarded by the unguessable
+  // callId itself and the company/employee scoping of every lookup.
+  const { allowed } = await checkRateLimitDistributed(`qual-status:${identifier}`, 480, 10 * 60_000);
   if (!allowed) {
     return NextResponse.json({ message: "Too many requests" }, { status: 429 });
   }

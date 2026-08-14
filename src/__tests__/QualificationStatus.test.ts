@@ -11,6 +11,11 @@ import { NextRequest } from "next/server";
 type Row = Record<string, unknown> | null;
 let conversationRow: Row = null;
 let leadRow: Row = null;
+// Every .eq() filter the route applies, per table — so tests can assert the
+// tenant scoping (company/employee/callId) is genuinely on the query, not
+// just that a row came back. A mock that swallows filters would keep
+// passing even if the route dropped its IDOR guards.
+let eqCalls: Array<{ table: string; column: string; value: unknown }> = [];
 
 jest.mock("@/shared/lib/supabase", () => ({
   supabaseAdmin: {
@@ -19,7 +24,11 @@ jest.mock("@/shared/lib/supabase", () => ({
       const chain: Record<string, unknown> = {};
       const self = () => chain;
       Object.assign(chain, {
-        select: self, eq: self, order: self, limit: self,
+        select: self, order: self, limit: self,
+        eq: (column: string, value: unknown) => {
+          eqCalls.push({ table, column, value });
+          return chain;
+        },
         maybeSingle: result,
       });
       return chain;
@@ -47,6 +56,21 @@ describe("qualification-status", () => {
   beforeEach(() => {
     conversationRow = null;
     leadRow = null;
+    eqCalls = [];
+  });
+
+  it("scopes BOTH lookups to the URL's company and employee — a callId can never read across tenants (IDOR)", async () => {
+    conversationRow = { id: "conv-1" };
+    leadRow = { qualification_notes: notesThrough(6) };
+    await GET(request("call-abc-123"), { params });
+
+    const filters = (table: string) => eqCalls.filter((c) => c.table === table).map((c) => `${c.column}=${String(c.value)}`);
+    expect(filters("conversations")).toEqual(
+      expect.arrayContaining(["vapi_call_id=call-abc-123", "company_id=c1", "employee_id=e1"])
+    );
+    // The lead is reached through the already-scoped conversation AND
+    // re-scoped by company — belt and braces.
+    expect(filters("leads")).toEqual(expect.arrayContaining(["conversation_id=conv-1", "company_id=c1"]));
   });
 
   it("requires a plausible callId", async () => {

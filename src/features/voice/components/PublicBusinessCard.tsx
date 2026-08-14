@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { Mail, Phone, Globe, Calendar, Download, QrCode, MessageCircle, Linkedin, Link2, FileText, X, Loader2, CheckCircle2, Play, Pause as PauseIcon, Volume2 } from "lucide-react";
 import { useVapiSession } from "@/features/voice/hooks/useVapiSession";
@@ -156,8 +156,19 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
   // Which engine is voicing the current pitch — the HD MP3 <audio> element
   // or the browser's speech synthesis — so Pause/Resume drives the right one.
   const pitchSourceRef = useRef<"audio" | "tts" | null>(null);
+  // Ownership token for pitch playback. Every stop (and therefore every new
+  // play, which stops first) bumps it; every async continuation a pitch
+  // leaves behind — play() settling, onerror, the script-fallback fetch,
+  // browser-TTS callbacks — captures the value it started under and bails
+  // if it no longer matches. Without this, pausing an audio element whose
+  // play() promise is still pending (exactly what switching or cancelling
+  // a loading pitch does) rejects that promise, and the abandoned pitch's
+  // rejection handler would null the ref now holding the NEW pitch's audio
+  // and voice the OLD pitch's fallback over it.
+  const pitchSessionRef = useRef(0);
 
-  const stopPitch = () => {
+  const stopPitch = useCallback(() => {
+    pitchSessionRef.current++;
     pitchAudioRef.current?.pause();
     pitchAudioRef.current = null;
     stopBrowserTts();
@@ -165,7 +176,7 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
     setPitchPlaying(null);
     setPitchLoading(null);
     setPitchPaused(false);
-  };
+  }, []);
 
   // Real Pause/Resume, not stop-and-restart: the audio element keeps its
   // currentTime and speechSynthesis keeps its utterance position, so Resume
@@ -287,8 +298,12 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
     if (previousLanguageRef.current !== language) {
       previousLanguageRef.current = language;
       if (voiceStateRef.current !== "idle") endCall();
+      // A pitch speaking the OLD language must not keep narrating under the
+      // new-language UI — and stopping here also invalidates (via the
+      // session token) any old-language fallback fetch still in flight.
+      stopPitch();
     }
-  }, [language, endCall]);
+  }, [language, endCall, stopPitch]);
 
   useEffect(() => {
     voiceStateRef.current = voiceState;
@@ -306,19 +321,35 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
     // Best-effort, silent-on-block: play the pre-recorded elevator pitch as
     // the card's introduction. Browsers that block audible autoplay reject
     // play() — nothing else happens, no fallback chain, no error state.
+    //
+    // The ref is claimed BEFORE play() settles so a visitor's own pitch tap
+    // during the pending window (a cold cache can hold play() open for
+    // seconds while the server renders TTS) can actually cancel this
+    // attempt — previously the audio lived outside the ref until .then, so
+    // stopPitch couldn't reach it and the late resolve then killed the
+    // visitor's chosen pitch and played the elevator over it.
+    const session = pitchSessionRef.current;
     const audio = new Audio(`/api/public/${companyId}/${employeeId}/pitch?type=elevator&lang=${encodeURIComponent(language)}`);
+    pitchAudioRef.current = audio;
+    audio.onended = () => stopPitch();
     audio
       .play()
       .then(() => {
-        stopPitch();
-        pitchAudioRef.current = audio;
+        // Superseded while pending (visitor tapped a pitch, or stopPitch
+        // ran for any reason) — that action owns playback now.
+        if (pitchSessionRef.current !== session) {
+          audio.pause();
+          audio.src = "";
+          return;
+        }
         pitchSourceRef.current = "audio";
-        audio.onended = () => stopPitch();
         setPitchPlaying("elevator");
       })
       .catch(() => {
         // Autoplay blocked or audio unavailable — the Listen buttons are the
-        // manual path, exactly as the browser's policy intends.
+        // manual path, exactly as the browser's policy intends. Release the
+        // ref only if this attempt still owns it.
+        if (pitchAudioRef.current === audio) pitchAudioRef.current = null;
         audio.src = "";
       });
     // playPitch/stopPitch identities change per render; the ref guard makes
@@ -354,6 +385,11 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
     setPitchError(false);
     if (voiceStateRef.current !== "idle") endCall();
 
+    // Captured AFTER stopPitch's bump: this value marks THIS pitch's
+    // ownership of playback. Every async continuation below re-checks it —
+    // a mismatch means the visitor has since switched pitches, cancelled,
+    // or changed language, and this pitch's late callbacks must do nothing.
+    const session = pitchSessionRef.current;
     const pitchUrl = `/api/public/${companyId}/${employeeId}/pitch?type=${type}&lang=${encodeURIComponent(language)}`;
 
     // When the server can't produce the rendered MP3 (e.g. TTS credits
@@ -361,21 +397,38 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
     // script (no TTS involved server-side) and voice it with the
     // browser's own built-in speech synthesis. Still strictly speak-only —
     // no microphone, no permission prompt, no live AI session.
+    //
+    // One-shot: a failed load fires BOTH the element's onerror and the
+    // rejected play() promise below, and running the fallback twice fetches
+    // the script twice and speaks twice — the second speak cancel()s the
+    // first, whose "canceled" event then races the second's onstart and can
+    // clear the playing state while audio is still speaking.
+    let fallbackStarted = false;
     const fallbackToBrowserTts = () => {
+      // Superseded (switch/cancel/language change) — the AbortError from
+      // our own deliberate pause lands here too, and must not resurrect
+      // the abandoned pitch through the fallback.
+      if (pitchSessionRef.current !== session) return;
+      if (fallbackStarted) return;
+      fallbackStarted = true;
       fetch(`${pitchUrl}&format=script`)
         .then((res) => (res.ok ? res.json() : Promise.reject(new Error(String(res.status)))))
         .then(({ script }: { script: string }) => {
+          if (pitchSessionRef.current !== session) return;
           const started = speakPitchWithBrowserTts(script, language, {
             onStart: () => {
+              if (pitchSessionRef.current !== session) return;
               pitchSourceRef.current = "tts";
               setPitchLoading(null);
               setPitchPlaying(type);
             },
             onEnd: () => {
+              if (pitchSessionRef.current !== session) return;
               setPitchPlaying(null);
               setPitchLoading(null);
             },
             onError: () => {
+              if (pitchSessionRef.current !== session) return;
               setPitchPlaying(null);
               setPitchLoading(null);
               setPitchError(true);
@@ -387,6 +440,7 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
           }
         })
         .catch(() => {
+          if (pitchSessionRef.current !== session) return;
           setPitchLoading(null);
           setPitchError(true);
         });
@@ -396,17 +450,23 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
     pitchAudioRef.current = audio;
     setPitchLoading(type);
     audio.onplaying = () => {
+      if (pitchSessionRef.current !== session) return;
       pitchSourceRef.current = "audio";
       setPitchLoading(null);
       setPitchPlaying(type);
       setPitchPaused(false);
     };
-    audio.onended = () => stopPitch();
+    audio.onended = () => {
+      if (pitchSessionRef.current !== session) return;
+      stopPitch();
+    };
     audio.onerror = () => {
+      if (pitchSessionRef.current !== session) return;
       pitchAudioRef.current = null;
       fallbackToBrowserTts();
     };
     audio.play().catch(() => {
+      if (pitchSessionRef.current !== session) return;
       pitchAudioRef.current = null;
       fallbackToBrowserTts();
     });
@@ -920,7 +980,7 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
         <p className="text-center text-[11px] text-slate-400 font-mono pb-4">{t("tagline")}</p>
       </div>
 
-      <Dialog open={qrOpen} onClose={() => setQrOpen(false)} title={t("qr.title")} size="sm">
+      <Dialog open={qrOpen} onClose={() => setQrOpen(false)} title={t("qr.title")} size="sm" closeLabel={t("buttons.close")}>
         <div className="flex flex-col items-center gap-4">
           {card.qrSvg && (
             <div
@@ -967,6 +1027,10 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
             startCall({ firstMessage: QUALIFICATION_CALL_OPENING, systemPrompt: (card.systemPrompt ?? "") + getQualificationDirective() }),
           endCall,
           messages,
+          // Already-localized error text from the session hook — rendered
+          // inside the modal, since the card's own alert sits behind the
+          // modal backdrop where a failed voice start would be invisible.
+          error,
         }}
       />
     </main>
