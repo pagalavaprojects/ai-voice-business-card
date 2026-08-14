@@ -250,6 +250,66 @@ describe("qualification conversation UI", () => {
     expect(screen.getByTestId("qual-progress").textContent).toBe("appointment.qualifyProgress:1/6");
   });
 
+  // Regression: activeCallIdRef only gets a NEW value when a NEW call
+  // starts — closing/resetting (or Skip) never touched it, so a response
+  // for the call just left behind could still resolve later, pass the
+  // (unchanged, still-matching) callId check, and silently repopulate
+  // qualAnswers/qualComplete. Invisible until the visitor starts a fresh
+  // qualification call, at which point the stale data would appear to
+  // "seed" the brand new session for up to one poll interval. Both
+  // handleReset and advanceToSlots now null the ref out immediately.
+  it("a stale response for the call just left behind (Close) cannot seed a freshly started NEW call afterward", async () => {
+    jest.useFakeTimers();
+    const resolvers: Array<(payload: unknown) => void> = [];
+    global.fetch = jest.fn((url: RequestInfo | URL) => {
+      const u = String(url);
+      if (u.includes("qualification-status")) {
+        return new Promise((resolve) => {
+          resolvers.push((payload) => resolve({ ok: true, json: async () => payload } as Response));
+        });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({ slots: [] }) } as Response);
+    }) as never;
+
+    render(
+      <AppointmentModal {...baseProps} voice={voiceWith([{ role: "assistant", content: QUALIFICATION_QUESTIONS[0].question }])} />
+    );
+    startQualification();
+
+    // Tick 1 issues call-1's poll request — left unresolved.
+    await act(async () => {
+      jest.advanceTimersByTime(3100);
+    });
+    expect(resolvers).toHaveLength(1);
+
+    // Visitor closes the modal (handleReset) before the request resolves —
+    // step/qualStage reset immediately back to a fresh intro state.
+    fireEvent.click(screen.getByRole("button", { name: "Close dialog" }));
+    expect(screen.getByTestId("start-qualification")).toBeTruthy();
+
+    // The stale request FINALLY resolves, with a fully-answered call —
+    // must be discarded outright, not silently repopulate state.
+    await act(async () => {
+      resolvers[0]({
+        qualified: true,
+        answers: [
+          { n: 1, c: "YES", a: "Yes" },
+          { n: 2, c: "NO", a: "No" },
+          { n: 6, c: "YES", a: "Yes" },
+        ],
+      });
+      await Promise.resolve();
+    });
+
+    // Visitor starts a genuinely NEW call — it must open on a clean Q1,
+    // never pre-seeded with the discarded call's answers.
+    startQualification();
+    expect(screen.getByTestId("current-question").textContent).toContain(QUALIFICATION_QUESTIONS[0].question);
+    expect(screen.getByTestId("qual-progress").textContent).toBe("appointment.qualifyProgress:1/6");
+    expect(screen.queryByTestId("qual-transcript-heading")).toBeNull();
+    expect(screen.queryByTestId("qualification-continue")).toBeNull();
+  });
+
   // The answers array is complete and frozen the moment qualified:true
   // comes back — Q6's completion routes straight to booking, never back
   // through get_next_qualification_question — so continuing to poll after

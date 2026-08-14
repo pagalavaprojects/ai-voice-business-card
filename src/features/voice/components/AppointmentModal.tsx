@@ -254,11 +254,21 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
     // The visitor is done talking (or never wanted to) — the mic must not
     // stay hot while they read slots and type contact details.
     if (qualStageRef.current === "active") voice?.endCall();
+    // Invalidates any poll response still in flight for the call just left
+    // behind: clearing the interval (the poll effect's own cleanup, fired
+    // by `step` leaving 0) only stops FUTURE ticks, never an
+    // already-issued fetch. Without this, that fetch could still resolve
+    // a moment later and silently repopulate qualAnswers/qualComplete for
+    // a step the visitor has already moved past — the same class of bug
+    // the cross-call activeCallIdRef guard covers, but for the "no new
+    // call has started yet" case that guard alone doesn't reach.
+    activeCallIdRef.current = null;
     setStep(1);
   };
 
   const handleReset = () => {
     if (qualStageRef.current === "active") voice?.endCall();
+    activeCallIdRef.current = null;
     setStep(voice ? 0 : 1);
     setQualStage("intro");
     setQualComplete(false);
