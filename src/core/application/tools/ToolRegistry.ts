@@ -439,7 +439,22 @@ export class ToolRegistry {
           sentiment: signals.sentiment ?? existing.sentiment ?? undefined,
           confidence: signals.qualification_confidence ?? existing.qualification_confidence ?? undefined,
           conversationSummary: signals.conversation_summary ?? existing.conversation_summary ?? undefined,
-          qualificationNotes: signals.qualification_notes ?? existing.qualification_notes ?? undefined,
+          // APPEND, never replace: qualification_notes is also where
+          // get_next_qualification_question records each authored answer as
+          // its own "Qn [YES|NO|MAYBE] (...): ..." line, which the booking
+          // UI's qualification-status endpoint parses to render progress and
+          // decide completion. The directive explicitly tells the model to
+          // mirror accepted answers into THIS field ("perceived usefulness
+          // -> notes") after every question — so on a real call this branch
+          // fires routinely, not as an edge case. Replacing the whole column
+          // with the model's own free-text summary silently destroyed every
+          // previously-recorded Qn line, which is what made a call that
+          // sounded complete end up rendering incomplete/stuck on screen.
+          qualificationNotes: signals.qualification_notes
+            ? existing.qualification_notes
+              ? `${existing.qualification_notes}\n${signals.qualification_notes}`
+              : signals.qualification_notes
+            : existing.qualification_notes ?? undefined,
         });
 
         this.maybeSendColdLeadNurtureEmail(scored, alreadyNurtured, context);
@@ -700,10 +715,28 @@ export class ToolRegistry {
         // model-generated content, so nothing fabricated can be stored.
         // Read-modify-write append; a persistence hiccup must not stall
         // the conversation.
+        //
+        // Idempotency guard: a voice model can call this tool twice for the
+        // same reply — a timeout-then-retry is a known LLM tool-calling
+        // behavior, and the directive itself tells the model to keep
+        // listening/reprompting on anything it isn't sure landed, which can
+        // also produce a second call with the same last_answered_question.
+        // Without this guard, each call independently reads-modifies-writes
+        // the full notes string: two calls for the SAME question append two
+        // "Qn [...]" lines (a duplicate the booking UI would render twice),
+        // and two calls for DIFFERENT questions arriving close together can
+        // race — both read the notes before either write lands, so the
+        // second write silently overwrites the first and one answer is lost
+        // even though the voice conversation itself kept advancing. This
+        // was the actual cause of qualification progress that looked fine
+        // in the live call but rendered incomplete/stuck in the booking UI.
+        // A duplicate call for an already-recorded question is a genuine
+        // no-op — never a fresh line, never a fresh classification query —
+        // so a retry can never desync the record from what already exists.
         if (last > 0 && leadId && classification) {
           try {
             const lead = await this.crmRepo.getLeadById(leadId);
-            if (lead) {
+            if (lead && !new RegExp(`(^|\\n)Q${last} \\[`).test(lead.qualification_notes ?? "")) {
               const english = classification === "YES" ? "Yes" : classification === "NO" ? "No" : "Maybe";
               const line = `Q${last} [${classification}] (${new Date().toISOString()}): ${english}`;
               const notes = (lead.qualification_notes ? lead.qualification_notes + "\n" : "") + line;

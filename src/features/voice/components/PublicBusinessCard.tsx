@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
-import { Mail, Phone, Globe, Calendar, Download, QrCode, MessageCircle, Linkedin, Link2, X, Loader2, CheckCircle2, Play, Pause as PauseIcon, Volume2 } from "lucide-react";
+import { Mail, Phone, Globe, Calendar, Download, QrCode, MessageCircle, Linkedin, Link2, FileText, X, Loader2, CheckCircle2, Play, Pause as PauseIcon, Volume2 } from "lucide-react";
 import { useVapiSession } from "@/features/voice/hooks/useVapiSession";
 import { VoiceMicButton } from "@/features/voice/components/VoiceMicButton";
 import { Card } from "@/shared/ui/card";
@@ -488,9 +488,12 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
   // cheap (filtering a handful of social-link entries) and don't need
   // memoizing anyway.
   const linkedIn = card.socialLinks?.linkedin || card.socialLinks?.linkedIn;
-  // LinkedIn gets its own branded button below, so it's excluded here rather
-  // than appearing twice — once with its icon, once as a generic link.
-  const otherLinks = Object.entries(card.socialLinks ?? {}).filter(([label]) => !/^linkedin$/i.test(label));
+  // A brochure is just another social_links entry (same mechanism "click my
+  // AI-Voice Card" already uses) — no schema change, no new route. It gets
+  // its own document icon below rather than the generic chain-link one, so
+  // it's excluded here the same way LinkedIn is.
+  const brochureUrl = card.socialLinks?.brochure || card.socialLinks?.Brochure;
+  const otherLinks = Object.entries(card.socialLinks ?? {}).filter(([label]) => !/^linkedin$/i.test(label) && !/^brochure$/i.test(label));
 
   const contact = {
     name: employee.name,
@@ -503,6 +506,7 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
       otherLinks
         .concat(linkedIn ? [["LinkedIn", linkedIn]] : [])
         .concat(card.whatsappUrl ? [["WhatsApp", card.whatsappUrl]] : [])
+        .concat(brochureUrl ? [[t("contact.brochure"), brochureUrl]] : [])
     ),
   };
 
@@ -846,6 +850,9 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
             {linkedIn && <ContactLink href={linkedIn} icon={<Linkedin className="h-3.5 w-3.5" />} label="LinkedIn" external />}
             {company.website && (
               <ContactLink href={company.website} icon={<Globe className="h-3.5 w-3.5" />} label={t("contact.website")} external />
+            )}
+            {brochureUrl && (
+              <ContactLink href={brochureUrl} icon={<FileText className="h-3.5 w-3.5" />} label={t("contact.brochure")} external />
             )}
             {otherLinks.map(([label, url]) => (
               <ContactLink key={label} href={url} icon={<Link2 className="h-3.5 w-3.5" />} label={label} external />

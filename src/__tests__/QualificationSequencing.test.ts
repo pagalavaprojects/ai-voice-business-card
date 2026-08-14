@@ -203,6 +203,36 @@ describe("get_next_qualification_question — lead resolution WITHOUT a model-su
     ]);
   });
 
+  // Regression: a voice model retrying a tool call it isn't sure landed (a
+  // known LLM tool-calling behavior) previously double-appended the SAME
+  // question's answer — each call independently read-modified-wrote the
+  // full notes string with no idempotency check. The booking UI would then
+  // render the question twice, and — worse — two calls racing for
+  // DIFFERENT questions could silently lose one via the same read-then-
+  // overwrite pattern, even though the live voice conversation kept
+  // advancing normally. This is the actual mechanism behind qualification
+  // that sounded complete on the call but rendered incomplete/stuck on
+  // screen.
+  it("a duplicate call for an already-answered question does not create a duplicate note line", async () => {
+    const { tool, leads } = buildLive();
+    await tool.execute({ last_answered_question: 1, user_response: "yes" }, LIVE);
+    const retry = await tool.execute({ last_answered_question: 1, user_response: "yes" }, LIVE);
+    expect(retry).toMatchObject({ action: "ask_verbatim", question_number: 2 }); // still answers correctly
+    const [lead] = leads.values();
+    expect(lead.qualification_notes.split("\n")).toEqual([expect.stringContaining("Q1 [YES]")]); // exactly one line
+  });
+
+  it("a duplicate call cannot overwrite a later question's already-recorded answer", async () => {
+    const { tool, leads } = buildLive();
+    await tool.execute({ last_answered_question: 1, user_response: "yes" }, LIVE);
+    await tool.execute({ last_answered_question: 2, user_response: "no" }, LIVE);
+    // A late retry of Q1's call arrives after Q2 has already been recorded —
+    // it must not clobber Q2's line by writing from a stale pre-Q2 read.
+    await tool.execute({ last_answered_question: 1, user_response: "yes" }, LIVE);
+    const [lead] = leads.values();
+    expect(lead.qualification_notes.split("\n")).toEqual([expect.stringContaining("Q1 [YES]"), expect.stringContaining("Q2 [NO]")]);
+  });
+
   it("an explicit lead_id from the model (once it HAS called save_lead) is still honored and takes priority", async () => {
     const { tool, crmRepo } = build("existing note");
     await tool.execute({ last_answered_question: 3, user_response: "yes", lead_id: "l1" }, LIVE);

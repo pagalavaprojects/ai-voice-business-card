@@ -98,6 +98,55 @@ describe("qualification-status", () => {
     expect(Object.keys(json).sort()).toEqual(["answers", "qualified"]);
   });
 
+  // Regression guard alongside the 2026-08-13 idempotency fix in
+  // get_next_qualification_question (QualificationSequencing.test.ts):
+  // that fix stops the SEQUENCING TOOL from ever writing a duplicate Qn
+  // line, but this endpoint is a separate, independent read of whatever
+  // qualification_notes actually contains. If a duplicate line reached it
+  // by any other path (a pre-fix lead, manual data, a future regression
+  // elsewhere), the endpoint itself must still not crash and must not let
+  // the duplicate flip "qualified" incorrectly.
+  it("a duplicate Qn line in notes does not crash the endpoint and does not break qualified detection", async () => {
+    conversationRow = { id: "conv-1" };
+    leadRow = {
+      qualification_notes:
+        notesThrough(5) +
+        "\nQ6 [YES] (2026-08-13T10:06:00.000Z): Yes" +
+        "\nQ6 [YES] (2026-08-13T10:06:05.000Z): Yes", // duplicate Q6 line
+    };
+    const res = await GET(request("call-abc-123"), { params });
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.qualified).toBe(true); // still correctly detects completion
+    expect(json.answers.filter((a: { n: number }) => a.n === 6)).toHaveLength(2); // parses both lines honestly rather than silently dropping data
+  });
+
+  // Regression guard for the 2026-08-14 fix in update_lead_qualification
+  // (VoiceEngine.test.ts): that tool now APPENDS the model's mirrored
+  // free-text note as its own line instead of replacing the whole column,
+  // so a real lead's notes end up with Qn lines interleaved with plain
+  // free-text lines. This endpoint must keep parsing only the structured
+  // lines and ignore the free-text ones, exactly as it already does for
+  // "internal AI reasoning" lines below.
+  it("still parses correctly when Qn lines are interleaved with the model's mirrored free-text notes", async () => {
+    conversationRow = { id: "conv-1" };
+    leadRow = {
+      qualification_notes:
+        "Q1 [YES] (2026-08-14T10:00:00.000Z): Yes" +
+        "\nQ2 [NO] (2026-08-14T10:01:00.000Z): No" +
+        "\nVisitor confirmed perceived usefulness" + // mirrored free-text note, no Qn prefix
+        "\nQ3 [MAYBE] (2026-08-14T10:02:00.000Z): Maybe",
+    };
+    const json = await (await GET(request("call-abc-123"), { params })).json();
+    expect(json.qualified).toBe(false);
+    expect(json.answers).toEqual([
+      { n: 1, c: "YES", a: "Yes" },
+      { n: 2, c: "NO", a: "No" },
+      { n: 3, c: "MAYBE", a: "Maybe" },
+    ]);
+    expect(JSON.stringify(json)).not.toContain("perceived usefulness");
+  });
+
   it("parses the recorded answers out of qualification_notes and exposes ONLY the structured lines", async () => {
     conversationRow = { id: "conv-1" };
     leadRow = {

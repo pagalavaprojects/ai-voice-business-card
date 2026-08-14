@@ -216,6 +216,36 @@ describe("qualification conversation UI", () => {
     startQualification();
     expect(screen.queryByTestId("qualification-continue")).toBeNull();
   });
+
+  // Regression guard: `step` (which panel renders — qualification vs. slot
+  // selection) only ever changes inside advanceToSlots(), which is wired
+  // exclusively to the Continue and Skip button clicks. Nothing in the
+  // qualification-status poll effect sets step itself, so genuine
+  // completion (qualComplete becoming true) must reveal the Continue
+  // button WITHOUT silently jumping the visitor into slot selection first —
+  // that transition is the visitor's own explicit action, never automatic.
+  it("qualification completing does NOT auto-open slot selection — the visitor must explicitly click Continue", async () => {
+    jest.useFakeTimers();
+    const classifications = ["YES", "NO", "MAYBE", "YES", "NO", "MAYBE"] as const;
+    mockStatus({
+      qualified: true,
+      answers: classifications.map((c, i) => ({ n: i + 1, c, a: c === "YES" ? "Yes" : c === "NO" ? "No" : "Maybe" })),
+    });
+    render(<AppointmentModal {...baseProps} voice={voiceWith([{ role: "assistant", content: QUALIFICATION_QUESTIONS[0].question }])} />);
+    startQualification();
+    await act(async () => {
+      jest.advanceTimersByTime(3100);
+      await Promise.resolve();
+    });
+
+    // Completion is visible (Continue exists)...
+    expect(screen.getByTestId("qualification-continue")).toBeTruthy();
+    // ...but the modal is still on the qualification step: no slot-picker
+    // copy or calendar UI has appeared on its own.
+    expect(screen.getByTestId("qualification-conversation")).toBeTruthy();
+    expect(screen.queryByText("appointment.chooseSlotTitle")).toBeNull();
+    expect(screen.queryByText("appointment.loadingSlots")).toBeNull();
+  });
 });
 
 describe("matchAuthoredQuestion", () => {

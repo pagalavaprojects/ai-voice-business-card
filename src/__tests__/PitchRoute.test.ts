@@ -154,6 +154,27 @@ describe("GET /api/public/{companyId}/{employeeId}/pitch", () => {
       expect(elevatorPath).not.toBe(productPath);
     });
 
+    it("the SAME type/language for two different company/employee pairs resolve to different storage paths — the full cache key is company+employee+type+language, not just type+language", async () => {
+      await GET(req("type=elevator&lang=ta"), { params: { companyId: COMPANY_ID, employeeId: EMPLOYEE_ID } });
+      const path1 = download.mock.calls[0][0];
+      download.mockClear();
+
+      // employee.company_id must match the requested companyId for the
+      // route's visibility check to pass — override just this call.
+      getEmployeeById.mockResolvedValueOnce({ id: EMPLOYEE_ID, company_id: "company-2", name: "Srinivasan Kandasamy", designation: "Founder", is_active: true });
+      await GET(req("type=elevator&lang=ta"), { params: { companyId: "company-2", employeeId: EMPLOYEE_ID } });
+      const path2 = download.mock.calls[0][0];
+      download.mockClear();
+
+      await GET(req("type=elevator&lang=ta"), { params: { companyId: COMPANY_ID, employeeId: "employee-2" } });
+      const path3 = download.mock.calls[0][0];
+
+      expect(path1).toContain(COMPANY_ID);
+      expect(path2).toContain("company-2");
+      expect(path3).toContain("employee-2");
+      expect(new Set([path1, path2, path3]).size).toBe(3);
+    });
+
     it("a cache hit is served directly and never calls OpenAI", async () => {
       download.mockResolvedValue({ data: { arrayBuffer: async () => new TextEncoder().encode("cached-mp3-bytes").buffer }, error: null });
       const fetchSpy = jest.fn();

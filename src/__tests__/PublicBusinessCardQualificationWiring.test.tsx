@@ -129,3 +129,70 @@ describe("PublicBusinessCard — mic button vs. qualification call wiring", () =
     expect(overrides.systemPrompt).not.toMatch(/[஀-௿]/); // no Tamil script anywhere in the qualification directive
   });
 });
+
+/**
+ * The pre-recorded pitches (elevator/product/usp) are speak-only by design
+ * (see PublicBusinessCard's own doc comment: "no microphone, no Vapi
+ * session, no permissions"). This is a code-level guarantee worth pinning
+ * directly, not just trusting the comment: playPitch() must never reach
+ * startCall — the ONLY function in this component that can bring up a live
+ * Vapi session (mic permission + WebRTC). It plays audio through a plain
+ * <audio> element (or, on failure, the browser's own speechSynthesis —
+ * covered separately in PitchFallback.test.ts) instead.
+ */
+describe("PublicBusinessCard — pitch playback never touches the Vapi session (no mic, no WebRTC)", () => {
+  class FakeAudio {
+    static instances: FakeAudio[] = [];
+    src: string;
+    onplaying: (() => void) | null = null;
+    onended: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    constructor(src: string) {
+      this.src = src;
+      FakeAudio.instances.push(this);
+    }
+    play() {
+      return Promise.resolve();
+    }
+    pause() {}
+  }
+
+  const RealAudio = global.Audio;
+
+  beforeEach(() => {
+    startCall.mockClear();
+    FakeAudio.instances = [];
+    (global as unknown as { Audio: unknown }).Audio = FakeAudio;
+    window.localStorage.clear();
+    window.localStorage.setItem("pagalava.language", "en");
+    global.fetch = jest.fn(() => Promise.resolve(cardResponse("en"))) as unknown as typeof fetch;
+  });
+
+  afterEach(() => {
+    (global as unknown as { Audio: unknown }).Audio = RealAudio;
+  });
+
+  it("clicking a pitch button plays it via a plain <audio> element and never calls startCall", async () => {
+    render(<PublicBusinessCard companyId="comp-1" employeeId="emp-1" />);
+    const pitchButton = await screen.findByTestId("pitch-elevator");
+
+    await act(async () => {
+      fireEvent.click(pitchButton);
+    });
+
+    expect(startCall).not.toHaveBeenCalled();
+    const played = FakeAudio.instances.find((a) => a.src.includes("/pitch?type=elevator"));
+    expect(played).toBeTruthy();
+  });
+
+  it("still never calls startCall across all three pitch types", async () => {
+    render(<PublicBusinessCard companyId="comp-1" employeeId="emp-1" />);
+    for (const type of ["pitch-elevator", "pitch-product", "pitch-usp"]) {
+      const button = await screen.findByTestId(type);
+      await act(async () => {
+        fireEvent.click(button);
+      });
+    }
+    expect(startCall).not.toHaveBeenCalled();
+  });
+});

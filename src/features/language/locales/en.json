@@ -59,7 +59,8 @@
     "resumeAria": "Resume {label}"
   },
   "contact": {
-    "website": "Website"
+    "website": "Website",
+    "brochure": "Brochure"
   },
   "qr": {
     "title": "Scan to open this card",

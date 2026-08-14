@@ -225,6 +225,43 @@ describe("VoiceEngine Tool Execution & Registry", () => {
     expect(result.lead_temperature).toBe("WARM");
   });
 
+  // Regression: the qualification directive explicitly tells the model to
+  // mirror an accepted answer into update_lead_qualification's "notes"
+  // field after EVERY question ("perceived usefulness -> notes") — but
+  // qualification_notes is the SAME column get_next_qualification_question
+  // appends each authored "Qn [YES|NO|MAYBE] (...): ..." line to, which the
+  // booking UI's qualification-status endpoint parses to render progress
+  // and decide completion. A flat overwrite here silently destroyed every
+  // previously-recorded Qn line on a routine, directive-encouraged call —
+  // not a rare edge case — which is what made a call that sounded complete
+  // over voice render incomplete/stuck in the booking UI.
+  it("update_lead_qualification APPENDS a new qualification_notes value instead of replacing the existing Qn answer history", async () => {
+    mockCrmRepo.getLeadById.mockResolvedValue({
+      id: "lead-7",
+      company_id: "comp-1",
+      employee_id: "emp-1",
+      name: "Voice qualification visitor",
+      email: "qualifying-conv-1@placeholder.maylaanai.internal",
+      phone: "0000000000",
+      qualification_notes: "Q1 [YES] (2026-08-14T10:00:00.000Z): Yes\nQ2 [NO] (2026-08-14T10:01:00.000Z): No",
+      tags: [],
+      created_at: "",
+      updated_at: "",
+    } as never);
+    mockCrmRepo.updateLeadQualification.mockResolvedValue({} as never);
+
+    const tool = toolRegistry.getTool("update_lead_qualification")!;
+    await tool.execute(
+      { lead_id: "lead-7", qualification_notes: "Visitor confirmed perceived usefulness" },
+      { companyId: "comp-1", employeeId: "emp-1" }
+    );
+
+    const call = mockCrmRepo.updateLeadQualification.mock.calls[0][1] as Record<string, unknown>;
+    expect(call.qualification_notes).toBe(
+      "Q1 [YES] (2026-08-14T10:00:00.000Z): Yes\nQ2 [NO] (2026-08-14T10:01:00.000Z): No\nVisitor confirmed perceived usefulness"
+    );
+  });
+
   it("update_lead_qualification reports failure without throwing when the lead doesn't exist", async () => {
     mockCrmRepo.getLeadById.mockResolvedValue(null);
     const tool = toolRegistry.getTool("update_lead_qualification")!;
