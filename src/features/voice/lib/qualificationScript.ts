@@ -124,6 +124,16 @@ export const QUALIFICATION_CONTINUE_PROMPT = "Please Click to Continue";
  * elsewhere. Exact approved wording, product-owner authorized. */
 export const APPOINTMENT_CONFIRMED_CLOSING = "Thank You for Your Valuable Time and Support. Have a Wonderful Day";
 
+/** The COMPLETE confirmed-booking closing speech — headline, the approved
+ * thank-you line, and the actually-booked slot. Both confirmation paths
+ * (the live voice call's book_appointment tool and the booking modal's
+ * Done step) speak this same builder's output, so the spoken confirmation
+ * can never drift between channels. `when` must be the REAL selected
+ * slot, already formatted for the visitor (e.g. "Mon, Aug 17, 9:00 AM"). */
+export function buildAppointmentConfirmedSpeech(when: string): string {
+  return `Appointment Confirmed!\n\n${APPOINTMENT_CONFIRMED_CLOSING}\n\nPreferred time: ${when}`;
+}
+
 /**
  * The system-prompt section injected for a qualification call. Progression
  * is enforced entirely server-side by get_next_qualification_question —

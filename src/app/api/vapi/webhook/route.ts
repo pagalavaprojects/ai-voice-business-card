@@ -10,6 +10,13 @@ import { supabaseAdmin } from "@/shared/lib/supabase";
 import { resolveVoiceProviderConfig } from "@/shared/lib/voice";
 import { SupabaseKnowledgeRepository } from "@/core/infrastructure/database/supabase/SupabaseKnowledgeRepository";
 import { verifyWebhookToken } from "@/shared/lib/webhookToken";
+import { getWhatsAppNotifier } from "@/core/infrastructure/notifications/WhatsAppNotifier";
+import { SupabaseWhatsAppIdempotencyStore } from "@/core/infrastructure/notifications/WhatsAppIdempotency";
+import {
+  deriveConversationIntent,
+  extractVisitorLines,
+  sendConversationSummaryToOwner,
+} from "@/core/application/services/ConversationSummaryNotifier";
 import {
   resolveRequestLanguage,
   resolveGreeting,
@@ -278,7 +285,14 @@ async function handleVapiMessage(req: NextRequest, message: VapiMessage): Promis
       audioMetadata = { ...audioMetadata, originalRecordingUrl: recordingUrl, archivedPath };
     }
 
-    const { data: lead } = await supabaseAdmin.from("leads").select("id, score").eq("conversation_id", conversation.id).maybeSingle();
+    // name/email/phone are read ONLY to enrich the owner's conversation
+    // summary below — they exist only if the visitor volunteered them to
+    // save_lead during the call. Never returned to any public client.
+    const { data: lead } = await supabaseAdmin
+      .from("leads")
+      .select("id, score, name, email, phone")
+      .eq("conversation_id", conversation.id)
+      .maybeSingle();
 
     let appointmentId: string | undefined;
     if (lead) {
@@ -292,17 +306,48 @@ async function handleVapiMessage(req: NextRequest, message: VapiMessage): Promis
       appointmentId = appointment?.id;
     }
 
+    // Deterministic intent from what the visitor actually said + which
+    // tools fired — fills the conversations.intent column (previously
+    // never written) and doubles as the summary notification's intent.
+    const intent = deriveConversationIntent(extractVisitorLines(transcript), conversation.tools_called, Boolean(appointmentId));
+
     await conversationRepo.endConversation(conversation.id, {
       durationSeconds,
       summary,
       sentiment,
       transcript,
+      intent,
       leadScore: lead?.score,
       appointmentId,
       audioMetadata,
     });
 
-    Logger.info("Vapi call ended and persisted", { callId: vapiCallId, conversationId: conversation.id, summary });
+    Logger.info("VOICE_CALL_COMPLETED", { callId: vapiCallId, conversationId: conversation.id, durationSeconds, intent });
+
+    // Owner's conversation-summary WhatsApp (see ConversationSummaryNotifier
+    // for the idempotency/rate-limit/privacy contract). Awaited — this
+    // handler already tolerates long work (maxDuration 60) and a
+    // fire-and-forget promise can be dropped when the serverless instance
+    // freezes right after the response. Failure is logged inside and never
+    // thrown, so the call report itself always succeeds.
+    const owner = await knowledgeRepo.getEmployeeById(employeeId).catch(() => null);
+    await sendConversationSummaryToOwner(
+      { notifier: getWhatsAppNotifier(), idempotency: new SupabaseWhatsAppIdempotencyStore() },
+      {
+        conversationId: conversation.id,
+        employeeId,
+        ownerPhone: owner?.phone,
+        startedAt: conversation.started_at,
+        language: conversation.language,
+        durationSeconds,
+        transcript,
+        vapiSummary: summary,
+        toolsCalled: conversation.tools_called,
+        appointmentLinked: Boolean(appointmentId),
+        lead: lead ? { name: lead.name, email: lead.email, phone: lead.phone } : null,
+      }
+    );
+
     return formatApiResponse({ status: "processed" }, 200, "Call report processed and persisted");
   }
 

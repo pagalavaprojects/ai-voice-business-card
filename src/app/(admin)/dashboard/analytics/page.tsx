@@ -34,10 +34,25 @@ interface Analytics {
     conversionPercent: number | null;
   }>;
   toolUsage: Array<{ tool: string; count: number }>;
+  qualificationStarted: number;
+  qualificationCompleted: number;
+  appointmentsBooked: number;
+  definedConversion: { definition: string; numerator: number; denominator: number; percent: number | null };
+  minutesPerDay: Array<{ key: string; calls: number }>;
+  qualificationsPerDay: Array<{ key: string; calls: number }>;
+  bookingsPerDay: Array<{ key: string; calls: number }>;
+  whatsappActivity: { inboundConversations: number; remindersSent: number; note: string };
+  providerHealth: { database: string; vapi: string; whatsapp: string; calendar: string; tts: string; note: string };
+  recentActivity: {
+    conversations: Array<{ id: string; createdAt: string; durationSeconds: number | null; channel: string; intent: string | null }>;
+    qualifications: Array<{ id: string; name: string; createdAt: string }>;
+    bookings: Array<{ id: string; status: string; startTime: string; createdAt: string }>;
+  };
   unavailableMetrics: Array<{ metric: string; reason: string }>;
 }
 
 const RANGES = [
+  { days: 1, label: "Today" },
   { days: 7, label: "7 days" },
   { days: 30, label: "30 days" },
   { days: 90, label: "90 days" },
@@ -130,7 +145,41 @@ export default function AnalyticsPage() {
               sub={data.conversionPercent === null ? "No calls yet" : "Calls that produced a lead"}
             />
             <Stat title="Avg Duration" value={formatDuration(data.avgDurationSeconds)} icon={<Clock className="h-4 w-4 text-amber-400" />} sub="Per completed call" />
-            <Stat title="Voice Usage" value={`${data.totalVoiceMinutes}m`} icon={<Mic className="h-4 w-4 text-sky-400" />} sub="Total talk time" />
+            <Stat title="AI Voice Minutes" value={`${data.totalVoiceMinutes}m`} icon={<Mic className="h-4 w-4 text-sky-400" />} sub="Total AI conversation time" />
+          </div>
+
+          {/* Six-question visitor flow — deliberately separated from the
+              legacy CRM lead scoring above: qualification here means all six
+              authored questions answered, never a HOT/WARM/COLD byproduct. */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <Stat
+              title="Qualifications Started"
+              value={String(data.qualificationStarted)}
+              icon={<MessageSquare className="h-4 w-4 text-indigo-400" />}
+              sub="Six-question conversations begun"
+            />
+            <Stat
+              title="Qualifications Completed"
+              value={String(data.qualificationCompleted)}
+              icon={<Users className="h-4 w-4 text-emerald-400" />}
+              sub="All six questions answered"
+            />
+            <Stat
+              title="Appointments Booked"
+              value={String(data.appointmentsBooked)}
+              icon={<Clock className="h-4 w-4 text-sky-400" />}
+              sub="Real confirmed calendar bookings"
+            />
+            <Stat
+              title="Qualified → Booked"
+              value={data.definedConversion.percent === null ? "—" : `${data.definedConversion.percent}%`}
+              icon={<TrendingUp className="h-4 w-4 text-amber-400" />}
+              sub={
+                data.definedConversion.percent === null
+                  ? "No completed qualifications yet"
+                  : `${data.definedConversion.numerator} of ${data.definedConversion.denominator}`
+              }
+            />
           </div>
 
           <Card className="glass-panel border-white/[0.08] p-6">
@@ -182,6 +231,145 @@ export default function AnalyticsPage() {
               />
             </Card>
           </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <Card className="glass-panel border-white/[0.08] p-6">
+              <h2 className="text-sm font-bold text-slate-100 mb-1">AI minutes per day</h2>
+              <p className="text-[11px] text-slate-400 mb-4">Total AI conversation minutes, by day.</p>
+              <CallVolumeChart data={data.minutesPerDay} />
+            </Card>
+
+            <Card className="glass-panel border-white/[0.08] p-6">
+              <h2 className="text-sm font-bold text-slate-100 mb-1">Qualifications &amp; bookings per day</h2>
+              <p className="text-[11px] text-slate-400 mb-4">
+                Six-question completions (upper) and appointment requests (lower), by day.
+              </p>
+              <div className="space-y-4">
+                <CallVolumeChart data={data.qualificationsPerDay} />
+                <CallVolumeChart data={data.bookingsPerDay} />
+              </div>
+            </Card>
+
+            <Card className="glass-panel border-white/[0.08] p-6">
+              <h2 className="text-sm font-bold text-slate-100 mb-1">Conversion — defined</h2>
+              <p className="text-[11px] text-slate-400 mb-4">{data.definedConversion.definition}</p>
+              <div className="text-3xl font-extrabold text-slate-100 font-mono">
+                {data.definedConversion.percent === null ? "No data yet" : `${data.definedConversion.percent}%`}
+              </div>
+              <p className="text-[11px] text-slate-400 mt-2">
+                {data.definedConversion.denominator === 0
+                  ? "A rate appears once at least one visitor completes all six questions."
+                  : `${data.definedConversion.numerator} confirmed booking${data.definedConversion.numerator === 1 ? "" : "s"} from ${data.definedConversion.denominator} completed qualification${data.definedConversion.denominator === 1 ? "" : "s"}.`}
+              </p>
+            </Card>
+
+            <Card className="glass-panel border-white/[0.08] p-6">
+              <h2 className="text-sm font-bold text-slate-100 mb-1">WhatsApp activity</h2>
+              <p className="text-[11px] text-slate-400 mb-4">{data.whatsappActivity.note}</p>
+              <dl className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <dt className="text-xs text-slate-300">Inbound qualification conversations</dt>
+                  <dd className="text-lg font-bold text-slate-100 font-mono tabular-nums">{data.whatsappActivity.inboundConversations}</dd>
+                </div>
+                <div className="flex items-center justify-between">
+                  <dt className="text-xs text-slate-300">24h reminders sent</dt>
+                  <dd className="text-lg font-bold text-slate-100 font-mono tabular-nums">{data.whatsappActivity.remindersSent}</dd>
+                </div>
+              </dl>
+            </Card>
+          </div>
+
+          <Card className="glass-panel border-white/[0.08] p-6">
+            <h2 className="text-sm font-bold text-slate-100 mb-1">Provider health</h2>
+            <p className="text-[11px] text-slate-400 mb-4">{data.providerHealth.note}</p>
+            <div className="flex flex-wrap gap-2.5">
+              {(
+                [
+                  ["Database", data.providerHealth.database],
+                  ["Vapi", data.providerHealth.vapi],
+                  ["WhatsApp", data.providerHealth.whatsapp],
+                  ["Calendar", data.providerHealth.calendar],
+                  ["TTS", data.providerHealth.tts],
+                ] as const
+              ).map(([name, status]) => (
+                <span
+                  key={name}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11px] font-semibold ${
+                    status === "ok" || status === "configured"
+                      ? "bg-emerald-500/10 border-emerald-400/30 text-emerald-300"
+                      : "bg-amber-500/10 border-amber-400/30 text-amber-300"
+                  }`}
+                >
+                  <span
+                    className={`h-1.5 w-1.5 rounded-full ${status === "ok" || status === "configured" ? "bg-emerald-400" : "bg-amber-400"}`}
+                    aria-hidden="true"
+                  />
+                  {name}: {status}
+                </span>
+              ))}
+            </div>
+          </Card>
+
+          <Card className="glass-panel border-white/[0.08] p-6">
+            <h2 className="text-sm font-bold text-slate-100 mb-4">Recent activity</h2>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+              <div>
+                <h3 className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-2">Latest AI conversations</h3>
+                {data.recentActivity.conversations.length === 0 ? (
+                  <p className="text-xs text-slate-500">No conversations yet.</p>
+                ) : (
+                  <ul className="space-y-2">
+                    {data.recentActivity.conversations.map((c) => (
+                      <li key={c.id} className="text-xs text-slate-300">
+                        <span className="text-slate-100">{new Date(c.createdAt).toLocaleString()}</span>
+                        <span className="text-slate-500"> · {c.channel}</span>
+                        {c.intent && <span className="text-sky-300"> · {c.intent}</span>}
+                        {typeof c.durationSeconds === "number" && c.durationSeconds > 0 && (
+                          <span className="text-slate-500"> · {formatDuration(c.durationSeconds)}</span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+              <div>
+                <h3 className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-2">Latest qualifications</h3>
+                {data.recentActivity.qualifications.length === 0 ? (
+                  <p className="text-xs text-slate-500">No completed qualifications yet.</p>
+                ) : (
+                  <ul className="space-y-2">
+                    {data.recentActivity.qualifications.map((q) => (
+                      <li key={q.id} className="text-xs">
+                        <a href="/dashboard/leads" className="text-sky-300 hover:underline">
+                          {q.name}
+                        </a>
+                        <span className="text-slate-500"> · {new Date(q.createdAt).toLocaleDateString()}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+              <div>
+                <h3 className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-2">Latest bookings</h3>
+                {data.recentActivity.bookings.length === 0 ? (
+                  <p className="text-xs text-slate-500">No bookings yet.</p>
+                ) : (
+                  <ul className="space-y-2">
+                    {data.recentActivity.bookings.map((b) => (
+                      <li key={b.id} className="text-xs">
+                        <a href="/dashboard/appointments" className="text-sky-300 hover:underline">
+                          {new Date(b.startTime).toLocaleString()}
+                        </a>
+                        <span className={`ml-1.5 text-[10px] font-semibold ${b.status === "BOOKED" || b.status === "COMPLETED" ? "text-emerald-300" : "text-amber-300"}`}>
+                          {b.status}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
+          </Card>
 
           <Card className="glass-panel border-white/[0.08] p-6">
             <h2 className="text-sm font-bold text-slate-100 mb-4">Employee performance</h2>

@@ -6,7 +6,8 @@ import { Dialog } from "@/shared/ui/dialog";
 import { Button } from "@/shared/ui/button";
 import { Skeleton } from "@/shared/ui/skeleton";
 import type { LanguageCode } from "@/features/language/config";
-import { ALL_QUESTIONS, QUALIFICATION_QUESTIONS, getAuthoredQuestion, matchAuthoredQuestion } from "@/features/voice/lib/qualificationScript";
+import { ALL_QUESTIONS, QUALIFICATION_QUESTIONS, buildAppointmentConfirmedSpeech, getAuthoredQuestion, matchAuthoredQuestion } from "@/features/voice/lib/qualificationScript";
+import { speakPitchWithBrowserTts } from "@/features/voice/lib/pitchFallback";
 
 interface AppointmentModalProps {
   open: boolean;
@@ -126,12 +127,37 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   // freshly reset state — without this, the next open landed on the Done
   // screen for a booking whose details the visitor never saw confirmed.
   const bookingSessionRef = useRef(0);
+  // One-shot per booking: the spoken confirmation must not replay on every
+  // re-render of the Done step (or on a reopen that restores step 3).
+  const spokenConfirmationRef = useRef(false);
   // A translation KEY, not display text — resolved through t() at render
   // time, same reasoning as `outcome` below: the server's raw HTTP status
   // maps to one of a fixed set of localized messages, never the server's
   // own English string.
   const [submitErrorKey, setSubmitErrorKey] = useState<string | null>(null);
   const [outcome, setOutcome] = useState<BookingOutcome | null>(null);
+
+  // After a REAL confirmed booking (never REQUESTED, never an error), the
+  // AI voice speaks the approved closing — headline, thank-you line, and
+  // the actually-booked slot. By the time the modal books, the live Vapi
+  // call has already ended (advanceToSlots), so browser speech synthesis
+  // is the voice here — same engine as the pitch fallback. The spoken text
+  // is the product-approved ENGLISH wording regardless of card language
+  // (same product rule as the English-only qualification script); the
+  // visual Done step stays localized. One-shot per booking via the ref;
+  // best-effort: a browser without speechSynthesis simply stays silent.
+  useEffect(() => {
+    if (step !== 3 || !outcome?.confirmed || !selectedSlot || spokenConfirmationRef.current) return;
+    spokenConfirmationRef.current = true;
+    const when = new Intl.DateTimeFormat("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(
+      new Date(selectedSlot)
+    );
+    speakPitchWithBrowserTts(buildAppointmentConfirmedSpeech(when), "en", {
+      onStart: () => undefined,
+      onEnd: () => undefined,
+      onError: () => undefined,
+    });
+  }, [step, outcome, selectedSlot]);
 
   // Real availability, fetched fresh every time the modal opens — a slot
   // list cached across opens could go stale within the same visit.
@@ -284,6 +310,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
     activeCallIdRef.current = null;
     // Invalidates any booking POST still in flight (see bookingSessionRef).
     bookingSessionRef.current++;
+    spokenConfirmationRef.current = false;
     setStep(voice ? 0 : 1);
     setQualStage("intro");
     setQualComplete(false);

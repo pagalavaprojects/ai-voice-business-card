@@ -1,7 +1,7 @@
 import { ToolRegistry } from "@/core/application/tools/ToolRegistry";
 import { CalcomAdapter, CalcomUnavailableError } from "@/core/infrastructure/booking/calcom/CalcomAdapter";
 import { AppointmentStatus } from "@/core/domain/models/types";
-import { APPOINTMENT_CONFIRMED_CLOSING } from "@/features/voice/lib/qualificationScript";
+import { APPOINTMENT_CONFIRMED_CLOSING, buildAppointmentConfirmedSpeech } from "@/features/voice/lib/qualificationScript";
 
 /**
  * Regression tests for the most serious defect found in the production audit:
@@ -66,8 +66,13 @@ describe("book_appointment", () => {
       const result = await registry.getTool("book_appointment")!.execute(ARGS, CTX);
 
       expect(result.confirmed).toBe(true);
-      expect(result.speak).toBe(APPOINTMENT_CONFIRMED_CLOSING);
-      expect(result.speak).toBe("Thank You for Your Valuable Time and Support. Have a Wonderful Day");
+      // The complete spoken confirmation: headline, the approved thank-you
+      // line, and the REAL booked slot (UTC — no timezone arg was passed).
+      expect(result.speak).toBe(buildAppointmentConfirmedSpeech("Tue, Sep 1, 10:00 AM"));
+      expect(result.speak).toBe(
+        "Appointment Confirmed!\n\nThank You for Your Valuable Time and Support. Have a Wonderful Day\n\nPreferred time: Tue, Sep 1, 10:00 AM"
+      );
+      expect(String(result.speak)).toContain(APPOINTMENT_CONFIRMED_CLOSING);
       expect(String(result.message)).toMatch(/SPEAK the "speak" text EXACTLY/);
     });
 

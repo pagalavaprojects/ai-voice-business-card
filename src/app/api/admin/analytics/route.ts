@@ -77,10 +77,10 @@ export async function GET(req: NextRequest) {
     const windowDays = Math.min(Number(req.nextUrl.searchParams.get("days")) || 30, 365);
     const since = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000).toISOString();
 
-    const [conversations, leads, appointments, employees] = await Promise.all([
+    const [conversations, leads, appointments, employees, qualCompletedLeads, reminderActivities] = await Promise.all([
       supabaseAdmin
         .from("conversations")
-        .select("id, employee_id, created_at, duration_seconds, status, tools_called, audio_metadata")
+        .select("id, employee_id, created_at, duration_seconds, status, tools_called, audio_metadata, channel, intent")
         .eq("company_id", companyId)
         .gte("created_at", since)
         .order("created_at", { ascending: true })
@@ -92,8 +92,35 @@ export async function GET(req: NextRequest) {
         .is("deleted_at", null)
         .gte("created_at", since)
         .limit(5000),
-      supabaseAdmin.from("appointments").select("id, status").eq("company_id", companyId).gte("created_at", since).limit(5000),
+      supabaseAdmin
+        .from("appointments")
+        .select("id, status, created_at, start_time")
+        .eq("company_id", companyId)
+        .gte("created_at", since)
+        .order("created_at", { ascending: false })
+        .limit(5000),
       supabaseAdmin.from("employees").select("id, name, designation").eq("company_id", companyId).is("deleted_at", null),
+      // Six-question flow completions: a lead whose qualification_notes
+      // records a Q6 answer genuinely finished all six authored questions.
+      // Deliberately DISTINCT from the legacy score_category ("qualified
+      // leads") — the six-question visitor flow has no HOT/WARM/COLD gate.
+      supabaseAdmin
+        .from("leads")
+        .select("id, name, created_at")
+        .eq("company_id", companyId)
+        .is("deleted_at", null)
+        .gte("created_at", since)
+        .like("qualification_notes", "%Q6 [%")
+        .order("created_at", { ascending: false })
+        .limit(5000),
+      // 24h WhatsApp reminders actually sent — the cron's own idempotency
+      // markers on the lead timeline are the audit trail.
+      supabaseAdmin
+        .from("lead_activities")
+        .select("id", { count: "exact", head: true })
+        .eq("company_id", companyId)
+        .eq("content", "whatsapp_reminder_24h")
+        .gte("created_at", since),
     ]);
 
     const convRows = conversations.data ?? [];
@@ -162,6 +189,68 @@ export async function GET(req: NextRequest) {
 
     const timestamps = convRows.map((c) => String(c.created_at));
 
+    // ---- Six-question qualification + defined conversion -----------------
+    const qualRows = qualCompletedLeads.data ?? [];
+    const qualificationCompleted = qualRows.length;
+    // Started = a voice/WhatsApp conversation actually invoked the
+    // sequencing tool (server-authoritative, not inferred from UI events).
+    const qualificationStarted = convRows.filter((c) => ((c.tools_called as string[] | null) ?? []).includes("get_next_qualification_question")).length;
+
+    const appointmentsBooked = apptRows.filter((a) => a.status === "BOOKED" || a.status === "COMPLETED").length;
+    // The one defined conversion the data genuinely supports: of visitors
+    // who finished all six questions, how many ended with a REAL booked
+    // appointment. Null (never 0%) without a denominator.
+    const definedConversion = {
+      definition: "Confirmed appointments ÷ completed six-question qualifications, in the selected window.",
+      numerator: appointmentsBooked,
+      denominator: qualificationCompleted,
+      percent: qualificationCompleted > 0 ? Math.round((appointmentsBooked / qualificationCompleted) * 1000) / 10 : null,
+    };
+
+    // ---- Per-day trends beyond call counts -------------------------------
+    const minutesByDay = new Map<string, number>();
+    for (const c of convRows) {
+      const n = Number(c.duration_seconds);
+      if (!Number.isFinite(n) || n <= 0) continue;
+      const key = String(c.created_at).slice(0, 10);
+      minutesByDay.set(key, (minutesByDay.get(key) ?? 0) + n / 60);
+    }
+    const minutesPerDay = fillDays(
+      [...minutesByDay.entries()].map(([key, v]) => ({ key, calls: Math.round(v * 10) / 10 })),
+      Math.min(windowDays, 30)
+    );
+    const qualificationsPerDay = fillDays(bucketByPeriod(qualRows.map((l) => String(l.created_at)), "day"), Math.min(windowDays, 30));
+    const bookingsPerDay = fillDays(bucketByPeriod(apptRows.map((a) => String(a.created_at)), "day"), Math.min(windowDays, 30));
+
+    // ---- WhatsApp activity — only what is genuinely recorded -------------
+    const whatsappActivity = {
+      inboundConversations: convRows.filter((c) => c.channel === "whatsapp").length,
+      remindersSent: reminderActivities.count ?? 0,
+      note: "Outbound confirmations and summaries are sent fire-and-forget and not individually recorded.",
+    };
+
+    // ---- Provider health — configuration truth, not fabricated uptime ----
+    const configured = (v: string | undefined) => Boolean(v && !/your-|placeholder|example|xxxx/i.test(v));
+    const providerHealth = {
+      // This request's own queries just succeeded, which IS the DB probe.
+      database: "ok",
+      vapi: configured(process.env.VAPI_API_KEY) ? "configured" : "not configured",
+      whatsapp: configured(process.env.WHATSAPP_ACCESS_TOKEN) && configured(process.env.WHATSAPP_PHONE_NUMBER_ID) ? "configured" : "not configured",
+      calendar: configured(process.env.CALCOM_API_KEY) && configured(process.env.CALCOM_EVENT_TYPE_ID) ? "configured" : "not configured",
+      tts: configured(process.env.OPENAI_API_KEY) ? "configured" : "not configured",
+      note: "“Configured” reflects credential presence — live provider quota/billing state is not probed from here.",
+    };
+
+    // ---- Recent activity (owner-only; links resolve to existing pages) ---
+    const recentActivity = {
+      conversations: convRows
+        .slice(-5)
+        .reverse()
+        .map((c) => ({ id: c.id, createdAt: c.created_at, durationSeconds: c.duration_seconds, channel: c.channel ?? "voice", intent: c.intent ?? null })),
+      qualifications: qualRows.slice(0, 5).map((l) => ({ id: l.id, name: l.name ?? "Visitor", createdAt: l.created_at })),
+      bookings: apptRows.slice(0, 5).map((a) => ({ id: a.id, status: a.status, startTime: a.start_time, createdAt: a.created_at })),
+    };
+
     return formatApiResponse(
       {
         windowDays,
@@ -183,13 +272,24 @@ export async function GET(req: NextRequest) {
         appointmentFunnel,
         employeePerformance,
         toolUsage,
+        qualificationStarted,
+        qualificationCompleted,
+        appointmentsBooked,
+        definedConversion,
+        minutesPerDay,
+        qualificationsPerDay,
+        bookingsPerDay,
+        whatsappActivity,
+        providerHealth,
+        recentActivity,
         // Named so the UI can state plainly what isn't measured yet, instead
         // of rendering an empty chart that looks like a bug.
         unavailableMetrics: [
           { metric: "Lead source", reason: "No source is recorded — every lead arrives through the voice card." },
-          { metric: "Most asked questions", reason: "Requires transcript analysis; conversations.intent is never populated." },
+          { metric: "Most asked questions", reason: "Requires transcript analysis; intent is derived per call but question text is not aggregated." },
           { metric: "Prompt module usage", reason: "All six modules take part in every assembly, so there is no variation to chart." },
           { metric: "AI response latency", reason: "Not yet measured per conversation." },
+          { metric: "Provider cost (Vapi / TTS / WhatsApp)", reason: "Cost data unavailable — provider billing APIs are not integrated; no estimate is invented." },
         ],
       },
       200,

@@ -9,7 +9,7 @@ import { IKnowledgeDocumentRepository } from "../../domain/repositories/IKnowled
 import { OpenAIEmbeddingAdapter } from "../../infrastructure/embeddings/OpenAIEmbeddingAdapter";
 import { getWhatsAppNotifier } from "../../infrastructure/notifications/WhatsAppNotifier";
 import {
-  APPOINTMENT_CONFIRMED_CLOSING,
+  buildAppointmentConfirmedSpeech,
   classifyClosedResponse,
   getAuthoredQuestion,
   QUALIFICATION_ANSWER_GUIDANCE,
@@ -609,7 +609,23 @@ export class ToolRegistry {
           // validation failure, etc.) must never get this field, since the
           // model has nothing to blindly copy and paraphrase into a false
           // confirmation.
-          ...(confirmed ? { speak: APPOINTMENT_CONFIRMED_CLOSING } : {}),
+          // The spoken confirmation includes the REAL booked slot, formatted
+          // in the visitor's own requested timezone — never a recomputed or
+          // default time.
+          ...(confirmed
+            ? {
+                speak: buildAppointmentConfirmedSpeech(
+                  new Date(appointment.start_time).toLocaleString("en-US", {
+                    weekday: "short",
+                    month: "short",
+                    day: "numeric",
+                    hour: "numeric",
+                    minute: "2-digit",
+                    timeZone: String(args.timezone || "UTC"),
+                  })
+                ),
+              }
+            : {}),
           message: confirmed
             ? 'Appointment confirmed and a calendar invitation has been sent. SPEAK the "speak" text EXACTLY as ' +
               "returned, as your final words — do not paraphrase, shorten, lowercase, or rephrase it."
