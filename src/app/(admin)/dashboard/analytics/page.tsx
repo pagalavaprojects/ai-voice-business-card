@@ -296,13 +296,13 @@ export default function AnalyticsPage() {
                 <span
                   key={name}
                   className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11px] font-semibold ${
-                    status === "ok" || status === "configured"
+                    /^(ok|configured|available)/.test(status)
                       ? "bg-emerald-500/10 border-emerald-400/30 text-emerald-300"
                       : "bg-amber-500/10 border-amber-400/30 text-amber-300"
                   }`}
                 >
                   <span
-                    className={`h-1.5 w-1.5 rounded-full ${status === "ok" || status === "configured" ? "bg-emerald-400" : "bg-amber-400"}`}
+                    className={`h-1.5 w-1.5 rounded-full ${/^(ok|configured|available)/.test(status) ? "bg-emerald-400" : "bg-amber-400"}`}
                     aria-hidden="true"
                   />
                   {name}: {status}
