@@ -236,6 +236,11 @@ export async function GET(req: NextRequest) {
       database: "ok",
       vapi: configured(process.env.VAPI_API_KEY) ? "configured" : "not configured",
       whatsapp: configured(process.env.WHATSAPP_ACCESS_TOKEN) && configured(process.env.WHATSAPP_PHONE_NUMBER_ID) ? "configured" : "not configured",
+      // The known production blocker made visible where the owner looks:
+      // without an approved Meta template, business-initiated messages
+      // (reminders, summaries, confirmations) only reach numbers inside a
+      // 24h customer-service window or the test allowlist.
+      whatsappTemplate: configured(process.env.WHATSAPP_TEMPLATE_NAME) ? "configured" : "not configured",
       calendar: configured(process.env.CALCOM_API_KEY) && configured(process.env.CALCOM_EVENT_TYPE_ID) ? "configured" : "not configured",
       tts: configured(process.env.OPENAI_API_KEY) ? "configured" : "not configured",
       note: "“Configured” reflects credential presence — live provider quota/billing state is not probed from here.",

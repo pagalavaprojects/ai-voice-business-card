@@ -86,7 +86,16 @@ export class MetaCloudWhatsAppNotifier implements IWhatsAppNotifier {
       });
       if (!res.ok) {
         const errBody = await res.text().catch(() => "");
-        Logger.warn("WhatsApp send failed", { status: res.status, body: errBody.slice(0, 300) });
+        // templateConfigured makes the most common production failure
+        // self-diagnosing: a 4xx WITHOUT a template almost always means the
+        // recipient is outside Meta's 24h customer-service window, which
+        // only an approved template can cross. Names/booleans only — never
+        // credential values.
+        Logger.warn("WhatsApp send failed", {
+          status: res.status,
+          body: errBody.slice(0, 300),
+          templateConfigured: !isPlaceholder(this.templateName),
+        });
         return { sent: false, reason: `http_${res.status}` };
       }
       return { sent: true };
