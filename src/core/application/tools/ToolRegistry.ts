@@ -8,6 +8,7 @@ import { ISettingsRepository } from "../../domain/repositories/ISettingsReposito
 import { IKnowledgeDocumentRepository } from "../../domain/repositories/IKnowledgeDocumentRepository";
 import { OpenAIEmbeddingAdapter } from "../../infrastructure/embeddings/OpenAIEmbeddingAdapter";
 import { getWhatsAppNotifier } from "../../infrastructure/notifications/WhatsAppNotifier";
+import { SupabaseWhatsAppIdempotencyStore } from "../../infrastructure/notifications/WhatsAppIdempotency";
 import {
   buildAppointmentConfirmedSpeech,
   classifyClosedResponse,
@@ -532,67 +533,179 @@ export class ToolRegistry {
           status: confirmed ? AppointmentStatus.BOOKED : AppointmentStatus.REQUESTED,
         });
 
-        // The email must match reality too — telling someone a meeting is
-        // confirmed when no calendar entry exists is the same lie in a
-        // different channel. The email ITSELF must also match the visitor's
-        // own conversation language — a Tamil caller who booked in Tamil
-        // getting an all-English confirmation is the same class of leak the
-        // rest of this platform's multilingual work exists to close.
-        if (this.notificationService && lead) {
-          const copy = APPOINTMENT_EMAIL_COPY[context.language ?? "en"] ?? APPOINTMENT_EMAIL_COPY.en;
+        // Both parties are notified from the SAME confirmed appointment, and
+        // the sends are AWAITED (Promise.allSettled) rather than
+        // fire-and-forget: a serverless instance can freeze the instant the
+        // response returns, silently dropping unawaited promises — the same
+        // reason the conversation-summary notifier awaits. Each send is
+        // claimed through the webhook's insert-or-conflict idempotency
+        // store, keyed appt-notify:{appointmentId}:{recipient}:{channel},
+        // so a retried/duplicated execution can never double-message either
+        // party. Every failure is logged and recorded on the lead timeline;
+        // NONE of it can affect the booking result — the appointment stays
+        // exactly as Cal.com decided it, and the visitor's confirmation UI
+        // and voice are driven solely by `confirmed` below.
+        const notifyOutcomes: Record<string, string> = {};
+        try {
+          const whatsapp = getWhatsAppNotifier();
+          // Promise.resolve wrapper: a SYNCHRONOUS throw from the lookup
+          // (broken repo wiring) must degrade to "no owner notifications",
+          // never take the client's notifications down with it.
+          const employee = await Promise.resolve()
+            .then(() => this.knowledgeRepo.getEmployeeById(context.employeeId))
+            .catch(() => null);
+          const idempotency = new SupabaseWhatsAppIdempotencyStore();
+          // At-LEAST-once bias — deliberately the opposite of the summary
+          // notifier's: a booking confirmation is transactional, and a
+          // silently LOST confirmation (claim store unreachable) is worse
+          // for the client than a rare duplicate. A claim that positively
+          // answers "already sent" still short-circuits; only claim ERRORS
+          // fail open.
+          const claimed = async (key: string) => {
+            try {
+              return await idempotency.claimMessage(key);
+            } catch (err) {
+              Logger.warn("book_appointment notification claim failed — sending anyway", { key, error: err instanceof Error ? err.message : String(err) });
+              return true;
+            }
+          };
+
+          const tz = String(args.timezone || "UTC");
+          // ONE canonical formatted time for every channel — visitor's
+          // locale AND requested timezone (the email previously formatted
+          // without a timezone, silently showing server time).
           const when = new Date(appointment.start_time).toLocaleString(context.language || "en-US", {
             dateStyle: "full",
             timeStyle: "short",
+            timeZone: tz,
           });
-          this.notificationService
-            .send({
-              companyId: context.companyId,
-              to: lead.email,
-              subject: confirmed ? copy.confirmedSubject : copy.requestedSubject,
-              templateName: confirmed ? "appointment_confirmation" : "appointment_requested",
-              fromName: companyDefaults.fromName,
-              html: confirmed
-                ? copy.confirmedBody(lead.name, when, appointment.meeting_url ?? undefined)
-                : copy.requestedBody(lead.name, when),
-            })
-            .catch((err) => Logger.error("book_appointment email failed", { error: err instanceof Error ? err.message : String(err) }));
-        }
 
-        // Automated WhatsApp confirmations to both sides — the real Cloud
-        // API integration, not the card's wa.me deep links. Inert (a logged
-        // {sent:false, reason:"unconfigured"} no-op) until WHATSAPP_ACCESS_
-        // TOKEN / WHATSAPP_PHONE_NUMBER_ID hold real credentials, and
-        // fire-and-forget like the email above: messaging must never fail,
-        // slow, or retry the booking itself.
-        {
-          const whatsapp = getWhatsAppNotifier();
+          const tasks: Array<Promise<void>> = [];
+
+          // CLIENT email — localized, confirmed/requested variants (content
+          // unchanged; see the multilingual note in APPOINTMENT_EMAIL_COPY).
+          if (this.notificationService && lead) {
+            const copy = APPOINTMENT_EMAIL_COPY[context.language ?? "en"] ?? APPOINTMENT_EMAIL_COPY.en;
+            tasks.push(
+              (async () => {
+                if (!(await claimed(`appt-notify:${appointment.id}:client:email`))) return;
+                const r = await this.notificationService!.send({
+                  companyId: context.companyId,
+                  to: lead.email,
+                  subject: confirmed ? copy.confirmedSubject : copy.requestedSubject,
+                  templateName: confirmed ? "appointment_confirmation" : "appointment_requested",
+                  fromName: companyDefaults.fromName,
+                  html: confirmed
+                    ? copy.confirmedBody(lead.name, when, appointment.meeting_url ?? undefined)
+                    : copy.requestedBody(lead.name, when),
+                });
+                notifyOutcomes["client:email"] = r.success ? "sent" : `failed:${r.error ?? "unknown"}`.slice(0, 80);
+              })().catch((err) => {
+                notifyOutcomes["client:email"] = "failed:exception";
+                Logger.error("book_appointment client email failed", { error: err instanceof Error ? err.message : String(err) });
+              })
+            );
+          }
+
           if (whatsapp.isConfigured()) {
-            const when = new Date(appointment.start_time).toLocaleString(context.language || "en-US", {
-              dateStyle: "full",
-              timeStyle: "short",
-              timeZone: String(args.timezone || "UTC"),
-            });
-            const tz = String(args.timezone || "UTC");
+            // CLIENT WhatsApp — on a REAL confirmation this is the canonical
+            // three-part confirmation (the same approved wording the UI
+            // shows and the voice speaks), plus the real meeting link when
+            // one actually exists. REQUESTED keeps its honest non-confirmed
+            // wording.
             if (lead?.phone) {
               const clientMsg = confirmed
-                ? `Your meeting with ${companyDefaults.fromName ?? "our team"} is confirmed for ${when} (${tz}).${meetingUrl ? ` Join: ${meetingUrl}` : ""}`
+                ? `${buildAppointmentConfirmedSpeech(`${when} (${tz})`)}${meetingUrl ? `\n\nMeeting: ${meetingUrl}` : ""}`
                 : `Thanks — we've noted your preferred meeting time of ${when} (${tz}). A confirmation will follow shortly.`;
-              whatsapp
-                .send(lead.phone, clientMsg)
-                .catch((err) => Logger.warn("book_appointment client WhatsApp failed", { error: err instanceof Error ? err.message : String(err) }));
+              tasks.push(
+                (async () => {
+                  if (!(await claimed(`appt-notify:${appointment.id}:client:whatsapp`))) return;
+                  const r = await whatsapp.send(lead.phone!, clientMsg);
+                  notifyOutcomes["client:whatsapp"] = r.sent ? "sent" : `failed:${r.reason ?? "unknown"}`;
+                })().catch((err) => {
+                  notifyOutcomes["client:whatsapp"] = "failed:exception";
+                  Logger.warn("book_appointment client WhatsApp failed", { error: err instanceof Error ? err.message : String(err) });
+                })
+              );
             }
-            this.knowledgeRepo
-              .getEmployeeById(context.employeeId)
-              .then((employee) => {
-                if (!employee?.phone) return;
-                const ownerMsg =
-                  `New appointment ${confirmed ? "BOOKED" : "REQUESTED"}: ${lead?.name ?? "Website visitor"}` +
-                  `${lead?.phone ? ` (${lead.phone})` : ""}${lead?.email ? ` <${lead.email}>` : ""} — ${when} (${tz}).` +
-                  `${lead?.lead_temperature ? ` Lead temperature: ${lead.lead_temperature}.` : ""}`;
-                return whatsapp.send(employee.phone, ownerMsg);
-              })
-              .catch((err) => Logger.warn("book_appointment owner WhatsApp failed", { error: err instanceof Error ? err.message : String(err) }));
+
+            // OWNER WhatsApp — operational summary of who booked and when.
+            if (employee?.phone) {
+              const ownerMsg = confirmed
+                ? [
+                    "Appointment Confirmed",
+                    "",
+                    `Client: ${lead?.name ?? "Website visitor"}`,
+                    ...(lead?.email ? [`Email: ${lead.email}`] : []),
+                    ...(lead?.phone ? [`Phone: ${lead.phone}`] : []),
+                    `Preferred time: ${when} (${tz})`,
+                    ...(meetingUrl ? [`Meeting: ${meetingUrl}`] : []),
+                    "Status: CONFIRMED",
+                  ].join("\n")
+                : `New appointment REQUESTED: ${lead?.name ?? "Website visitor"}` +
+                  `${lead?.phone ? ` (${lead.phone})` : ""}${lead?.email ? ` <${lead.email}>` : ""} — ${when} (${tz}). ` +
+                  "Not yet on the calendar — follow up to confirm.";
+              tasks.push(
+                (async () => {
+                  if (!(await claimed(`appt-notify:${appointment.id}:owner:whatsapp`))) return;
+                  const r = await whatsapp.send(employee.phone, ownerMsg);
+                  notifyOutcomes["owner:whatsapp"] = r.sent ? "sent" : `failed:${r.reason ?? "unknown"}`;
+                })().catch((err) => {
+                  notifyOutcomes["owner:whatsapp"] = "failed:exception";
+                  Logger.warn("book_appointment owner WhatsApp failed", { error: err instanceof Error ? err.message : String(err) });
+                })
+              );
+            }
           }
+
+          // OWNER email — confirmed bookings only (an operational record,
+          // not a client-facing artifact, so it stays English).
+          if (this.notificationService && employee?.email && confirmed) {
+            tasks.push(
+              (async () => {
+                if (!(await claimed(`appt-notify:${appointment.id}:owner:email`))) return;
+                const r = await this.notificationService!.send({
+                  companyId: context.companyId,
+                  to: employee.email,
+                  subject: `New appointment confirmed — ${lead?.name ?? "Website visitor"} — ${when}`,
+                  templateName: "appointment_owner_confirmation",
+                  fromName: companyDefaults.fromName,
+                  html:
+                    `<h2>Appointment Confirmed</h2>` +
+                    `<p><strong>Client:</strong> ${lead?.name ?? "Website visitor"}</p>` +
+                    (lead?.email ? `<p><strong>Email:</strong> ${lead.email}</p>` : "") +
+                    (lead?.phone ? `<p><strong>Phone:</strong> ${lead.phone}</p>` : "") +
+                    `<p><strong>Preferred time:</strong> ${when} (${tz})</p>` +
+                    (meetingUrl ? `<p><strong>Meeting:</strong> <a href="${meetingUrl}">${meetingUrl}</a></p>` : "") +
+                    `<p><strong>Status:</strong> CONFIRMED</p>`,
+                });
+                notifyOutcomes["owner:email"] = r.success ? "sent" : `failed:${r.error ?? "unknown"}`.slice(0, 80);
+              })().catch((err) => {
+                notifyOutcomes["owner:email"] = "failed:exception";
+                Logger.error("book_appointment owner email failed", { error: err instanceof Error ? err.message : String(err) });
+              })
+            );
+          }
+
+          await Promise.allSettled(tasks);
+
+          // Durable audit on the lead's own timeline (the same surface the
+          // 24h reminder uses) — queryable evidence of exactly which
+          // notifications went out for this appointment and which did not.
+          if (lead && Object.keys(notifyOutcomes).length > 0) {
+            try {
+              await this.crmRepo.addActivity(lead.id, context.companyId, "NOTE", "appointment_notifications", undefined, {
+                appointmentId: appointment.id,
+                confirmed,
+                outcomes: notifyOutcomes,
+              });
+            } catch (err) {
+              Logger.warn("book_appointment notification audit failed", { error: err instanceof Error ? err.message : String(err) });
+            }
+          }
+        } catch (err) {
+          // Notification machinery must never touch the booking result.
+          Logger.warn("book_appointment notifications block failed", { error: err instanceof Error ? err.message : String(err) });
         }
 
         return {
