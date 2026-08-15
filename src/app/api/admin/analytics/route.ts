@@ -3,7 +3,7 @@ import { formatApiResponse } from "@/shared/lib/security";
 import { handleApiError } from "@/shared/lib/apiHandler";
 import { requireCompanyAccess } from "@/shared/lib/tenant";
 import { supabaseAdmin } from "@/shared/lib/supabase";
-import { resolvePublicBaseUrl } from "@/shared/lib/publicUrl";
+import { buildProviderHealth } from "@/shared/lib/providerHealth";
 
 export const dynamic = "force-dynamic";
 
@@ -230,48 +230,14 @@ export async function GET(req: NextRequest) {
       note: "Outbound confirmations and summaries are sent fire-and-forget and not individually recorded.",
     };
 
-    // ---- Provider health — configuration truth, not fabricated uptime ----
-    const configured = (v: string | undefined) => Boolean(v && !/your-|placeholder|example|xxxx/i.test(v));
-
-    // TTS gets a LIVE probe of the real user-facing pitch path rather than
-    // a credential guess: our own pitch-audio route either serves the
-    // already-rendered recording from storage (cheap), renders once and
-    // caches (first success only), or surfaces the provider's failure as a
-    // 503 with no spend. Self-updating — when billing is restored the pill
-    // flips to "available" with no code change. Short timeout so a hung
-    // provider can't slow the dashboard; inconclusive stays "configured".
-    let ttsStatus = configured(process.env.OPENAI_API_KEY) ? "configured" : "not configured";
-    const probeEmployeeId = employeeRows[0]?.id;
-    const probeBase = resolvePublicBaseUrl(req.nextUrl.origin);
-    if (ttsStatus === "configured" && probeEmployeeId && probeBase) {
-      try {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 4000);
-        const probe = await fetch(`${probeBase}/api/public/${companyId}/${probeEmployeeId}/pitch?type=usp&lang=en`, {
-          signal: controller.signal,
-          cache: "no-store",
-        });
-        clearTimeout(timer);
-        ttsStatus = probe.ok ? "available" : probe.status === 503 ? "unavailable (provider/billing)" : `error (http ${probe.status})`;
-      } catch {
-        ttsStatus = "configured (probe timeout)";
-      }
-    }
-
-    const providerHealth = {
-      // This request's own queries just succeeded, which IS the DB probe.
-      database: "ok",
-      vapi: configured(process.env.VAPI_API_KEY) ? "configured" : "not configured",
-      whatsapp: configured(process.env.WHATSAPP_ACCESS_TOKEN) && configured(process.env.WHATSAPP_PHONE_NUMBER_ID) ? "configured" : "not configured",
-      // The known production blocker made visible where the owner looks:
-      // without an approved Meta template, business-initiated messages
-      // (reminders, summaries, confirmations) only reach numbers inside a
-      // 24h customer-service window or the test allowlist.
-      whatsappTemplate: configured(process.env.WHATSAPP_TEMPLATE_NAME) ? "configured" : "not configured",
-      calendar: configured(process.env.CALCOM_API_KEY) && configured(process.env.CALCOM_EVENT_TYPE_ID) ? "configured" : "not configured",
-      tts: ttsStatus,
-      note: "“Configured” reflects credential presence. TTS is additionally live-probed through the real pitch-audio path; other providers are not probed from here.",
-    };
+    // ---- Provider health — the SHARED configuration-truth helper (also
+    // used by the live overview endpoint, so the two can never disagree),
+    // with the TTS live probe enabled here only: the analytics page is
+    // opened deliberately, while the overview polls every few seconds and
+    // must never render audio or spend money as a side effect.
+    const providerHealth = await buildProviderHealth({
+      probeTts: { requestOrigin: req.nextUrl.origin, companyId, employeeId: employeeRows[0]?.id },
+    });
 
     // ---- Recent activity (owner-only; links resolve to existing pages) ---
     const recentActivity = {

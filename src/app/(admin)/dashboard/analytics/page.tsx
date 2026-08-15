@@ -42,7 +42,17 @@ interface Analytics {
   qualificationsPerDay: Array<{ key: string; calls: number }>;
   bookingsPerDay: Array<{ key: string; calls: number }>;
   whatsappActivity: { inboundConversations: number; remindersSent: number; note: string };
-  providerHealth: { database: string; vapi: string; whatsapp: string; whatsappTemplate: string; calendar: string; tts: string; note: string };
+  providerHealth: {
+    database: string;
+    vapi: string;
+    whatsapp: string;
+    whatsappTemplate: string;
+    calendar: string;
+    email: string;
+    cron: string;
+    tts: string;
+    note: string;
+  };
   recentActivity: {
     conversations: Array<{ id: string; createdAt: string; durationSeconds: number | null; channel: string; intent: string | null }>;
     qualifications: Array<{ id: string; name: string; createdAt: string }>;
@@ -290,6 +300,8 @@ export default function AnalyticsPage() {
                   ["WhatsApp", data.providerHealth.whatsapp],
                   ["WhatsApp template", data.providerHealth.whatsappTemplate],
                   ["Calendar", data.providerHealth.calendar],
+                  ["Email", data.providerHealth.email],
+                  ["Cron", data.providerHealth.cron],
                   ["TTS", data.providerHealth.tts],
                 ] as const
               ).map(([name, status]) => (

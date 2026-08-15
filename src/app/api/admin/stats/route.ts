@@ -4,6 +4,8 @@ import { handleApiError } from "@/shared/lib/apiHandler";
 import { requireCompanyAccess } from "@/shared/lib/tenant";
 import { supabaseAdmin } from "@/shared/lib/supabase";
 import { computeTopTopics } from "@/shared/lib/dashboardTopics";
+import { buildProviderHealth } from "@/shared/lib/providerHealth";
+import { bookingConversionPercent, computeQualificationFunnel, mergeActivityFeed } from "@/shared/lib/dashboardLive";
 
 export const dynamic = "force-dynamic";
 
@@ -29,6 +31,17 @@ export async function GET(req: NextRequest) {
     const now = Date.now();
     const weekAgo = new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString();
     const twoWeeksAgo = new Date(now - 14 * 24 * 60 * 60 * 1000).toISOString();
+    const thirtyDaysAgo = new Date(now - 30 * 24 * 60 * 60 * 1000).toISOString();
+    // "Today" starts at the OWNER's local midnight, which only their browser
+    // knows — it arrives as a bounded ISO timestamp (never trusted beyond
+    // being a date within the last 48h; anything else falls back to UTC
+    // midnight). Tenant scoping is untouched by this value.
+    const todayStartParam = req.nextUrl.searchParams.get("todayStart");
+    const todayStartMs = todayStartParam ? Date.parse(todayStartParam) : NaN;
+    const todayStart =
+      Number.isFinite(todayStartMs) && now - todayStartMs < 48 * 60 * 60 * 1000 && todayStartMs <= now
+        ? new Date(todayStartMs).toISOString()
+        : new Date(new Date(now).setUTCHours(0, 0, 0, 0)).toISOString();
 
     const scoped = () => supabaseAdmin.from("leads").select("id", { count: "exact", head: true }).eq("company_id", companyId).is("deleted_at", null);
 
@@ -74,7 +87,7 @@ export async function GET(req: NextRequest) {
         .limit(5),
       supabaseAdmin
         .from("conversations")
-        .select("id, employee_id, status, started_at, ended_at, duration_seconds, summary, sentiment")
+        .select("id, employee_id, status, started_at, ended_at, duration_seconds, summary, sentiment, channel, intent, audio_metadata")
         .eq("company_id", companyId)
         .order("started_at", { ascending: false })
         .limit(8),
@@ -82,6 +95,88 @@ export async function GET(req: NextRequest) {
       // in JS over a capped set beats a second round trip for a bar-count
       // query Postgres has no simpler way to express against a text[] column.
       supabaseAdmin.from("conversations").select("tools_called").eq("company_id", companyId).not("tools_called", "eq", "{}").limit(500),
+    ]);
+
+    // ---- Live-overview additions (all company-scoped, all bounded) -------
+    const [
+      conversationsToday,
+      minutesTodayRows,
+      minutes7dRows,
+      funnelRows,
+      appointmentsToday,
+      appointmentsCancelled,
+      upcomingAppointments,
+      recentAppointments,
+      inboundWhatsApp,
+      notificationActivities,
+      summaryStampRows,
+    ] = await Promise.all([
+      supabaseAdmin.from("conversations").select("id", { count: "exact", head: true }).eq("company_id", companyId).gte("created_at", todayStart),
+      supabaseAdmin
+        .from("conversations")
+        .select("duration_seconds")
+        .eq("company_id", companyId)
+        .gte("created_at", todayStart)
+        .not("duration_seconds", "is", null)
+        .limit(2000),
+      supabaseAdmin
+        .from("conversations")
+        .select("duration_seconds")
+        .eq("company_id", companyId)
+        .gte("created_at", weekAgo)
+        .not("duration_seconds", "is", null)
+        .limit(2000),
+      // Funnel input: only leads that recorded at least one authored answer
+      // in the last 30 days — the regex counting happens in a pure,
+      // unit-tested helper.
+      supabaseAdmin
+        .from("leads")
+        .select("qualification_notes")
+        .eq("company_id", companyId)
+        .is("deleted_at", null)
+        .gte("created_at", thirtyDaysAgo)
+        .like("qualification_notes", "%Q1 [%")
+        .limit(2000),
+      supabaseAdmin.from("appointments").select("id", { count: "exact", head: true }).eq("company_id", companyId).gte("created_at", todayStart),
+      supabaseAdmin.from("appointments").select("id", { count: "exact", head: true }).eq("company_id", companyId).eq("status", "CANCELLED"),
+      supabaseAdmin
+        .from("appointments")
+        .select("id, start_time, status, lead:leads(name)")
+        .eq("company_id", companyId)
+        .gte("start_time", new Date(now).toISOString())
+        .in("status", ["BOOKED", "REQUESTED"])
+        .order("start_time", { ascending: true })
+        .limit(5),
+      supabaseAdmin
+        .from("appointments")
+        .select("created_at, status, start_time")
+        .eq("company_id", companyId)
+        .order("created_at", { ascending: false })
+        .limit(8),
+      // Inbound WhatsApp qualification conversations — recorded on the
+      // company-scoped conversations table (channel column), never inferred.
+      supabaseAdmin
+        .from("conversations")
+        .select("id", { count: "exact", head: true })
+        .eq("company_id", companyId)
+        .eq("channel", "whatsapp"),
+      supabaseAdmin
+        .from("lead_activities")
+        .select("created_at, content, metadata")
+        .eq("company_id", companyId)
+        .in("content", ["appointment_notifications", "whatsapp_reminder_24h"])
+        .order("created_at", { ascending: false })
+        .limit(8),
+      // The durable per-conversation owner-summary outcomes stamped by the
+      // Vapi webhook — the ONLY honest source for "did the owner summary
+      // actually send".
+      supabaseAdmin
+        .from("conversations")
+        .select("started_at, status, duration_seconds, channel, intent, audio_metadata")
+        .eq("company_id", companyId)
+        .not("audio_metadata->summaryNotification", "is", null)
+        .order("started_at", { ascending: false })
+        .limit(8),
     ]);
 
     const conversationRows = recentConversations.data ?? [];
@@ -107,8 +202,40 @@ export async function GET(req: NextRequest) {
     const totalLeads = leads.count ?? 0;
     const totalConversations = conversations.count ?? 0;
 
+    const sumMinutes = (rows: Array<{ duration_seconds: unknown }> | null) =>
+      Math.round(((rows ?? []).map((r) => Number(r.duration_seconds)).filter((n) => Number.isFinite(n) && n > 0).reduce((a, b) => a + b, 0) / 60) * 10) / 10;
+
+    const funnel = computeQualificationFunnel(funnelRows.data ?? []);
+    const bookedCount = appointmentsBooked.count ?? 0;
+
+    // Owner-summary WhatsApp outcomes, straight from the stamped records.
+    const summaryStamps = (summaryStampRows.data ?? []) as Array<{
+      started_at: string;
+      status: string;
+      duration_seconds: number | null;
+      channel?: string | null;
+      intent?: string | null;
+      audio_metadata: { summaryNotification?: { sent: boolean; reason?: string | null; at?: string } } | null;
+    }>;
+    const summarySent = summaryStamps.filter((s) => s.audio_metadata?.summaryNotification?.sent).length;
+    const summaryFailed = summaryStamps.filter((s) => s.audio_metadata?.summaryNotification && !s.audio_metadata.summaryNotification.sent).length;
+
+    const activityFeed = mergeActivityFeed(
+      conversationRows as Array<{
+        started_at: string;
+        status: string;
+        duration_seconds: number | null;
+        channel?: string | null;
+        intent?: string | null;
+        audio_metadata?: { summaryNotification?: { sent: boolean; reason?: string | null } } | null;
+      }>,
+      (recentAppointments.data ?? []) as Array<{ created_at: string; status: string; start_time: string }>,
+      (notificationActivities.data ?? []) as Array<{ created_at: string; content: string | null; metadata?: Record<string, unknown> | null }>
+    );
+
     return formatApiResponse(
       {
+        generatedAt: new Date().toISOString(),
         totalConversations,
         conversationsThisWeek: thisWeek,
         weekOverWeekPercent,
@@ -134,6 +261,39 @@ export async function GET(req: NextRequest) {
         // Empty rather than padded with zero-count topics — the widget shows
         // "no calls have asked about anything yet" instead of a fake ranking.
         topTopics,
+        // ---- Live overview -------------------------------------------------
+        conversationsToday: conversationsToday.count ?? 0,
+        appointmentsToday: appointmentsToday.count ?? 0,
+        voiceMinutesToday: sumMinutes(minutesTodayRows.data),
+        voiceMinutes7d: sumMinutes(minutes7dRows.data),
+        qualificationFunnel: funnel,
+        // Explicit formula, surfaced in the UI verbatim. Null denominator →
+        // null, rendered as "—", never 0%.
+        bookingConversion: {
+          definition: "Confirmed appointments ÷ completed six-question qualifications (last 30 days of qualifications).",
+          numerator: bookedCount,
+          denominator: funnel.completed,
+          percent: bookingConversionPercent(bookedCount, funnel.completed),
+        },
+        appointmentsCancelled: appointmentsCancelled.count ?? 0,
+        upcomingAppointments: ((upcomingAppointments.data ?? []) as Array<{ id: string; start_time: string; status: string; lead: { name: string | null } | Array<{ name: string | null }> | null }>).map(
+          (a) => ({
+            id: a.id,
+            startTime: a.start_time,
+            status: a.status,
+            leadName: (Array.isArray(a.lead) ? a.lead[0]?.name : a.lead?.name) ?? "Visitor",
+          })
+        ),
+        whatsapp: {
+          inboundConversations: inboundWhatsApp.count ?? 0,
+          ownerSummaries: {
+            sent: summarySent,
+            failed: summaryFailed,
+            lastOutcome: summaryStamps[0]?.audio_metadata?.summaryNotification ?? null,
+          },
+        },
+        providerHealth: await buildProviderHealth({}),
+        activityFeed,
       },
       200,
       "Dashboard statistics retrieved successfully"
