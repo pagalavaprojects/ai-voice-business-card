@@ -331,7 +331,7 @@ async function handleVapiMessage(req: NextRequest, message: VapiMessage): Promis
     // freezes right after the response. Failure is logged inside and never
     // thrown, so the call report itself always succeeds.
     const owner = await knowledgeRepo.getEmployeeById(employeeId).catch(() => null);
-    await sendConversationSummaryToOwner(
+    const notifyResult = await sendConversationSummaryToOwner(
       { notifier: getWhatsAppNotifier(), idempotency: new SupabaseWhatsAppIdempotencyStore() },
       {
         conversationId: conversation.id,
@@ -347,6 +347,25 @@ async function handleVapiMessage(req: NextRequest, message: VapiMessage): Promis
         lead: lead ? { name: lead.name, email: lead.email, phone: lead.phone } : null,
       }
     );
+
+    // The outcome is stamped onto the conversation row itself — runtime
+    // logs on serverless are short-lived and often unreachable, so the
+    // durable record of "did the owner get a summary, and if not why"
+    // lives with the conversation. Best-effort: a stamp failure must not
+    // fail the already-processed report.
+    try {
+      await supabaseAdmin
+        .from("conversations")
+        .update({
+          audio_metadata: {
+            ...audioMetadata,
+            summaryNotification: { sent: notifyResult.sent, reason: notifyResult.reason ?? null, at: new Date().toISOString() },
+          },
+        })
+        .eq("id", conversation.id);
+    } catch {
+      // Logged by the notifier itself; the stamp is purely diagnostic.
+    }
 
     return formatApiResponse({ status: "processed" }, 200, "Call report processed and persisted");
   }
