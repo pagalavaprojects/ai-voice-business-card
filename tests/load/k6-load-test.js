@@ -13,7 +13,9 @@ export const options = {
   },
 };
 
-export default function () {
+// Named rather than anonymous purely for the lint gate — k6 executes a
+// default-exported function identically either way.
+export default function loadTestScenario() {
   const BASE_URL = __ENV.BASE_URL || "http://localhost:3000";
 
   // 1. Health check probe
