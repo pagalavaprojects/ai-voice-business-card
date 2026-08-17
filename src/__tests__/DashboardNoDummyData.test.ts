@@ -15,6 +15,7 @@ const DASHBOARD_SOURCES = [
   "src/app/api/admin/analytics/route.ts",
   "src/shared/lib/dashboardLive.ts",
   "src/shared/lib/providerHealth.ts",
+  "src/features/dashboard/hooks/useLivePoll.ts",
 ];
 
 const FORBIDDEN = [

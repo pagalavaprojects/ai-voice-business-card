@@ -124,4 +124,75 @@ describe("useLivePoll", () => {
     });
     expect(fetcher).not.toHaveBeenCalled();
   });
+
+  it("an expired 'live' claim downgrades itself to STALE even when nothing failed (hung request)", async () => {
+    let firstDone = false;
+    const fetcher = jest.fn(() => {
+      if (!firstDone) {
+        firstDone = true;
+        return Promise.resolve(1);
+      }
+      // Every later request hangs forever — no failure event ever fires.
+      return new Promise<number>(() => {});
+    });
+    const { result } = renderHook(() => useLivePoll(fetcher, 10_000, true));
+    await flush();
+    expect(result.current.status).toBe("live");
+
+    // 40s with no successful refresh (> 3 × interval) — the "live" claim
+    // must expire on its own.
+    await act(async () => {
+      jest.advanceTimersByTime(40_000);
+    });
+    await flush();
+    expect(result.current.status).toBe("stale");
+    expect(result.current.data).toBe(1); // snapshot preserved, honestly labeled
+  });
+
+  it("backs off after consecutive failures instead of hammering every tick, and recovers on success", async () => {
+    let fail = true;
+    const fetcher = jest.fn(async () => {
+      if (fail) throw new Error("down");
+      return 5;
+    });
+    const { result } = renderHook(() => useLivePoll(fetcher, 10_000, true));
+    await flush(); // attempt 1 fails
+    expect(fetcher).toHaveBeenCalledTimes(1);
+
+    // Next 10s tick: 1 failure → wait 2× interval → tick at +10s skipped.
+    await act(async () => {
+      jest.advanceTimersByTime(10_000);
+    });
+    await flush();
+    expect(fetcher).toHaveBeenCalledTimes(1);
+
+    // +20s from the failed attempt → attempt 2 allowed.
+    await act(async () => {
+      jest.advanceTimersByTime(10_000);
+    });
+    await flush();
+    expect(fetcher).toHaveBeenCalledTimes(2);
+
+    // 2 failures → wait 4× interval: ticks at +10/+20/+30 all skipped.
+    await act(async () => {
+      jest.advanceTimersByTime(30_000);
+    });
+    await flush();
+    expect(fetcher).toHaveBeenCalledTimes(2);
+
+    fail = false;
+    await act(async () => {
+      jest.advanceTimersByTime(10_000); // +40s → attempt 3 allowed, succeeds
+    });
+    await flush();
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    expect(result.current.status).toBe("live");
+
+    // Success resets the cadence — the very next tick fetches again.
+    await act(async () => {
+      jest.advanceTimersByTime(10_000);
+    });
+    await flush();
+    expect(fetcher).toHaveBeenCalledTimes(4);
+  });
 });
