@@ -236,4 +236,106 @@ describe("GET /api/public/{companyId}/{employeeId}/pitch", () => {
     const res = await GET(req("type=elevator&lang=ta"), { params: { companyId: COMPANY_ID, employeeId: EMPLOYEE_ID } });
     expect(res.status).toBe(404);
   });
+
+  describe("Gemini TTS — the Tamil audio provider (POC-proven), with OpenAI as fallback", () => {
+    // A tiny fake PCM payload the route wraps into WAV.
+    const FAKE_PCM = Buffer.from([1, 2, 3, 4, 5, 6, 7, 8]);
+    const geminiSuccess = {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        candidates: [
+          { content: { parts: [{ inlineData: { mimeType: "audio/l16; rate=24000; channels=1", data: FAKE_PCM.toString("base64") } }] } },
+        ],
+      }),
+    };
+
+    beforeEach(() => {
+      process.env = { ...ORIGINAL_ENV, OPENAI_API_KEY: "sk-real-test-key-1234567890", GEMINI_API_KEY: "AQ.test-gemini-key-abcdef" };
+    });
+
+    it("Tamil audio renders through Gemini, persists as a provider-distinct .gemini.wav, and serves audio/wav", async () => {
+      const fetchSpy = jest.fn().mockImplementation(async (url: string) => {
+        if (String(url).includes("generativelanguage.googleapis.com")) return geminiSuccess;
+        throw new Error("unexpected fetch: " + url);
+      });
+      global.fetch = fetchSpy as unknown as typeof fetch;
+
+      const res = await GET(req("type=elevator&lang=ta"), { params: { companyId: COMPANY_ID, employeeId: EMPLOYEE_ID } });
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get("Content-Type")).toBe("audio/wav");
+      // Exactly one provider call, to Gemini, never OpenAI.
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      expect(String(fetchSpy.mock.calls[0][0])).toContain("gemini-3.1-flash-tts-preview");
+      // Cache identity includes the provider: .gemini.wav, uploaded as audio/wav.
+      const [bucket, uploadPath, body, contentType] = upload.mock.calls[0];
+      expect(bucket).toBe("voice-assets");
+      expect(uploadPath).toMatch(/\.ta\.[0-9a-f]{8}\.gemini\.wav$/);
+      expect(contentType).toBe("audio/wav");
+      // WAV container: RIFF header + the PCM payload.
+      expect((body as Buffer).slice(0, 4).toString()).toBe("RIFF");
+      expect((body as Buffer).length).toBe(44 + FAKE_PCM.length);
+    });
+
+    it("ENGLISH never touches Gemini even when the key is configured — OpenAI remains its provider", async () => {
+      const fetchSpy = jest.fn().mockImplementation(async (url: string) => {
+        if (String(url).includes("api.openai.com")) return { ok: true, arrayBuffer: async () => new Uint8Array([9, 9, 9]).buffer };
+        throw new Error("unexpected fetch: " + url);
+      });
+      global.fetch = fetchSpy as unknown as typeof fetch;
+
+      const res = await GET(req("type=elevator&lang=en"), { params: { companyId: COMPANY_ID, employeeId: EMPLOYEE_ID } });
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get("Content-Type")).toBe("audio/mpeg");
+      expect(fetchSpy.mock.calls.every(([u]) => String(u).includes("api.openai.com"))).toBe(true);
+    });
+
+    it("a Gemini failure falls back to OpenAI instead of failing Tamil outright", async () => {
+      const fetchSpy = jest.fn().mockImplementation(async (url: string) => {
+        if (String(url).includes("generativelanguage.googleapis.com")) return { ok: false, status: 503, text: async () => "demand spike" };
+        if (String(url).includes("api.openai.com")) return { ok: true, arrayBuffer: async () => new Uint8Array([7, 7]).buffer };
+        throw new Error("unexpected fetch: " + url);
+      });
+      global.fetch = fetchSpy as unknown as typeof fetch;
+
+      const res = await GET(req("type=elevator&lang=ta"), { params: { companyId: COMPANY_ID, employeeId: EMPLOYEE_ID } });
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get("Content-Type")).toBe("audio/mpeg");
+      const urls = fetchSpy.mock.calls.map(([u]) => String(u));
+      expect(urls.some((u) => u.includes("generativelanguage"))).toBe(true);
+      expect(urls.some((u) => u.includes("api.openai.com"))).toBe(true);
+    });
+
+    it("a stored Gemini WAV is a cache hit — no provider is called and audio/wav is served", async () => {
+      download.mockImplementation(async (path: string) =>
+        String(path).endsWith(".gemini.wav")
+          ? { data: { arrayBuffer: async () => new TextEncoder().encode("stored-wav").buffer }, error: null }
+          : { data: null, error: { message: "not found" } }
+      );
+      const fetchSpy = jest.fn();
+      global.fetch = fetchSpy as unknown as typeof fetch;
+
+      const res = await GET(req("type=usp&lang=ta"), { params: { companyId: COMPANY_ID, employeeId: EMPLOYEE_ID } });
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get("Content-Type")).toBe("audio/wav");
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it("without a Gemini key, Tamil behaves exactly as before (OpenAI path, mp3 identity)", async () => {
+      process.env = { ...ORIGINAL_ENV, OPENAI_API_KEY: "sk-real-test-key-1234567890" };
+      const fetchSpy = jest.fn().mockImplementation(async (url: string) => {
+        if (String(url).includes("api.openai.com")) return { ok: true, arrayBuffer: async () => new Uint8Array([5]).buffer };
+        throw new Error("unexpected fetch: " + url);
+      });
+      global.fetch = fetchSpy as unknown as typeof fetch;
+
+      const res = await GET(req("type=elevator&lang=ta"), { params: { companyId: COMPANY_ID, employeeId: EMPLOYEE_ID } });
+      expect(res.status).toBe(200);
+      expect(res.headers.get("Content-Type")).toBe("audio/mpeg");
+    });
+  });
 });

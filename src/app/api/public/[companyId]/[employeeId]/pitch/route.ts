@@ -9,9 +9,79 @@ import { resolveRequestLanguage } from "@/features/language/server";
 import { composePitchScript, isPitchType, PitchSourceData } from "@/features/voice/lib/pitchScripts";
 
 export const dynamic = "force-dynamic";
+// First-ever render of a long pitch can take Gemini/OpenAI tens of seconds;
+// after that the durable Supabase copy answers instantly.
+export const maxDuration = 120;
 
 const knowledgeRepo = new SupabaseKnowledgeRepository();
 const storage = new SupabaseStorageAdapter();
+
+/** Gemini TTS is the TAMIL audio provider (proven natural Tamil in the
+ * 2026-08-18 proof-of-concept); OpenAI remains the provider for every
+ * other language and the automatic fallback when Gemini fails. */
+const GEMINI_TTS_MODEL = "gemini-3.1-flash-tts-preview";
+const GEMINI_TTS_VOICE = "Kore";
+
+function isConfiguredKey(v: string | undefined): boolean {
+  return Boolean(v && !/your-|placeholder|example/i.test(v));
+}
+
+/** Wraps Gemini's raw 16-bit mono PCM in a WAV container the browser's
+ * <audio> element can play directly. */
+function pcmToWav(pcm: Buffer, sampleRate: number): Buffer {
+  const header = Buffer.alloc(44);
+  header.write("RIFF", 0);
+  header.writeUInt32LE(36 + pcm.length, 4);
+  header.write("WAVE", 8);
+  header.write("fmt ", 12);
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(1, 22);
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(sampleRate * 2, 28);
+  header.writeUInt16LE(2, 32);
+  header.writeUInt16LE(16, 34);
+  header.write("data", 36);
+  header.writeUInt32LE(pcm.length, 40);
+  return Buffer.concat([header, pcm]);
+}
+
+/** Renders a script to WAV via Gemini TTS. Returns null on ANY failure —
+ * the caller falls back to the OpenAI path, so a Gemini outage can never
+ * make Tamil worse than it was before Gemini existed. Never throws. */
+async function renderGeminiTts(script: string): Promise<Buffer | null> {
+  try {
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_TTS_MODEL}:generateContent`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-goog-api-key": process.env.GEMINI_API_KEY as string },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: script }] }],
+        generationConfig: {
+          responseModalities: ["AUDIO"],
+          speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: GEMINI_TTS_VOICE } } },
+        },
+      }),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      Logger.warn("Gemini TTS generation failed", { status: res.status, body: body.slice(0, 200) });
+      return null;
+    }
+    const payload = (await res.json()) as {
+      candidates?: Array<{ content?: { parts?: Array<{ inlineData?: { mimeType?: string; data?: string } }> } }>;
+    };
+    const inline = payload.candidates?.[0]?.content?.parts?.find((p) => p.inlineData?.data)?.inlineData;
+    if (!inline?.data) {
+      Logger.warn("Gemini TTS returned no audio part");
+      return null;
+    }
+    const rate = Number((/rate=(\d+)/.exec(inline.mimeType ?? "") ?? [])[1] ?? 24000);
+    return pcmToWav(Buffer.from(inline.data, "base64"), rate);
+  } catch (err) {
+    Logger.warn("Gemini TTS request threw", { error: err instanceof Error ? err.message : String(err) });
+    return null;
+  }
+}
 
 /**
  * Serves the card's PRE-RECORDED voice pitches (elevator ≈30s, product
@@ -97,15 +167,44 @@ export async function GET(req: NextRequest, { params }: { params: { companyId: s
     }
 
     const scriptHash = createHash("sha1").update(script).digest("hex").slice(0, 8);
-    const assetPath = `pitch/${companyId}/${employeeId}/${type}.${language}.${scriptHash}.mp3`;
+    const mp3Path = `pitch/${companyId}/${employeeId}/${type}.${language}.${scriptHash}.mp3`;
+    // Provider is part of the cache identity: a Gemini WAV and an OpenAI
+    // MP3 of the same script are different recordings and must never be
+    // served for each other.
+    const geminiPath = `pitch/${companyId}/${employeeId}/${type}.${language}.${scriptHash}.gemini.wav`;
+    const useGemini = language === "ta" && isConfiguredKey(process.env.GEMINI_API_KEY);
 
     // Layer 2: the durable copy. download() rather than a redirect to the
     // bucket's public URL keeps the response same-origin under this
     // route's own cache headers, and never leaks bucket topology.
-    const stored = await downloadStoredPitch(assetPath);
-    if (stored) return audioResponse(stored);
+    if (useGemini) {
+      const storedWav = await downloadStoredPitch(geminiPath);
+      if (storedWav) return audioResponse(storedWav, "audio/wav");
+    }
+    const stored = await downloadStoredPitch(mp3Path);
+    if (stored) return audioResponse(stored, "audio/mpeg");
 
-    // Layer 3: render once, persist, then serve.
+    // Layer 3a: Tamil renders through Gemini TTS (POC-proven natural
+    // Tamil). Persist-then-serve, same as the OpenAI path below; ANY
+    // Gemini failure falls through to OpenAI so Tamil can never end up
+    // worse off than before Gemini existed.
+    if (useGemini) {
+      const wav = await renderGeminiTts(script);
+      if (wav) {
+        try {
+          await storage.ensureBucket("voice-assets", true);
+          await storage.upload("voice-assets", geminiPath, wav, "audio/wav");
+        } catch (err) {
+          Logger.warn("Gemini pitch audio persistence failed — serving unpersisted render", {
+            assetPath: geminiPath,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+        return audioResponse(wav, "audio/wav");
+      }
+    }
+
+    // Layer 3b: render once via OpenAI, persist, then serve.
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey || /your-|placeholder|example/i.test(apiKey)) {
       return NextResponse.json({ message: "Voice pitch service not configured" }, { status: 503 });
@@ -130,15 +229,15 @@ export async function GET(req: NextRequest, { params }: { params: { companyId: s
     // the visitor still gets their audio, the next render just pays again.
     try {
       await storage.ensureBucket("voice-assets", true);
-      await storage.upload("voice-assets", assetPath, audio, "audio/mpeg");
+      await storage.upload("voice-assets", mp3Path, audio, "audio/mpeg");
     } catch (err) {
       Logger.warn("Pitch audio persistence failed — serving unpersisted render", {
-        assetPath,
+        assetPath: mp3Path,
         error: err instanceof Error ? err.message : String(err),
       });
     }
 
-    return audioResponse(audio);
+    return audioResponse(audio, "audio/mpeg");
   } catch (err) {
     Logger.warn("Pitch generation failed", { companyId, employeeId, type, error: err instanceof Error ? err.message : String(err) });
     return NextResponse.json({ message: "Voice pitch service unavailable" }, { status: 503 });
@@ -156,11 +255,11 @@ async function downloadStoredPitch(assetPath: string): Promise<Buffer | null> {
   }
 }
 
-function audioResponse(audio: Buffer): NextResponse {
+function audioResponse(audio: Buffer, contentType: "audio/mpeg" | "audio/wav"): NextResponse {
   return new NextResponse(new Uint8Array(audio), {
     status: 200,
     headers: {
-      "Content-Type": "audio/mpeg",
+      "Content-Type": contentType,
       "Content-Length": String(audio.byteLength),
       // The URL never changes for the same content (the hash lives in the
       // storage key, not the URL), so the edge copy is capped at a day —
