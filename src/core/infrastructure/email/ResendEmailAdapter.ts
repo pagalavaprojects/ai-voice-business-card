@@ -30,13 +30,27 @@ function sanitizeFromName(raw: string | undefined): string {
 
 export class ResendEmailAdapter {
   private apiKey: string;
+  private failWhenUnconfigured: boolean;
 
-  constructor(apiKey?: string) {
+  constructor(apiKey?: string, failWhenUnconfigured: boolean = process.env.NODE_ENV === "production") {
     this.apiKey = apiKey || process.env.RESEND_API_KEY || "";
+    // Injectable (NODE_ENV is compile-inlined by the toolchain, so tests
+    // exercise both behaviors explicitly): production fails closed.
+    this.failWhenUnconfigured = failWhenUnconfigured;
   }
 
   async sendEmail(options: SendEmailOptions): Promise<{ id: string; success: boolean }> {
     if (isPlaceholderCredential(this.apiKey)) {
+      // Dev/test convenience only. In PRODUCTION an unconfigured provider
+      // must FAIL, never simulate: the previous silent `success: true`
+      // cascaded a lie through email_logs (status SENT, sim_msg_* ids) and
+      // the booking notification audit ("client:email": "sent") for emails
+      // that never existed — while /api/health simultaneously reported
+      // email as unconfigured. Same fail-closed-in-production rule as the
+      // webhook validators.
+      if (this.failWhenUnconfigured) {
+        throw new Error("Email provider not configured (RESEND_API_KEY missing or placeholder)");
+      }
       console.log(`[Resend Email Simulated] To: ${options.to} | Subject: ${options.subject}`);
       return { id: `sim_msg_${Date.now()}`, success: true };
     }
