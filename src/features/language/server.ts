@@ -2,7 +2,8 @@ import { AIAgent } from "@/core/domain/agent/AIAgent";
 import { Company, Employee } from "@/core/domain/models/types";
 import { substituteTemplateVariables } from "@/core/application/services/promptVariables";
 import { DEFAULT_LANGUAGE, LanguageCode, SUPPORTED_LANGUAGES, getLanguageDefinition, isSupportedLanguage } from "./config";
-import { getDefaultGreeting } from "./greetings";
+import { getDefaultGreeting, MAYLAANAI_INTRODUCTION } from "./greetings";
+import { DEMO_COMPANY_ID } from "@/shared/lib/demoCard";
 import en from "./locales/en.json";
 import ta from "./locales/ta.json";
 import hi from "./locales/hi.json";
@@ -41,6 +42,17 @@ export function resolveGreeting(
   employee: Employee,
   language: LanguageCode
 ): string {
+  // 0. MaylaanAI's approved English introduction — a code-authored,
+  // per-company override that wins over even the DB greeting, so the
+  // approved content cannot drift through dashboard edits. Returned
+  // verbatim (no template substitution — the approved text contains no
+  // variables and must stay byte-exact). English only: no other-language
+  // version was supplied, so Tamil and the rest keep their existing
+  // authored/DB/default chain below.
+  if (language === "en" && company.id === DEMO_COMPANY_ID) {
+    return MAYLAANAI_INTRODUCTION;
+  }
+
   const override = agent?.greetings?.[language]?.trim();
   const existingMatchesLanguage = agent?.welcome_message_language === language && agent?.first_message?.trim();
   const template = override || existingMatchesLanguage || getDefaultGreeting(language);

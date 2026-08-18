@@ -9,6 +9,8 @@ import {
   resolveEnabledLanguageList,
 } from "@/features/language/server";
 import { Company, Employee } from "@/core/domain/models/types";
+import { MAYLAANAI_INTRODUCTION } from "@/features/language/greetings";
+import { DEMO_COMPANY_ID } from "@/shared/lib/demoCard";
 
 const company = { name: "Acme Corp", website: "https://acme.example" } as Company;
 const employee = { name: "Jane Doe", designation: "Founder" } as Employee;
@@ -60,6 +62,85 @@ describe("resolveGreeting", () => {
     const withDefault = resolveGreeting(null, company, employee, "en");
     expect(withDefault).toContain("Acme Corp");
     expect(withDefault).toContain("Jane Doe");
+  });
+});
+
+describe("MaylaanAI's FINAL APPROVED English introduction (per-company authored override)", () => {
+  const maylaanCompany = { ...company, id: DEMO_COMPANY_ID, name: "Pagalava Data Analytics" } as Company;
+  const agentWithDbGreeting = {
+    greetings: { en: "Hello.\n\nOn behalf of Pagalava Data Analytics Private Limited, we warmly welcome you to our services." },
+    first_message: null,
+    welcome_message_language: null,
+  };
+
+  // The approved content is duplicated VERBATIM so any edit to the
+  // authoritative constant — a paraphrase, a trimmed sentence, a
+  // "grammar fix" — fails this suite loudly.
+  const APPROVED_INTRODUCTION = `MaylaanAI
+
+Your Business Insight, Backed by Deep-Tech
+
+MaylaanAI is the deep-tech flagship of Pagalava Data Analytics Private Limited, a proudly women-led Indian startup, built on the belief that Big Data and AI should work as hard as you do.
+
+We understand that every business here is built on relationships, trust, and years of hard-earned experience. MaylaanAI doesn't replace that it strengthens it with data, so your decisions are backed by evidence, not just instinct.
+
+We don't just build technology. We build outcomes you can bank on.
+
+MaylaanAI is a Technology-as-a-Service (TaaS) platform built for Indian businesses, no heavy upfront investment, no hiring a data science team, no complicated IT overhead. Just results, delivered as a service, at a cost that makes sense for growing enterprises.
+
+Our Product Smart Lead Card provides More qualified leads, less time wasted chasing the wrong customer
+
+Our product Customer Experience Analytics Understands what keeps your customers coming back and why some walk away
+
+Our product Predictive Business Intelligence Plans your stock, sales, and strategy ahead of the market, not behind it
+
+Our Marketing Performance Optimization Knows exactly which ad, which channel, which rupee is actually working
+
+Our product Operations & Bottleneck Analysis, Finds where time and money are leaking in your operations and plug it.
+
+Our product Fraud Detection & Risk Management Protects your business and your customers' trust, round the clock
+
+Every business you run generates a goldmine of data — every bill, every customer call, every order.
+
+But between managing staff, suppliers, and customers, who has the time to mine it?
+
+That's where we step in like a trusted partner, not an outside vendor.
+
+We don't hand you complicated software and leave you to figure it out. We deliver plug-and-play intelligence watching your customers, predicting your numbers, optimizing your marketing spend, fixing your operational bottlenecks, and catching fraud, 24/7 so you can focus on what you do best: running your business.
+
+You don't buy AI. You subscribe to outcomes measurable, trackable, and worth every rupee.
+
+This is why growing businesses are choosing Pagalava — not merely to adopt technology, but to gain an edge their competitors don't have.
+
+MaylaanAI — by Pagalava Data Analytics Pvt. Ltd. | A Women-Led Deep-Tech Venture, Proudly Rooted in India`;
+
+  it("returns the approved introduction EXACTLY for MaylaanAI's English visitors", () => {
+    expect(resolveGreeting(null, maylaanCompany, employee, "en")).toBe(APPROVED_INTRODUCTION);
+    expect(MAYLAANAI_INTRODUCTION).toBe(APPROVED_INTRODUCTION);
+  });
+
+  it("wins over even a DB-authored English greeting — the code is the single source of truth for this company", () => {
+    expect(resolveGreeting(agentWithDbGreeting, maylaanCompany, employee, "en")).toBe(APPROVED_INTRODUCTION);
+  });
+
+  it("the OLD introduction is no longer active for MaylaanAI English", () => {
+    const result = resolveGreeting(agentWithDbGreeting, maylaanCompany, employee, "en");
+    expect(result).not.toContain("we warmly welcome you to our services");
+    expect(result).not.toContain("Smart AI Business Card");
+    expect(result).not.toContain("How can I help you today?");
+    expect(result).not.toContain("VoiceCard AI");
+  });
+
+  it("is NOT machine-applied to other languages — Tamil keeps its existing authored/DB/default chain", () => {
+    const ta = resolveGreeting(null, maylaanCompany, employee, "ta");
+    expect(ta).not.toBe(APPROVED_INTRODUCTION);
+    expect(ta).toMatch(/வணக்கம்/); // default chain (or the DB's authored Tamil at runtime)
+  });
+
+  it("does NOT leak to other companies", () => {
+    const other = resolveGreeting(null, { ...company, id: "99999999-9999-9999-9999-999999999999" } as Company, employee, "en");
+    expect(other).not.toBe(APPROVED_INTRODUCTION);
+    expect(other).toMatch(/Hello/);
   });
 });
 
