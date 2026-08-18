@@ -2,42 +2,79 @@ import { LanguageCode } from "@/features/language/config";
 import { DEMO_COMPANY_ID } from "@/shared/lib/demoCard";
 
 /**
- * Pagalava's own AUTHORED Tamil elevator pitch — supplied verbatim by the
- * founder as source-of-truth content and deliberately NOT routed through
- * the composed templates below. Per-company: gated on the company id so
- * every other tenant keeps the data-composed script. (The one authoring
- * deviation: the supplied text closed with a markdown heading "## நன்றிகள்."
- * — the "##" is formatting, not speech, so only the words are kept.)
- * When per-company pitch authoring gets a real CMS field, this constant
- * is the content that should seed it.
+ * MaylaanAI's FINAL APPROVED pitch content — supplied verbatim by the
+ * founder as the single source of truth for all six (English + Tamil ×
+ * Elevator/Product/Why Us) and deliberately NOT routed through the
+ * composed templates below. Per-company: gated on the company id, so
+ * every other tenant keeps the data-composed scripts. The wording,
+ * punctuation, capitalization, product names and ordering are preserved
+ * EXACTLY as approved — do not paraphrase, shorten, or "improve" any of
+ * it. ("usp" is the Why Us / Why Choose Pagalava pitch.)
  */
-export const PAGALAVA_TAMIL_ELEVATOR_PITCH = `இந்த மாசம் எத்தனை பேர் உங்க பிசினஸ் கார்டை கொடுத்திருப்பீங்க… ஆனா திரும்பி ஒரு காலும் வரலையா?
+export const MAYLAANAI_PITCHES: Record<"en" | "ta", Record<PitchType, string>> = {
+  en: {
+    elevator: `MaylaanAI is the deep-tech flagship of Pagalava Data Analytics Private Limited, a proudly women-led Indian startup, built on the belief that Big Data and AI should work as hard as you do.
 
-அது உங்க தப்பு இல்ல — அந்த கார்டோட தப்பு.
+We understand that every business here is built on relationships, trust, and years of hard-earned experience. MaylaanAI doesn't replace that it strengthens it with data, so your decisions are backed by evidence, not just instinct.
 
-ஒரு பேப்பர் கார்டு உங்க நம்பரை மட்டும்தான் கொடுக்கும். அது உங்களை பிட்ச் பண்ணாது. அவங்க ஒரு நல்ல லீட்டா இல்லையான்னு தெரிஞ்சுக்காது. அப்பாயின்ட்மென்ட் புக் பண்ணாது. நீங்க பின்னாடி கூப்பிடும்போதைக்கு, அவங்களுக்கு ஏன் அந்த கார்டை வாங்கினோம்னே மறந்திருக்கும்.
+We don't just build technology. We build outcomes you can bank on.
 
-நான் அதுக்கு வேற ஒரு solution கொண்டு வந்திருக்கேன் — ஒரு AI Voice Business Card.
+MaylaanAI is a Technology-as-a-Service (TaaS) platform built for Indian businesses, no heavy upfront investment, no hiring a data science team, no complicated IT overhead. Just results, delivered as a service, at a cost that makes sense for growing enterprises.`,
+    product: `Our Product Smart Lead Card provides More qualified leads, less time wasted chasing the wrong customer
 
-இது ஒரு NFC கார்டு — வெறும் ஒரு டேப் அல்லது QR ஸ்கேன் போதும் — அப்புறம் நான் எதுவும் செய்யாம இது தானா செய்யும்:
+Our product Customer Experience Analytics Understands what keeps your customers coming back and why some walk away
 
-முதல்ல உங்களோட 30 செகண்ட் எலிவேட்டர் பிட்ச் ப்ளே ஆகும்.
-அப்புறம் புராடக்ட் பிட்ச்.
-அப்புறம் உங்களோட USP — AI குரலில, ஒவ்வொரு தடவையும் அதே மாதிரி.
+Our product Predictive Business Intelligence Plans your stock, sales, and strategy ahead of the market, not behind it
 
-அப்புறம் இது ஒரு பேப்பர் கார்டால் ஒரு நாளும் செய்ய முடியாத ஒரு காரியம் செய்யும் — அது உங்க லீட்ஸ் கூட உரையாடும்.
+Our Marketing Performance Optimization Knows exactly which ad, which channel, which rupee is actually working
 
-அங்கயே, AI voice மூலமா பேசி — அவங்க ஒரு உண்மையான ப்ராஸ்பெக்ட்டா இல்லையான்னும், அவங்க எவ்ளோ close ஆயிருக்காங்கன்னும் கண்டுபிடிக்கும்.
+Our product Operations & Bottleneck Analysis, Finds where time and money are leaking in your operations and plug it.
 
-அவங்க qualify ஆனா, உடனே அப்பாயின்ட்மென்ட் புக் ஆகிடும் — அப்புறம் WhatsApp-ல உங்க ரெண்டு பேருக்கும் reminder போயிடும், so no-show குறையும்.
+Our product Fraud Detection & Risk Management Protects your business and your customers' trust, round the clock`,
+    usp: `Every business you run generates a goldmine of data — every bill, every customer call, every order.
 
-அதனால நான் கார்டு குவியல வச்சு பின்னாடி ஓடிக்கிட்டு இருக்கிறதுக்கு பதிலா...
+But between managing staff, suppliers, and customers, who has the time to mine it?
 
-நீங்க தூங்கி எழுந்திருக்கும்போதே உங்களுக்கு qualify ஆன, பேச ரெடியா இருக்குற லீட்ஸ் லிஸ்ட் கிடைச்சிருக்கும் — ஏற்கனவே உங்க பிட்ச் கேட்டு, மீட்டிங்குக்கு 'yes' சொல்லிட்டு.
+That's where we step in like a trusted partner, not an outside vendor.
 
-இந்த கார்டை நேர்ல டேப் பண்ணி நீங்களே கேளுங்க...
+We don't hand you complicated software and leave you to figure it out. We deliver plug-and-play intelligence watching your customers, predicting your numbers, optimizing your marketing spend, fixing your operational bottlenecks, and catching fraud, 24/7 so you can focus on what you do best: running your business.
 
-நன்றிகள்.`;
+You don't buy AI. You subscribe to outcomes measurable, trackable, and worth every rupee.
+
+This is why growing businesses are choosing Pagalava — not merely to adopt technology, but to gain an edge your competitors don't have.
+
+MaylaanAI — by Pagalava Data Analytics Pvt. Ltd. | A Women-Led Deep-Tech Venture, Proudly Rooted in India`,
+  },
+  ta: {
+    elevator: `MaylaanAI, பெண்கள் முன்னின்று நடத்தும் இந்திய தொடக்க நிறுவனமான Pagalava Data Analytics Private Limited-இன் தொழில்நுட்ப முன்னோடி படைப்பாகும். நீங்கள் உழைக்கும் அளவுக்கே, பெருந்தரவும் (Big Data) செயற்கை நுண்ணறிவும் (AI) உங்களுக்காக உழைக்க வேண்டும் என்பதே எங்கள் அசைக்க முடியாத நம்பிக்கை.
+
+இங்கு ஒவ்வொரு வணிகமும் உறவுகள், நம்பிக்கை, மற்றும் ஆண்டுக்கணக்கில் ஈட்டிய அனுபவத்தின் மீது கட்டப்பட்டது என்பதை நாங்கள் நன்கு அறிவோம். அதை MaylaanAI மாற்றாது; மாறாக, தரவின் துணையுடன் அதை மேலும் வலுவாக்குகிறது. இதனால் உங்கள் முடிவுகள் வெறும் மனத்துணிவை மட்டுமல்ல, உறுதியான ஆதாரத்தையும் சார்ந்தே இருக்கும்.
+
+நாங்கள் வெறும் தொழில்நுட்பத்தை உருவாக்கவில்லை; நீங்கள் நம்பி சார்ந்திருக்கக்கூடிய முடிவுகளை உருவாக்குகிறோம்.
+
+MaylaanAI, இந்திய வணிகங்களுக்காகவே உருவாக்கப்பட்ட ஒரு சேவை-வழி-தொழில்நுட்ப (TaaS) தளமாகும் — பெரிய முதலீடு தேவையில்லை, தனியாக தரவியல் குழு அமைக்க வேண்டியதில்லை, சிக்கலான தகவல் தொழில்நுட்ப அமைப்பும் தேவையில்லை. வளரும் நிறுவனங்களுக்கு ஏற்ற செலவில், நேரடியான பலன்கள் மட்டுமே சேவையாக வழங்கப்படும்.`,
+    product: `எங்களின் ஆறு வெவ்வேறு சேவைகள்:
+
+முதலாவது சேவை, Smart Lead Card: சரியான வாடிக்கையாளர்களை மட்டுமே இலக்கு வைத்து, தவறான வாடிக்கையாளர்களை தேடி நேரத்தை வீணாக்காமல் காக்கிறது.
+
+இரண்டாவது சேவை, Customer Experience Analytics: உங்கள் வாடிக்கையாளர் ஏன் மீண்டும் மீண்டும் திரும்பி வருகிறார், ஏன் சிலர் விலகிச் செல்கிறார் என்பதை புரிந்துகொள்கிறது.
+
+மூன்றாவது சேவை, Predictive Business Intelligence: சந்தையை பின்தொடராமல், முன்கூட்டியே உங்கள் ஸ்டாக், விற்பனை மற்றும் உத்தியை திட்டமிடுகிறது.
+
+நான்காவது சேவை, Marketing Performance Optimization: எந்த விளம்பரம், எந்த வழிமுறை, எந்த ரூபாய் உண்மையில் பலன் தருகிறது என்பதை துல்லியமாக அறிகிறது.
+
+ஐந்தாவது சேவை, Operations & Bottleneck Analysis: உங்கள் செயல்பாடுகளில் நேரமும் பணமும் எங்கு கசிந்து வீணாகிறது என கண்டறிந்து, அதை சரிசெய்கிறது.
+
+ஆறாவது சேவை, Fraud Detection & Risk Management: 24 மணி நேரமும் உங்கள் வணிகத்தையும் வாடிக்கையாளர்களின் நம்பிக்கையையும் பாதுகாக்கிறது.`,
+    usp: `நாங்கள் ஒரு விற்பனையாளர் அல்ல, உங்களின் நம்பகமான நண்பர்.
+
+நுண்ணறிவு மென்பொருளை உடனடியாகப் பயன்படுத்தக்கூடிய வகையில் சேவைகளை வழங்கும் ஆரோக்கியமான ஆலோசகர்.
+
+உங்களின் ஒவ்வொரு ரூபாயிணையும் மதிப்புள்ள சேவைகளாக மாற்றும் வல்லுநர்.
+
+இதனால்தான் வளர்ந்துவரும் வணிகங்கள் Pagalava-வைத் தேர்ந்தெடுக்கின்றன — வெறும் தொழில்நுட்பத்தைப் பெறுவதற்காக அல்ல, போட்டியாளர்களிடம் இல்லாத ஒரு முன்னிலையைப் பெறுவதற்காக.`,
+  },
+};
 
 /** The three fixed, speak-only recordings a card offers. These are PRE-
  * RECORDED pitches in the product sense: a fixed script rendered to audio
@@ -54,7 +91,7 @@ export function isPitchType(value: string | null | undefined): value is PitchTyp
 
 export interface PitchSourceData {
   /** Enables per-company authored overrides (see
-   * PAGALAVA_TAMIL_ELEVATOR_PITCH); composition is unaffected when absent. */
+   * MAYLAANAI_PITCHES); composition is unaffected when absent. */
   companyId?: string;
   companyName: string;
   employeeName: string;
@@ -87,11 +124,12 @@ function speakList(items: string[], andWord: string): string {
  * which would produce jarring mid-sentence language switches.
  */
 export function composePitchScript(type: PitchType, lang: LanguageCode, data: PitchSourceData): string {
-  // Authored override wins over composition — currently only Pagalava's own
-  // Tamil elevator pitch. Every other (company, type, language) keeps the
-  // data-composed script below.
-  if (type === "elevator" && lang === "ta" && data.companyId === DEMO_COMPANY_ID) {
-    return PAGALAVA_TAMIL_ELEVATOR_PITCH;
+  // Authored override wins over composition: MaylaanAI's approved English
+  // and Tamil content for all three pitches, gated on the company id.
+  // Every other tenant — and MaylaanAI's other display languages — keeps
+  // the data-composed scripts below.
+  if ((lang === "en" || lang === "ta") && data.companyId === DEMO_COMPANY_ID) {
+    return MAYLAANAI_PITCHES[lang][type];
   }
 
   const servicesSpoken = speakList(

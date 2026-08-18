@@ -784,13 +784,27 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
             <div className="grid grid-cols-3 gap-2">
               {(
                 [
-                  // Pagalava's authored Tamil elevator script (see
-                  // pitchScripts.ts) runs ~90s; every other card/language
-                  // keeps the ~30s composed script, so the chip must not
-                  // change for them.
-                  { type: "elevator" as const, label: t("pitch.elevator"), duration: language === "ta" && companyId === DEMO_COMPANY_ID ? "90s" : "30s" },
-                  { type: "product" as const, label: t("pitch.product"), duration: "40s" },
-                  { type: "usp" as const, label: t("pitch.usp"), duration: "5s" },
+                  // MaylaanAI's authored pitches (see MAYLAANAI_PITCHES in
+                  // pitchScripts.ts) run substantially longer than the
+                  // composed scripts other tenants get, so the duration
+                  // chips are honest per company: rough spoken-length
+                  // estimates of the approved content, not the composed
+                  // ~30s/~40s/~5s targets.
+                  {
+                    type: "elevator" as const,
+                    label: t("pitch.elevator"),
+                    duration: companyId === DEMO_COMPANY_ID ? "60s" : "30s",
+                  },
+                  {
+                    type: "product" as const,
+                    label: t("pitch.product"),
+                    duration: companyId === DEMO_COMPANY_ID ? "50s" : "40s",
+                  },
+                  {
+                    type: "usp" as const,
+                    label: t("pitch.usp"),
+                    duration: companyId === DEMO_COMPANY_ID ? "60s" : "5s",
+                  },
                 ]
               ).map(({ type, label, duration }) => {
                 const isActive = pitchPlaying === type;
