@@ -112,7 +112,12 @@ describe("GET /api/public/[companyId]/[employeeId]/appointments", () => {
     const res = await GET(req, PARAMS);
 
     expect(res.status).toBe(404);
-    expect(resolveCompanyDefaults).not.toHaveBeenCalled();
+    // 2026-08-19 waterfall fix: the settings read now rides the SAME batch
+    // as the identity check (both key only off URL params), shaving a
+    // serial DB round trip off every legitimate modal open. The 404 must
+    // still WIN — the concurrent read's result is simply discarded, and no
+    // Cal.com call is ever made for an unknown card.
+    expect(getAvailableSlots).not.toHaveBeenCalled();
   });
 
   it("returns 404 for an employee that doesn't belong to the given company", async () => {

@@ -1,27 +1,13 @@
-import { SUPPORTED_VOICE_IDS } from "@/core/domain/models/types";
 import { Logger } from "@/shared/lib/logger";
 import { createWebhookToken } from "@/shared/lib/webhookToken";
+import { KNOWN_OPENAI_VOICE_IDS, DEFAULT_VOICE_ID, OpenAIVoiceId } from "@/shared/lib/voiceIds";
 
-// OpenAI TTS voiceIds Vapi actually accepts for provider "openai" (per
-// @vapi-ai/web's OpenAIVoice type). Agents store an arbitrary string in
-// voice_model_id — some seeded/legacy values (e.g. "vapi-default") were
-// never real voiceIds, just placeholder labels — so this validates
-// against the known set instead of passing anything through verbatim,
-// which would otherwise silently break the live call for any agent
-// whose value isn't one of these.
-//
-// The list itself lives in the domain, where it is also the Employee voice
-// dropdown's allowed set: one source of truth, so an option an admin can pick
-// is by construction an option Vapi will accept.
-const KNOWN_OPENAI_VOICE_IDS = SUPPORTED_VOICE_IDS;
-export type OpenAIVoiceId = (typeof KNOWN_OPENAI_VOICE_IDS)[number];
-
-export const DEFAULT_VOICE_ID: OpenAIVoiceId = "nova";
-
-export function resolveOpenAIVoiceId(raw?: string | null): OpenAIVoiceId {
-  const candidate = (raw || "").trim().toLowerCase();
-  return (KNOWN_OPENAI_VOICE_IDS as readonly string[]).includes(candidate) ? (candidate as OpenAIVoiceId) : DEFAULT_VOICE_ID;
-}
+// The voice-ID constants live in shared/lib/voiceIds (client-safe — see its
+// doc comment: importing them from THIS module dragged the crypto polyfill
+// behind createWebhookToken above into the public card's initial bundle).
+// Re-exported so every existing server-side import keeps working unchanged.
+export { KNOWN_OPENAI_VOICE_IDS, DEFAULT_VOICE_ID, resolveOpenAIVoiceId } from "@/shared/lib/voiceIds";
+export type { OpenAIVoiceId } from "@/shared/lib/voiceIds";
 
 /** Precedence for a live call: the employee's own voice, then their agent's,
  * then the company default from Settings, then the platform default. Each

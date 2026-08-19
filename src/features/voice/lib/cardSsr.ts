@@ -30,10 +30,13 @@ export interface SsrCardProps {
 const LANGUAGE_COOKIE = "pagalava.language";
 
 export async function resolveSsrCardProps(companyId: string, employeeId: string): Promise<SsrCardProps> {
-  const cookieValue = cookies().get(LANGUAGE_COOKIE)?.value;
-  if (!isSupportedLanguage(cookieValue)) return {};
-
   try {
+    // Inside the try with everything else: cookie access itself can throw
+    // outside a live request scope (unit tests that stub only headers(),
+    // static analysis passes), and the contract of this function is that NO
+    // failure mode ever escapes — worst case is always "no SSR props".
+    const cookieValue = cookies().get(LANGUAGE_COOKIE)?.value;
+    if (!isSupportedLanguage(cookieValue)) return {};
     const host = headers().get("host") ?? (process.env.NEXT_PUBLIC_APP_URL || "https://maylaanai.com").replace(/^https?:\/\//, "");
     const protocol = host.startsWith("localhost") || host.startsWith("127.") ? "http" : "https";
     const payload = await buildPublicCardPayload({

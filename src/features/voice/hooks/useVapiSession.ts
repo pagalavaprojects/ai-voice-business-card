@@ -4,7 +4,11 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import type Vapi from "@vapi-ai/web";
 import { VoiceState } from "../components/VoiceMicButton";
 import { MessageItem } from "../components/TranscriptViewer";
-import { DEFAULT_VOICE_ID, OpenAIVoiceId } from "@/shared/lib/voice";
+// From voiceIds, NOT shared/lib/voice: voice.ts value-imports the webhook
+// token signer (Node crypto), and importing these two constants from there
+// shipped a 317 KB crypto-browserify polyfill in the card's initial JS
+// (2026-08-19 bundle audit).
+import { DEFAULT_VOICE_ID, OpenAIVoiceId } from "@/shared/lib/voiceIds";
 import { installVapiLoudnessEnhancement } from "../lib/audioEnhancement";
 
 // Deliberately generic and tenant-neutral. This is a shared hook serving
