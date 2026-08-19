@@ -7,6 +7,7 @@ import { isEmployeeCardVisible } from "@/shared/lib/employeeVisibility";
 import { checkRateLimitDistributed } from "@/shared/lib/rateLimit";
 import { resolveRequestLanguage } from "@/features/language/server";
 import { composePitchScript, isPitchType, PitchSourceData } from "@/features/voice/lib/pitchScripts";
+import { isConfiguredKey, pcmToWav, renderGeminiPcm } from "@/shared/lib/tts/ttsBackends";
 
 export const dynamic = "force-dynamic";
 // First-ever render of a long pitch can take Gemini/OpenAI tens of seconds;
@@ -16,71 +17,16 @@ export const maxDuration = 120;
 const knowledgeRepo = new SupabaseKnowledgeRepository();
 const storage = new SupabaseStorageAdapter();
 
-/** Gemini TTS is the TAMIL audio provider (proven natural Tamil in the
- * 2026-08-18 proof-of-concept); OpenAI remains the provider for every
- * other language and the automatic fallback when Gemini fails. */
-const GEMINI_TTS_MODEL = "gemini-3.1-flash-tts-preview";
-const GEMINI_TTS_VOICE = "Kore";
-
-function isConfiguredKey(v: string | undefined): boolean {
-  return Boolean(v && !/your-|placeholder|example/i.test(v));
-}
-
-/** Wraps Gemini's raw 16-bit mono PCM in a WAV container the browser's
- * <audio> element can play directly. */
-function pcmToWav(pcm: Buffer, sampleRate: number): Buffer {
-  const header = Buffer.alloc(44);
-  header.write("RIFF", 0);
-  header.writeUInt32LE(36 + pcm.length, 4);
-  header.write("WAVE", 8);
-  header.write("fmt ", 12);
-  header.writeUInt32LE(16, 16);
-  header.writeUInt16LE(1, 20);
-  header.writeUInt16LE(1, 22);
-  header.writeUInt32LE(sampleRate, 24);
-  header.writeUInt32LE(sampleRate * 2, 28);
-  header.writeUInt16LE(2, 32);
-  header.writeUInt16LE(16, 34);
-  header.write("data", 36);
-  header.writeUInt32LE(pcm.length, 40);
-  return Buffer.concat([header, pcm]);
-}
-
-/** Renders a script to WAV via Gemini TTS. Returns null on ANY failure —
- * the caller falls back to the OpenAI path, so a Gemini outage can never
- * make Tamil worse than it was before Gemini existed. Never throws. */
+/** Renders a script to WAV via Gemini TTS — the TAMIL audio provider
+ * (proven natural Tamil in the 2026-08-18 proof-of-concept); OpenAI remains
+ * the provider for every other language and the automatic fallback when
+ * Gemini fails. The Gemini request itself lives in shared/lib/tts (also the
+ * real-time custom-voice backend) — this wrapper only adds the WAV container
+ * a browser <audio> element needs. Returns null on ANY failure so the caller
+ * falls back to OpenAI; never throws. */
 async function renderGeminiTts(script: string): Promise<Buffer | null> {
-  try {
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_TTS_MODEL}:generateContent`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-goog-api-key": process.env.GEMINI_API_KEY as string },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: script }] }],
-        generationConfig: {
-          responseModalities: ["AUDIO"],
-          speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: GEMINI_TTS_VOICE } } },
-        },
-      }),
-    });
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      Logger.warn("Gemini TTS generation failed", { status: res.status, body: body.slice(0, 200) });
-      return null;
-    }
-    const payload = (await res.json()) as {
-      candidates?: Array<{ content?: { parts?: Array<{ inlineData?: { mimeType?: string; data?: string } }> } }>;
-    };
-    const inline = payload.candidates?.[0]?.content?.parts?.find((p) => p.inlineData?.data)?.inlineData;
-    if (!inline?.data) {
-      Logger.warn("Gemini TTS returned no audio part");
-      return null;
-    }
-    const rate = Number((/rate=(\d+)/.exec(inline.mimeType ?? "") ?? [])[1] ?? 24000);
-    return pcmToWav(Buffer.from(inline.data, "base64"), rate);
-  } catch (err) {
-    Logger.warn("Gemini TTS request threw", { error: err instanceof Error ? err.message : String(err) });
-    return null;
-  }
+  const audio = await renderGeminiPcm(script);
+  return audio ? pcmToWav(audio.pcm, audio.sampleRate) : null;
 }
 
 /**

@@ -10,6 +10,7 @@ import { supabaseAdmin } from "@/shared/lib/supabase";
 import { resolveVoiceProviderConfig } from "@/shared/lib/voice";
 import { SupabaseKnowledgeRepository } from "@/core/infrastructure/database/supabase/SupabaseKnowledgeRepository";
 import { verifyWebhookToken } from "@/shared/lib/webhookToken";
+import { resolvePublicBaseUrl } from "@/shared/lib/publicUrl";
 import { getWhatsAppNotifier } from "@/core/infrastructure/notifications/WhatsAppNotifier";
 import { SupabaseWhatsAppIdempotencyStore } from "@/core/infrastructure/notifications/WhatsAppIdempotency";
 import {
@@ -156,7 +157,11 @@ async function handleVapiMessage(req: NextRequest, message: VapiMessage): Promis
     const voiceConfig = resolveVoiceProviderConfig(
       employee?.voice_id,
       agent?.voice_model_id,
-      (settings?.voice_settings as Record<string, unknown> | undefined)?.default_voice_model as string | undefined
+      (settings?.voice_settings as Record<string, unknown> | undefined)?.default_voice_model as string | undefined,
+      // Same custom-voice context as the browser call path (public card
+      // route) so a phone call and a browser call can never end up on
+      // different TTS providers.
+      { language, companyId, employeeId, baseUrl: resolvePublicBaseUrl(req.nextUrl.origin) }
     );
 
     return NextResponse.json({
@@ -180,9 +185,20 @@ async function handleVapiMessage(req: NextRequest, message: VapiMessage): Promis
         // choice. Kept identical to the browser call path so a phone call
         // and a browser call never sound different from each other.
         voice:
-          voiceConfig.provider === "11labs"
-            ? { provider: "11labs" as const, voiceId: voiceConfig.voiceId, model: voiceConfig.model as "eleven_multilingual_v2" }
-            : { provider: "openai" as const, voiceId: voiceConfig.voiceId, model: "tts-1-hd" as const },
+          voiceConfig.provider === "custom-voice" && voiceConfig.serverUrl
+            ? {
+                provider: "custom-voice" as const,
+                server: { url: voiceConfig.serverUrl, timeoutSeconds: 45 },
+                // If our endpoint fails/times out, Vapi degrades to its own
+                // built-in OpenAI voice (known-poor Tamil, but the call
+                // keeps speaking) rather than going silent.
+                fallbackPlan: { voices: [{ provider: "openai", voiceId: "nova", model: "tts-1" }] },
+              }
+            : voiceConfig.provider === "azure"
+              ? { provider: "azure" as const, voiceId: voiceConfig.voiceId }
+              : voiceConfig.provider === "11labs"
+                ? { provider: "11labs" as const, voiceId: voiceConfig.voiceId, model: voiceConfig.model as "eleven_multilingual_v2" }
+                : { provider: "openai" as const, voiceId: voiceConfig.voiceId, model: "tts-1-hd" as const },
         // Same transcriber resolution as the browser call path — Deepgram
         // for en/ta/hi/kn, Azure (env-gated on confirmed setup) for te/ml,
         // omitted entirely for a language with no confirmed-working

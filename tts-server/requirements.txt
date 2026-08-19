@@ -1,0 +1,9 @@
+# MaylaanAI self-hosted TTS service.
+# torch is installed separately so CPU vs CUDA can be chosen per host:
+#   CPU:   pip install torch --index-url https://download.pytorch.org/whl/cpu
+#   CUDA:  pip install torch --index-url https://download.pytorch.org/whl/cu121
+fastapi>=0.111
+uvicorn[standard]>=0.30
+numpy
+# parler-tts pins its own compatible transformers version.
+parler-tts @ git+https://github.com/huggingface/parler-tts.git

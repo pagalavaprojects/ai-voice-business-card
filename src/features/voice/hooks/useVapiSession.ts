@@ -47,8 +47,11 @@ export interface UseVapiSessionOptions {
   /** Resolved server-side by resolveVoiceProviderConfig — this hook never
    * re-derives provider choice itself, so a browser call and a phone call
    * (webhook route) can never disagree about which provider is active. */
-  voiceProvider?: "openai" | "11labs";
+  voiceProvider?: "openai" | "11labs" | "custom-voice" | "azure";
   voiceModel?: string;
+  /** custom-voice only: the signed /api/tts/vapi URL (resolved server-side,
+   * same trust model as serverUrl). Ignored for every other provider. */
+  voiceServerUrl?: string | null;
   /** Transcriber language code for the visitor's chosen conversation
    * language — resolved server-side by resolveTranscriberConfig, same
    * "the hook never re-derives provider choice" principle as voiceProvider
@@ -86,6 +89,7 @@ export function useVapiSession({
   voiceId,
   voiceProvider,
   voiceModel,
+  voiceServerUrl,
   serverUrl,
   speechLocale,
   transcriberProvider = "deepgram",
@@ -528,10 +532,24 @@ export function useVapiSession({
         // voiceProvider === "11labs" is a platform-wide opt-in (see
         // resolveVoiceProviderConfig) for a real Tamil-tuned voice; unset,
         // this is exactly the prior OpenAI tts-1-hd behavior.
-        voice:
-          voiceProvider === "11labs" && voiceId
-            ? { provider: "11labs" as const, voiceId, model: (voiceModel || "eleven_multilingual_v2") as "eleven_multilingual_v2" }
-            : { provider: "openai" as const, voiceId: voiceId || DEFAULT_VOICE_ID, model: "tts-1-hd" as const },
+        // "custom-voice" routes synthesis through our own /api/tts/vapi
+        // endpoint (self-hosted Indic model with cloud fallbacks). The SDK's
+        // published voice union doesn't include the custom-voice shape even
+        // though Vapi's API accepts it, hence the cast; the fallbackPlan
+        // keeps the call speaking through Vapi's own OpenAI voice if our
+        // endpoint fails or times out. Kept identical to the webhook
+        // assistant-request branch so browser and phone calls never differ.
+        voice: (voiceProvider === "custom-voice" && voiceServerUrl
+          ? {
+              provider: "custom-voice",
+              server: { url: voiceServerUrl, timeoutSeconds: 45 },
+              fallbackPlan: { voices: [{ provider: "openai", voiceId: "nova", model: "tts-1" }] },
+            }
+          : voiceProvider === "azure" && voiceId
+            ? { provider: "azure", voiceId }
+            : voiceProvider === "11labs" && voiceId
+              ? { provider: "11labs" as const, voiceId, model: (voiceModel || "eleven_multilingual_v2") as "eleven_multilingual_v2" }
+              : { provider: "openai" as const, voiceId: voiceId || DEFAULT_VOICE_ID, model: "tts-1-hd" as const }) as VapiAssistantParam["voice"],
         // Switches speech recognition to the visitor's chosen conversation
         // language. The full spec (provider + model + language) is resolved
         // server-side (resolveTranscriberConfig) and passed down whole via
@@ -567,7 +585,7 @@ export function useVapiSession({
       setVoiceState("idle");
       stopTimer();
     }
-  }, [voiceState, startTimer, stopTimer, firstMessage, systemPrompt, tools, serverUrl, voiceId, voiceProvider, voiceModel, speechLocale, transcriberProvider, transcriber, clearDemoTimeouts, defaultFirstMessage, startCallErrorText]);
+  }, [voiceState, startTimer, stopTimer, firstMessage, systemPrompt, tools, serverUrl, voiceId, voiceProvider, voiceModel, voiceServerUrl, speechLocale, transcriberProvider, transcriber, clearDemoTimeouts, defaultFirstMessage, startCallErrorText]);
 
   // Always call the latest startCall from the stable error handler
   // registered once inside the init effect (see reconnect logic above).

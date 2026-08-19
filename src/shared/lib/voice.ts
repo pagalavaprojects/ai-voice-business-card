@@ -1,5 +1,6 @@
 import { SUPPORTED_VOICE_IDS } from "@/core/domain/models/types";
 import { Logger } from "@/shared/lib/logger";
+import { createWebhookToken } from "@/shared/lib/webhookToken";
 
 // OpenAI TTS voiceIds Vapi actually accepts for provider "openai" (per
 // @vapi-ai/web's OpenAIVoice type). Agents store an arbitrary string in
@@ -48,9 +49,39 @@ export function resolveCallVoiceId(
 }
 
 export interface VoiceProviderConfig {
-  provider: "openai" | "11labs";
+  provider: "openai" | "11labs" | "custom-voice" | "azure";
   voiceId: string;
   model: string;
+  /** custom-voice only: the absolute, HMAC-token-signed URL Vapi POSTs
+   * voice-requests to (our /api/tts/vapi route). Absent on every other
+   * provider. */
+  serverUrl?: string;
+}
+
+/** Per-call context the custom-voice branch needs to mint its signed
+ * endpoint URL. Optional everywhere: callers that don't pass it (or run
+ * without a public base URL) simply keep the existing provider chain. */
+export interface CustomTtsCallContext {
+  language: string;
+  companyId: string;
+  employeeId: string;
+  baseUrl: string | null | undefined;
+}
+
+/** True when the platform-wide custom TTS voice is enabled for this
+ * employee. VOICE_TTS_PROVIDER=custom is the master switch;
+ * VOICE_CUSTOM_TTS_EMPLOYEE_IDS (comma-separated) optionally narrows it to
+ * a canary set of employees so one card can prove the pipeline before the
+ * whole platform moves (migration phase 8). Empty/unset allowlist means
+ * every employee once the master switch is on. */
+function isCustomTtsEnabledFor(employeeId: string | undefined): boolean {
+  if ((process.env.VOICE_TTS_PROVIDER || "").trim().toLowerCase() !== "custom") return false;
+  const allowlist = (process.env.VOICE_CUSTOM_TTS_EMPLOYEE_IDS || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (allowlist.length === 0) return true;
+  return Boolean(employeeId && allowlist.includes(employeeId));
 }
 
 /** The full provider+voice+model tuple for a live call — supersedes
@@ -80,8 +111,43 @@ export interface VoiceProviderConfig {
 export function resolveVoiceProviderConfig(
   employeeVoiceId?: string | null,
   agentVoiceModelId?: string | null,
-  companyDefaultVoiceId?: string | null
+  companyDefaultVoiceId?: string | null,
+  customTtsContext?: CustomTtsCallContext
 ): VoiceProviderConfig {
+  // Highest-precedence opt-in: our own TTS endpoint (self-hosted Indic model
+  // behind /api/tts/vapi). Requires the full call context AND a public base
+  // URL AND a signable token — missing any of these falls straight through
+  // to the existing chain, so a misconfiguration degrades to today's
+  // behavior instead of a silent dead-air call.
+  if (customTtsContext && isCustomTtsEnabledFor(customTtsContext.employeeId)) {
+    const { language, companyId, employeeId, baseUrl } = customTtsContext;
+    const token = baseUrl ? createWebhookToken(companyId, employeeId) : null;
+    if (baseUrl && token) {
+      const serverUrl =
+        `${baseUrl}/api/tts/vapi?companyId=${encodeURIComponent(companyId)}&employeeId=${encodeURIComponent(employeeId)}` +
+        `&lang=${encodeURIComponent(language)}&token=${encodeURIComponent(token)}`;
+      // Same visibility rationale as the ElevenLabs override below: this
+      // silently supersedes every tenant's configured voice, so it must
+      // leave a server-side trace.
+      Logger.warn("Custom TTS voice active", { employeeId, language });
+      return { provider: "custom-voice", voiceId: "custom", model: "custom", serverUrl };
+    }
+    Logger.warn("VOICE_TTS_PROVIDER=custom set but base URL or webhook secret missing — falling back to standard voice chain", {
+      hasBaseUrl: Boolean(baseUrl),
+    });
+  }
+  // Language-scoped Azure branch: Vapi supports Azure TTS natively (at-cost,
+  // no Azure account required), and Azure has REAL Tamil neural voices
+  // (ta-IN-PallaviNeural / ta-IN-ValluvarNeural) — the cheapest fix for the
+  // known OpenAI-speaks-Tamil-as-gibberish problem: one env var, no infra.
+  // Scoped to Tamil calls only (needs the call context to know the
+  // language); every other language keeps its existing chain. Sits below the
+  // custom-voice opt-in so a self-hosted rollout, when proven, wins.
+  const azureTamilVoiceId = process.env.VOICE_AZURE_TAMIL_VOICE_ID?.trim();
+  if (azureTamilVoiceId && customTtsContext?.language === "ta") {
+    Logger.warn("Azure Tamil voice active", { voiceId: azureTamilVoiceId });
+    return { provider: "azure", voiceId: azureTamilVoiceId, model: "azure" };
+  }
   const elevenLabsVoiceId = process.env.VOICE_ELEVENLABS_VOICE_ID?.trim();
   if (elevenLabsVoiceId) {
     // eleven_multilingual_v2 is required for Tamil — the default

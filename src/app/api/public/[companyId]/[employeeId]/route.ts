@@ -206,7 +206,12 @@ export async function GET(req: NextRequest, { params }: { params: { companyId: s
     const voiceConfig = resolveVoiceProviderConfig(
       employee.voice_id,
       agent?.voice_model_id,
-      (settings?.voice_settings as Record<string, unknown> | undefined)?.default_voice_model as string | undefined
+      (settings?.voice_settings as Record<string, unknown> | undefined)?.default_voice_model as string | undefined,
+      // Context for the opt-in custom-voice branch: with it, the resolved
+      // config can carry a signed /api/tts/vapi URL (same base-URL and
+      // HMAC-token trust model as serverUrl above). Without a public base
+      // URL this falls through to the standard provider chain.
+      { language, companyId, employeeId, baseUrl: publicBaseUrl }
     );
 
     return NextResponse.json({
@@ -286,6 +291,10 @@ export async function GET(req: NextRequest, { params }: { params: { companyId: s
       voiceId: voiceConfig.voiceId,
       voiceProvider: voiceConfig.provider,
       voiceModel: voiceConfig.model,
+      // Only set for provider "custom-voice": the signed URL Vapi must POST
+      // voice-requests to. Null (not omitted) so the client can distinguish
+      // "server said no custom voice" from "old server without the field".
+      voiceServerUrl: voiceConfig.serverUrl ?? null,
       // Echoes back what was actually resolved (not just what was
       // requested) — the effective language even when ?lang= was absent,
       // and the full transcriber spec (provider + model + locale) the

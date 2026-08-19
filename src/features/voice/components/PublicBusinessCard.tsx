@@ -79,8 +79,9 @@ interface PublicCardData {
   toolsEnabled?: boolean;
   serverUrl?: string;
   voiceId?: string;
-  voiceProvider?: "openai" | "11labs";
+  voiceProvider?: "openai" | "11labs" | "custom-voice" | "azure";
   voiceModel?: string;
+  voiceServerUrl?: string | null;
   language?: string;
   transcriber?: { provider: string; model?: string; language: string } | null;
   enabledLanguages?: LanguageCode[];
@@ -262,6 +263,7 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
     voiceId: card?.voiceId,
     voiceProvider: card?.voiceProvider,
     voiceModel: card?.voiceModel,
+    voiceServerUrl: card?.voiceServerUrl,
     transcriber: card?.transcriber ?? undefined,
     t,
   });
