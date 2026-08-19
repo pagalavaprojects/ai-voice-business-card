@@ -3,7 +3,11 @@
 import { cookies, headers } from "next/headers";
 import { buildPublicCardPayload } from "@/core/application/services/PublicCardPayload";
 import type { PublicCardData } from "@/features/voice/components/PublicBusinessCard";
-import { loadBundle, LocaleBundle } from "@/features/language/hooks/useLanguage";
+// From features/language/bundles, NEVER the useLanguage hook module: that
+// file is "use client", which turns its exports into client-reference
+// proxies here — calling one threw the minified "n is not a function" that
+// silently disabled this entire SSR fast path on deploy 2970834.
+import { loadBundle, LocaleBundle } from "@/features/language/bundles";
 import { isSupportedLanguage, LanguageCode } from "@/features/language/config";
 import { Logger } from "@/shared/lib/logger";
 
