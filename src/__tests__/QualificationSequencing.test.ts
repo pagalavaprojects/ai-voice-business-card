@@ -10,7 +10,16 @@
  */
 import { ToolRegistry } from "@/core/application/tools/ToolRegistry";
 import { LeadTemperature } from "@/core/domain/models/types";
-import { getAuthoredQuestion, QUALIFICATION_ANSWER_GUIDANCE, QUALIFICATION_CONTINUE_PROMPT, withAnswerGuidance } from "@/features/voice/lib/qualificationScript";
+import {
+  classifyClosedResponse,
+  getAuthoredQuestion,
+  QUALIFICATION_ANSWER_GUIDANCE,
+  QUALIFICATION_ANSWER_GUIDANCE_TA,
+  QUALIFICATION_CONTINUE_PROMPT,
+  QUALIFICATION_CONTINUE_PROMPT_TA,
+  QUALIFICATION_QUESTIONS_TA,
+  withAnswerGuidance,
+} from "@/features/voice/lib/qualificationScript";
 
 function build(notes = "") {
   const lead = notes ? { id: "l1", lead_temperature: null, qualification_notes: notes } : null;
@@ -143,14 +152,86 @@ describe("get_next_qualification_question (six-question revision)", () => {
     }
   });
 
-  it("behaves identically regardless of context.language — the qualification script is no longer language-dispatched", async () => {
-    for (const language of [undefined, "en", "ta", "hi", "te", "ml", "kn"]) {
+  it("is language-AWARE for the two authored sets: en and every non-Tamil language ask the English questions", async () => {
+    for (const language of [undefined, "en", "hi", "te", "ml", "kn"]) {
       const { tool } = build();
       const res = (await tool.execute({ last_answered_question: 0 }, { ...CTX, language })) as Record<string, unknown>;
       expect(res.action).toBe("ask_verbatim");
       expect(res.question_number).toBe(1);
       expect(res.question).toBe(q(1));
     }
+  });
+
+  // The 2026-08-19 product decision: qualification language follows the
+  // selected card language for the authored languages. ONE engine, same
+  // sequencing, same canonical persistence — only the spoken content and
+  // accepted answer words are dispatched.
+  describe("Tamil qualification (context.language = 'ta') — same engine, Tamil content", () => {
+    const TA_CTX = { ...CTX, language: "ta" as const };
+
+    it("integration: starting a Tamil session and answering Q1 with ஆம் returns TAMIL Q2 and persists canonical Yes", async () => {
+      const { tool, crmRepo } = build("existing note");
+      const opening = (await tool.execute({ last_answered_question: 0 }, TA_CTX)) as Record<string, unknown>;
+      expect(opening.question).toBe(QUALIFICATION_QUESTIONS_TA[0].question);
+      expect(String(opening.speak)).toContain(QUALIFICATION_ANSWER_GUIDANCE_TA);
+
+      const res = (await tool.execute({ last_answered_question: 1, user_response: "ஆம்", lead_id: "l1" }, TA_CTX)) as Record<string, unknown>;
+      expect(res.action).toBe("ask_verbatim");
+      expect(res.question_number).toBe(2);
+      expect(res.question).toBe(QUALIFICATION_QUESTIONS_TA[1].question);
+      // Persisted record stays canonical English regardless of language.
+      const [, patch] = crmRepo.updateLeadQualification.mock.calls[0];
+      expect(String(patch.qualification_notes)).toMatch(/Q1 \[YES\] \([^)]+\): Yes$/);
+    });
+
+    it("classifies இல்லை → NO and இருந்தாலும் → MAYBE, walking Q2→Q3→Q4 in Tamil", async () => {
+      const { tool, crmRepo } = build("existing note");
+      const r2 = (await tool.execute({ last_answered_question: 2, user_response: "இல்லை", lead_id: "l1" }, TA_CTX)) as Record<string, unknown>;
+      expect(r2.question).toBe(QUALIFICATION_QUESTIONS_TA[2].question);
+      const r3 = (await tool.execute({ last_answered_question: 3, user_response: "இருந்தாலும்", lead_id: "l1" }, TA_CTX)) as Record<string, unknown>;
+      expect(r3.question).toBe(QUALIFICATION_QUESTIONS_TA[3].question);
+      const notes = crmRepo.updateLeadQualification.mock.calls.map(([, p]) => String(p.qualification_notes)).join("\n");
+      expect(notes).toContain("Q2 [NO]");
+      expect(notes).toContain("Q3 [MAYBE]");
+    });
+
+    it("invalid Tamil answers (சரி, okay, English yes, free-form) reprompt with the TAMIL guidance and store nothing", async () => {
+      for (const bad of ["சரி", "okay", "yes", "எனக்கு தெரியவில்லை", "ஆம் ஆனால் யோசிக்கணும்"]) {
+        const { tool, crmRepo } = build();
+        const res = (await tool.execute({ last_answered_question: 1, user_response: bad, lead_id: "l1" }, TA_CTX)) as Record<string, unknown>;
+        expect(res.action).toBe("reprompt");
+        expect(res.question_number).toBe(1);
+        expect(res.speak).toBe(QUALIFICATION_ANSWER_GUIDANCE_TA);
+        expect(crmRepo.updateLeadQualification).not.toHaveBeenCalled();
+      }
+    });
+
+    it("accepts the documented ASR variants ஆமாம்/ஆமா/இல்ல", async () => {
+      expect(classifyClosedResponse("ஆமாம்", "ta")).toBe("YES");
+      expect(classifyClosedResponse("ஆமா", "ta")).toBe("YES");
+      expect(classifyClosedResponse("இல்ல", "ta")).toBe("NO");
+    });
+
+    it("a full Tamil walk completes after Q6 with the TAMIL continue prompt — never a seventh question", async () => {
+      const { tool } = build();
+      let last = 0;
+      const seen: string[] = [];
+      for (let i = 0; i < 6; i++) {
+        const res = (await tool.execute({ last_answered_question: last, user_response: "ஆம்", lead_id: "l1" }, TA_CTX)) as Record<string, unknown>;
+        if (res.action !== "ask_verbatim") break;
+        seen.push(String(res.question));
+        last = res.question_number as number;
+      }
+      expect(seen).toEqual(QUALIFICATION_QUESTIONS_TA.map((x) => x.question));
+      const done = (await tool.execute({ last_answered_question: 6, user_response: "ஆம்", lead_id: "l1" }, TA_CTX)) as Record<string, unknown>;
+      expect(done.action).toBe("complete_proceed_to_booking");
+      expect(done.speak).toBe(QUALIFICATION_CONTINUE_PROMPT_TA);
+    });
+
+    it("English tokens do NOT classify in Tamil mode, and Tamil tokens do NOT classify in English mode", async () => {
+      expect(classifyClosedResponse("yes", "ta")).toBeNull();
+      expect(classifyClosedResponse("ஆம்", "en")).toBeNull();
+    });
   });
 
   it("never computes or persists lead_temperature at any point in the sequence — scoring and completion are separate", async () => {

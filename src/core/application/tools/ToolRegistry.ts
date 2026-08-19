@@ -12,9 +12,10 @@ import { SupabaseWhatsAppIdempotencyStore } from "../../infrastructure/notificat
 import {
   buildAppointmentConfirmedSpeech,
   classifyClosedResponse,
+  getAnswerGuidance,
   getAuthoredQuestion,
-  QUALIFICATION_ANSWER_GUIDANCE,
-  QUALIFICATION_CONTINUE_PROMPT,
+  getContinuePrompt,
+  toQualificationLanguage,
   withAnswerGuidance,
 } from "@/features/voice/lib/qualificationScript";
 import { AppointmentStatus, LeadTemperature, NurtureStatus, LeadQualificationSignalsSchema } from "../../domain/models/types";
@@ -787,18 +788,27 @@ export class ToolRegistry {
           return { action: "error", message: "last_answered_question must be an integer 0-6." };
         }
 
+        // The qualification language follows the visitor's selected card
+        // language (carried into this context via the webhook's ?lang=
+        // param). Only English and Tamil have authored sets; anything else
+        // — including WhatsApp, whose channel passes no language — uses
+        // English. The QUESTIONS and guidance are language-aware; the
+        // PERSISTED record below stays canonical English either way.
+        const qualificationLanguage = toQualificationLanguage(context.language);
+
         // SERVER-side closed-ended classification of the raw reply. The
         // model never classifies and never decides validity: anything that
-        // is not clearly one of the three accepted words is rejected — no
-        // answer is stored, the questionnaire does not advance, and the
-        // model is told to re-speak the guidance and listen to the SAME
-        // question.
-        const classification = last > 0 ? classifyClosedResponse(String(args.user_response ?? "")) : null;
+        // is not clearly one of the accepted words for this language
+        // (Yes/No/Maybe; Tamil: ஆம்/இல்லை/இருந்தாலும் + their standard
+        // variants) is rejected — no answer is stored, the questionnaire
+        // does not advance, and the model is told to re-speak the guidance
+        // and listen to the SAME question.
+        const classification = last > 0 ? classifyClosedResponse(String(args.user_response ?? ""), qualificationLanguage) : null;
         if (last > 0 && classification === null) {
           return {
             action: "reprompt",
             question_number: last,
-            speak: QUALIFICATION_ANSWER_GUIDANCE,
+            speak: getAnswerGuidance(qualificationLanguage),
             message:
               "The reply could not be classified as YES/NO/MAYBE — nothing was stored. Speak the guidance verbatim, " +
               "stay on the SAME question, and listen again. Do NOT advance.",
@@ -877,9 +887,14 @@ export class ToolRegistry {
         }
 
         const ask = (n: number) => {
-          const q = getAuthoredQuestion(n);
+          const q = getAuthoredQuestion(n, qualificationLanguage);
           return q
-            ? { action: "ask_verbatim", question_number: q.number, question: q.question, speak: withAnswerGuidance(q.question) }
+            ? {
+                action: "ask_verbatim",
+                question_number: q.number,
+                question: q.question,
+                speak: withAnswerGuidance(q.question, getAnswerGuidance(qualificationLanguage)),
+              }
             : { action: "error", message: `No authored question ${n}.` };
         };
 
@@ -892,7 +907,7 @@ export class ToolRegistry {
         if (last < 6) return ask(last + 1);
         return {
           action: "complete_proceed_to_booking",
-          speak: QUALIFICATION_CONTINUE_PROMPT,
+          speak: getContinuePrompt(qualificationLanguage),
           message:
             "All six questions are complete. SPEAK the 'speak' text EXACTLY as returned — do not paraphrase it. The " +
             "on-screen Continue button is already visible; the visitor picks a time and enters their details " +

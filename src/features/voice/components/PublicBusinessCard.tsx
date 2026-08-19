@@ -12,7 +12,7 @@ import { Dialog } from "@/shared/ui/dialog";
 import { downloadVCard, imageUrlToDataUri } from "@/features/voice/lib/vcard";
 import { speakPitchWithBrowserTts, stopBrowserTts, pauseBrowserTts, resumeBrowserTts } from "@/features/voice/lib/pitchFallback";
 import { DEMO_COMPANY_ID } from "@/shared/lib/demoCard";
-import { QUALIFICATION_CALL_OPENING, getQualificationDirective } from "@/features/voice/lib/qualificationScript";
+import { getQualificationCallOpening, getQualificationDirective, toQualificationLanguage } from "@/features/voice/lib/qualificationScript";
 import { useLanguage } from "@/features/language/hooks/useLanguage";
 import { LanguageSelector } from "@/features/language/components/LanguageSelector";
 import { LanguageGate } from "@/features/language/components/LanguageGate";
@@ -1037,8 +1037,15 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
           // decision regardless of the card's chosen display language —
           // pitch playback and general conversation remain fully
           // multilingual and are untouched by this.
+          // The qualification language follows the visitor's selected card
+          // language for the two authored sets (English/Tamil); other card
+          // languages qualify in English. Opening = that language's Q1 +
+          // guidance — never the greeting, never DEFAULT_FIRST_MESSAGE.
           startCall: () =>
-            startCall({ firstMessage: QUALIFICATION_CALL_OPENING, systemPrompt: (card.systemPrompt ?? "") + getQualificationDirective() }),
+            startCall({
+              firstMessage: getQualificationCallOpening(toQualificationLanguage(language)),
+              systemPrompt: (card.systemPrompt ?? "") + getQualificationDirective(toQualificationLanguage(language)),
+            }),
           endCall,
           messages,
           // Already-localized error text from the session hook — rendered

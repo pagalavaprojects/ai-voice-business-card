@@ -1,15 +1,29 @@
 /**
- * THE single authoritative qualification questionnaire (2026-08-13 revision
- * — product-owner final decision, replaces the earlier 17-question Tamil/
- * English dual script). Exactly six questions, English only, immutable
- * wording. Every qualification channel (voice, WhatsApp) and every UI
- * surface that displays qualification history derives from this one list —
- * there is no second copy anywhere and no language dispatch: the visitor's
- * chosen card/pitch language has no effect on this script.
+ * THE single authoritative qualification questionnaire (2026-08-19
+ * revision — product-owner decision: the SAME six questions, now
+ * language-aware). ONE engine, exactly six questions, immutable wording
+ * per language, strict server-side closed-answer classification. The
+ * qualification language follows the visitor's selected card language for
+ * the two authored languages (English and Tamil); every other card
+ * language uses English. This deliberately supersedes the 2026-08-13
+ * "English only" rule — but NOT the rest of that decision: there is still
+ * no Q7+, no 17-question flow, no HOT/WARM/COLD gate, and no second
+ * sequencing engine. Persisted answers remain canonical English
+ * Yes/No/Maybe regardless of the spoken language, so qualification-status,
+ * the dashboard funnel, and WhatsApp (which stays English) all read one
+ * record format.
  */
 export interface AuthoredQuestion {
   readonly number: number;
   readonly question: string;
+}
+
+export type QualificationLanguage = "en" | "ta";
+
+/** Maps any card language to a qualification language: only English and
+ * Tamil have authored question sets; everything else qualifies in English. */
+export function toQualificationLanguage(cardLanguage: string | null | undefined): QualificationLanguage {
+  return cardLanguage === "ta" ? "ta" : "en";
 }
 
 export const QUALIFICATION_QUESTIONS: readonly AuthoredQuestion[] = [
@@ -21,14 +35,41 @@ export const QUALIFICATION_QUESTIONS: readonly AuthoredQuestion[] = [
   { number: 6, question: "Shall I show you our calendar now, so we can book a convenient time to move this forward?" },
 ] as const;
 
-export function getAuthoredQuestion(number: number): AuthoredQuestion | null {
-  return QUALIFICATION_QUESTIONS.find((q) => q.number === number) ?? null;
+/** The SAME six questions in natural spoken business Tamil — authored
+ * translations preserving the exact meaning of the English set (the
+ * historical 17-question Tamil script was open-ended and is deliberately
+ * NOT reused). Closed-ended, concise for voice, உங்கள்-register matching
+ * the approved MaylaanAI Tamil pitch content. Never machine-translated at
+ * runtime; this list is the one canonical Tamil source. */
+export const QUALIFICATION_QUESTIONS_TA: readonly AuthoredQuestion[] = [
+  { number: 1, question: "எங்கள் சேவை அல்லது தயாரிப்பு உங்களுக்கு உடனடியாகத் தேவைப்படுகிறதா?" },
+  { number: 2, question: "இதற்காக ஒரு குறிப்பிட்ட பட்ஜெட்டை ஏற்கனவே ஒதுக்கி வைத்துள்ளீர்களா?" },
+  { number: 3, question: "எங்கள் சேவை அல்லது தயாரிப்பு உங்கள் வணிகத்திற்குப் பயனுள்ளதாக இருக்கும் என்று நம்புகிறீர்களா?" },
+  { number: 4, question: "உங்களைத் தயங்க வைக்கும் ஏதேனும் இருக்கிறதா — உதாரணமாக, விலை அல்லது நேரம்?" },
+  { number: 5, question: "இன்றே முடிவெடுக்கத் தயாராக இருக்கிறீர்களா?" },
+  { number: 6, question: "இதை முன்னெடுக்க வசதியான நேரத்தைப் பதிவு செய்ய, இப்போது எங்கள் காலெண்டரைக் காட்டட்டுமா?" },
+] as const;
+
+export function getQualificationQuestions(language: QualificationLanguage = "en"): readonly AuthoredQuestion[] {
+  return language === "ta" ? QUALIFICATION_QUESTIONS_TA : QUALIFICATION_QUESTIONS;
+}
+
+export function getAuthoredQuestion(number: number, language: QualificationLanguage = "en"): AuthoredQuestion | null {
+  return getQualificationQuestions(language).find((q) => q.number === number) ?? null;
 }
 
 /** The mandatory closed-answer guidance, spoken after EVERY question: the
  * visitor must answer with exactly Yes, No or Maybe — the questionnaire is
  * closed-ended, never an open conversation. Authored wording; tests pin it. */
 export const QUALIFICATION_ANSWER_GUIDANCE = "Please answer with Yes, No, or Maybe.";
+
+/** The Tamil closed-answer guidance — the accepted spoken answers are
+ * ஆம் (Yes), இல்லை (No), இருந்தாலும் (Maybe), per the product decision. */
+export const QUALIFICATION_ANSWER_GUIDANCE_TA = "தயவுசெய்து ஆம், இல்லை அல்லது இருந்தாலும் என்று மட்டும் பதில் சொல்லுங்கள்.";
+
+export function getAnswerGuidance(language: QualificationLanguage = "en"): string {
+  return language === "ta" ? QUALIFICATION_ANSWER_GUIDANCE_TA : QUALIFICATION_ANSWER_GUIDANCE;
+}
 
 /** A question as actually spoken: the authored text followed by the
  * closed-answer guidance. */
@@ -38,17 +79,26 @@ export function withAnswerGuidance(question: string, guidance: string = QUALIFIC
 
 /**
  * The qualification call's ACTUAL opening: EXACTLY Question 1 followed by
- * the closed-answer guidance. No greeting, no preamble, no generic
- * assistant opener ("How can I help you?" or similar) — the first spoken
- * content after "Start AI Conversation" IS Q1, and the directive tells the
- * AI the opening already asked Q1 (never repeat it; the visitor's first
- * reply is Q1's answer).
+ * the closed-answer guidance, in the qualification language. No greeting,
+ * no preamble, no generic assistant opener ("How can I help you?" or
+ * similar) — the first spoken content after "Start AI Conversation" IS Q1,
+ * and the directive tells the AI the opening already asked Q1 (never
+ * repeat it; the visitor's first reply is Q1's answer).
  */
 export const QUALIFICATION_CALL_OPENING = withAnswerGuidance(QUALIFICATION_QUESTIONS[0].question);
+
+export function getQualificationCallOpening(language: QualificationLanguage = "en"): string {
+  const questions = getQualificationQuestions(language);
+  return withAnswerGuidance(questions[0].question, getAnswerGuidance(language));
+}
 
 /** Every authored question, in asking order — the UI's authoritative
  * source for "which question is on screen right now". */
 export const ALL_QUESTIONS: readonly string[] = QUALIFICATION_QUESTIONS.map((q) => q.question);
+
+export function getAllQuestions(language: QualificationLanguage = "en"): readonly string[] {
+  return getQualificationQuestions(language).map((q) => q.question);
+}
 
 /**
  * Strict closed-ended classification of the visitor's RAW response. Accepts
@@ -71,7 +121,23 @@ const CLOSED_ANSWER_TOKENS: Record<string, "YES" | "NO" | "MAYBE"> = {
   maybe: "MAYBE",
 };
 
-export function classifyClosedResponse(raw: string): "YES" | "NO" | "MAYBE" | null {
+/** Tamil closed-answer tokens: the three product-mandated answers plus the
+ * standard colloquial/ASR variants of them (ஆமாம்/ஆமா for ஆம்; இல்ல for
+ * இல்லை) — and nothing else. "சரி", "okay", "yes", "எனக்கு தெரியவில்லை"
+ * and any free-form Tamil are deliberately NOT accepted in Tamil mode:
+ * the guidance line tells the visitor exactly which words classify, the
+ * same closed-ended contract as English. */
+const CLOSED_ANSWER_TOKENS_TA: Record<string, "YES" | "NO" | "MAYBE"> = {
+  "ஆம்": "YES",
+  "ஆமாம்": "YES",
+  "ஆமா": "YES",
+  "இல்லை": "NO",
+  "இல்ல": "NO",
+  "இருந்தாலும்": "MAYBE",
+};
+
+export function classifyClosedResponse(raw: string, language: QualificationLanguage = "en"): "YES" | "NO" | "MAYBE" | null {
+  const tokenMap = language === "ta" ? CLOSED_ANSWER_TOKENS_TA : CLOSED_ANSWER_TOKENS;
   const tokens = raw
     .toLowerCase()
     .replace(/[?？.!,;:"'“”‘’()\-]/g, " ")
@@ -80,7 +146,7 @@ export function classifyClosedResponse(raw: string): "YES" | "NO" | "MAYBE" | nu
   if (tokens.length === 0) return null;
   let result: "YES" | "NO" | "MAYBE" | null = null;
   for (const token of tokens) {
-    const cls = CLOSED_ANSWER_TOKENS[token];
+    const cls = tokenMap[token];
     // Any non-permitted token — or a mix of classes — invalidates the
     // whole utterance: closed-ended means the answer IS the word.
     if (!cls || (result !== null && cls !== result)) return null;
@@ -100,12 +166,12 @@ const normalize = (s: string) => s.replace(/[?？.!,]/g, "").replace(/\s+/g, " "
  * every question; null when the utterance isn't one of the authored
  * questions.
  */
-export function matchAuthoredQuestion(transcript: string): string | null {
+export function matchAuthoredQuestion(transcript: string, language: QualificationLanguage = "en"): string | null {
   const norm = (s: string) => normalize(s.toLowerCase());
-  const guidance = norm(QUALIFICATION_ANSWER_GUIDANCE);
+  const guidance = norm(getAnswerGuidance(language));
   const t = norm(transcript).split(guidance).join(" ").replace(/\s+/g, " ").trim();
   if (!t) return null;
-  for (const q of ALL_QUESTIONS) {
+  for (const q of getAllQuestions(language)) {
     const nq = norm(q);
     if (t.includes(nq) || nq.includes(t)) return q;
   }
@@ -117,6 +183,14 @@ export function matchAuthoredQuestion(transcript: string): string | null {
  * Continue button — exact approved wording, product-owner authorized. Never
  * paraphrase ("Click continue", "Continue to schedule", etc.). */
 export const QUALIFICATION_CONTINUE_PROMPT = "Please Click to Continue";
+
+/** The Tamil completion prompt — same meaning, spoken in the session's
+ * language ("Continue" stays as the literal on-screen button label). */
+export const QUALIFICATION_CONTINUE_PROMPT_TA = "தொடர்வதற்கு, திரையில் உள்ள Continue பொத்தானை அழுத்துங்கள்.";
+
+export function getContinuePrompt(language: QualificationLanguage = "en"): string {
+  return language === "ta" ? QUALIFICATION_CONTINUE_PROMPT_TA : QUALIFICATION_CONTINUE_PROMPT;
+}
 
 /** Spoken verbatim as the assistant's final words, but ONLY when
  * book_appointment reports a genuinely confirmed booking (a real Cal.com
@@ -142,22 +216,34 @@ export function buildAppointmentConfirmedSpeech(when: string): string {
  * qualification flow is proactive and directive, never "How can I help
  * you?".
  */
-export function getQualificationDirective(): string {
-  const numbered = QUALIFICATION_QUESTIONS.map((q) => `${q.number}. ${q.question}`).join("\n");
+export function getQualificationDirective(language: QualificationLanguage = "en"): string {
+  const questions = getQualificationQuestions(language);
+  const guidance = getAnswerGuidance(language);
+  const continuePrompt = getContinuePrompt(language);
+  const numbered = questions.map((q) => `${q.number}. ${q.question}`).join("\n");
+  const languageRule =
+    language === "ta"
+      ? `This section OVERRIDES any "RESPONSE LANGUAGE" instruction elsewhere in this prompt for as long as ` +
+        `qualification is active: every word you speak from here on — the authored questions, the answer ` +
+        `guidance, reprompts, and the completion line — is TAMIL ONLY, exactly as authored below. Never ` +
+        `translate the authored Tamil questions into English or any other language, never paraphrase them, and ` +
+        `never switch to English unless the visitor explicitly asks you to. `
+      : `This section OVERRIDES any "RESPONSE LANGUAGE" instruction elsewhere in this prompt for as long as ` +
+        `qualification is active: every word you speak from here on — the authored questions, the Yes/No/Maybe ` +
+        `guidance, reprompts, and the completion line — is English ONLY, even if the visitor's chosen card language ` +
+        `is Hindi, Telugu, Malayalam or Kannada and even if the visitor speaks to you in that language. `;
+  const acceptedAnswers = language === "ta" ? "ஆம், இல்லை, அல்லது இருந்தாலும்" : "Yes, No, or Maybe";
   return (
     `
 
 === QUALIFICATION SCRIPT (booking flow) ===
 ` +
-    `This section OVERRIDES any "RESPONSE LANGUAGE" instruction elsewhere in this prompt for as long as ` +
-    `qualification is active: every word you speak from here on — the authored questions, the Yes/No/Maybe ` +
-    `guidance, reprompts, and the completion line — is English ONLY, even if the visitor's chosen card language ` +
-    `is Tamil, Hindi, Telugu, Malayalam or Kannada and even if the visitor speaks to you in that language. ` +
+    languageRule +
     `This is a STRICT CLOSED-ENDED questionnaire, not a conversation. Ask ONLY the authored questions below, one ` +
     `at a time, EXACTLY as written — never translate, paraphrase, shorten, reword or renumber them, and never ` +
     `invent a question. ` +
-    `After EVERY question you must say exactly: "${QUALIFICATION_ANSWER_GUIDANCE}" — the visitor may only answer ` +
-    `Yes, No, or Maybe. Never ask for explanations or open-ended answers. ` +
+    `After EVERY question you must say exactly: "${guidance}" — the visitor may only answer ` +
+    `${acceptedAnswers}. Never ask for explanations or open-ended answers, and never answer the questions yourself. ` +
     `The call's opening ALREADY asked question 1 plus that guidance — do NOT repeat it and do NOT add any ` +
     `greeting or preamble; the visitor's first reply is the answer to question 1. Never replay the founder pitch ` +
     `or any elevator/product/USP content during qualification. ` +
@@ -180,11 +266,10 @@ export function getQualificationDirective(): string {
 ` +
     `3. When the server returns the next question, SPEAK its "speak" text EXACTLY as returned (it already ends ` +
     `with the guidance line). Obey its action field: "complete_proceed_to_booking" means qualification is fully ` +
-    `complete — say EXACTLY: "${QUALIFICATION_CONTINUE_PROMPT}" (never paraphrase this — not "click continue", not ` +
-    `"continue to schedule", exactly this phrase) so they know to use the on-screen Continue button, which is ` +
-    `already visible. Never claim the appointment is booked yet — the visitor still has to pick a time and enter ` +
-    `their details on screen. Only if they explicitly ask to book entirely by voice instead should you collect ` +
-    `Name/Email/Phone and use book_appointment.
+    `complete — say EXACTLY: "${continuePrompt}" (never paraphrase this, exactly this phrase) so they know to use ` +
+    `the on-screen Continue button, which is already visible. Never claim the appointment is booked yet — the ` +
+    `visitor still has to pick a time and enter their details on screen. Only if they explicitly ask to book ` +
+    `entirely by voice instead should you collect Name/Email/Phone and use book_appointment.
 ` +
     `4. After an ACCEPTED answer you may also mirror it into the lead via update_lead_qualification (immediate ` +
     `need -> urgency and buying_intent; budget set aside -> budget; perceived usefulness -> notes; obstacles -> ` +

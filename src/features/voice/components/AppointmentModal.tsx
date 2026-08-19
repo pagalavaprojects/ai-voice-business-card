@@ -6,7 +6,14 @@ import { Dialog } from "@/shared/ui/dialog";
 import { Button } from "@/shared/ui/button";
 import { Skeleton } from "@/shared/ui/skeleton";
 import type { LanguageCode } from "@/features/language/config";
-import { ALL_QUESTIONS, QUALIFICATION_QUESTIONS, buildAppointmentConfirmedSpeech, getAuthoredQuestion, matchAuthoredQuestion } from "@/features/voice/lib/qualificationScript";
+import {
+  buildAppointmentConfirmedSpeech,
+  getAllQuestions,
+  getAuthoredQuestion,
+  getQualificationQuestions,
+  matchAuthoredQuestion,
+  toQualificationLanguage,
+} from "@/features/voice/lib/qualificationScript";
 import { speakPitchWithBrowserTts } from "@/features/voice/lib/pitchFallback";
 
 interface AppointmentModalProps {
@@ -396,37 +403,43 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                     is their REAL transcript only; nothing is ever invented. */}
                 {(() => {
                   const msgs = voice.messages ?? [];
+                  // The qualification language follows the selected card
+                  // language (en/ta authored sets; anything else English) —
+                  // the SAME mapping the call's firstMessage/systemPrompt
+                  // and the server's sequencing tool use, so the rendered
+                  // question always matches what is actually being spoken.
+                  const qualLang = toQualificationLanguage(language);
+                  const questions = getQualificationQuestions(qualLang);
+                  const allQuestionTexts = getAllQuestions(qualLang);
                   // CURRENT question: the last assistant utterance that
                   // matches an authored question — displayed in the exact
                   // AUTHORED wording, never an ASR paraphrase. Seeded with
                   // Q1 (it IS the call's opening line). Falls forward to the
                   // next expected question when the server's answer records
-                  // are ahead of the transcript events. The qualification
-                  // script is always English regardless of the card's
-                  // chosen language.
-                  let currentQuestion: string | null = QUALIFICATION_QUESTIONS[0].question;
+                  // are ahead of the transcript events.
+                  let currentQuestion: string | null = questions[0].question;
                   for (let i = msgs.length - 1; i >= 0; i--) {
                     if (msgs[i].role !== "assistant") continue;
-                    const matched = matchAuthoredQuestion(msgs[i].content);
+                    const matched = matchAuthoredQuestion(msgs[i].content, qualLang);
                     if (matched) {
                       currentQuestion = matched;
                       break;
                     }
                   }
                   const maxAnswered = qualAnswers.reduce((m, a) => Math.max(m, a.n), 0);
-                  const currentNum = currentQuestion ? ALL_QUESTIONS.indexOf(currentQuestion) + 1 : 0;
+                  const currentNum = currentQuestion ? allQuestionTexts.indexOf(currentQuestion) + 1 : 0;
                   if (maxAnswered > 0 && currentNum > 0 && currentNum <= maxAnswered) {
-                    const next = QUALIFICATION_QUESTIONS.find((q) => q.number > maxAnswered);
+                    const next = questions.find((q) => q.number > maxAnswered);
                     if (next) currentQuestion = next.question;
                   }
-                  const qNum = currentQuestion ? QUALIFICATION_QUESTIONS.find((q) => q.question === currentQuestion)?.number ?? 0 : 0;
+                  const qNum = currentQuestion ? questions.find((q) => q.question === currentQuestion)?.number ?? 0 : 0;
                   const latestAssistant = [...msgs].reverse().find((m) => m.role === "assistant");
                   const aiLine = currentQuestion ?? latestAssistant?.content ?? null;
                   return (
                     <div className="space-y-2.5" data-testid="qualification-conversation">
                       {qNum > 0 && (
                         <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold" data-testid="qual-progress">
-                          {t("appointment.qualifyProgress", { n: String(qNum), total: String(QUALIFICATION_QUESTIONS.length) })}
+                          {t("appointment.qualifyProgress", { n: String(qNum), total: String(questions.length) })}
                         </p>
                       )}
                       {/* Answered questions: the authored question + the
@@ -440,13 +453,13 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                           </p>
                           <div className="space-y-2 max-h-36 overflow-y-auto pr-1" data-testid="qual-history">
                             {qualAnswers.map((ans) => {
-                              const authored = getAuthoredQuestion(ans.n);
+                              const authored = getAuthoredQuestion(ans.n, toQualificationLanguage(language));
                               const accentBorder =
                                 ans.c === "YES" ? "border-emerald-400/40" : ans.c === "NO" ? "border-rose-400/40" : "border-amber-400/40";
                               return (
                                 <div key={ans.n} className={`border-l-2 ${accentBorder} pl-2.5`}>
                                   {authored && (
-                                    <p className="text-[11px] text-slate-400 leading-snug" lang="en">
+                                    <p className="text-[11px] text-slate-400 leading-snug" lang={toQualificationLanguage(language)}>
                                       {authored.question}
                                     </p>
                                   )}
@@ -475,7 +488,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                       {aiLine && (
                         <div>
                           <p className="text-[10px] uppercase tracking-wider text-sky-400 font-semibold mb-1">{t("transcript.aiTwin")}</p>
-                          <p className="text-sm text-slate-100 leading-relaxed" data-testid="current-question" lang="en">
+                          <p className="text-sm text-slate-100 leading-relaxed" data-testid="current-question" lang={toQualificationLanguage(language)}>
                             {aiLine}
                           </p>
                         </div>
