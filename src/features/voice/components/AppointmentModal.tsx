@@ -280,20 +280,54 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
     // no later-issued request has already been applied.
     let requestSeq = 0;
     let latestAppliedSeq = 0;
-    const timer = setInterval(() => {
+    // Single-flight + failure backoff + hard cancellation (2026-08-19 perf
+    // round): a tick is skipped while the previous request is still in
+    // flight (a slow network must never stack concurrent status requests —
+    // the sequence guard made stacking safe, this makes it not happen);
+    // consecutive failures skip 1/3/7… ticks (capped ~24s) so an outage
+    // isn't hammered at full cadence; and cleanup aborts the in-flight
+    // request outright instead of merely discarding its result.
+    let inFlight = false;
+    let consecutiveFailures = 0;
+    let skipTicks = 0;
+    const controller = new AbortController();
+    const tick = () => {
+      if (inFlight) return;
+      if (skipTicks > 0) {
+        skipTicks--;
+        return;
+      }
       const thisSeq = ++requestSeq;
-      fetch(`/api/public/${companyId}/${employeeId}/qualification-status?callId=${encodeURIComponent(callIdForThisEffect)}`)
-        .then((res) => (res.ok ? res.json() : null))
-        .then((data: { qualified?: boolean; answers?: Array<{ n: number; c: string; a: string }> } | null) => {
+      inFlight = true;
+      fetch(`/api/public/${companyId}/${employeeId}/qualification-status?callId=${encodeURIComponent(callIdForThisEffect)}`, {
+        signal: controller.signal,
+      })
+        .then((res) => (res.ok ? (res.json() as Promise<{ qualified?: boolean; answers?: Array<{ n: number; c: string; a: string }> }>) : Promise.reject(new Error(`status ${res.status}`))))
+        .then((data) => {
+          consecutiveFailures = 0;
           if (activeCallIdRef.current !== callIdForThisEffect) return;
           if (thisSeq < latestAppliedSeq) return;
           latestAppliedSeq = thisSeq;
           if (data?.qualified) setQualComplete(true);
-          if (Array.isArray(data?.answers)) setQualAnswers(data!.answers!);
+          if (Array.isArray(data?.answers)) setQualAnswers(data.answers);
         })
-        .catch(() => undefined);
-    }, 3000);
-    return () => clearInterval(timer);
+        .catch((err: Error) => {
+          if (err?.name === "AbortError") return;
+          consecutiveFailures++;
+          skipTicks = Math.min(2 ** consecutiveFailures - 1, 8);
+        })
+        .finally(() => {
+          inFlight = false;
+        });
+    };
+    // Immediate first fetch — a reopened modal (or one opened mid-call)
+    // shows real progress now, not after the first 3s interval elapses.
+    tick();
+    const timer = setInterval(tick, 3000);
+    return () => {
+      clearInterval(timer);
+      controller.abort();
+    };
   }, [open, step, qualStage, qualComplete, voice?.callId, companyId, employeeId]);
 
   const advanceToSlots = () => {

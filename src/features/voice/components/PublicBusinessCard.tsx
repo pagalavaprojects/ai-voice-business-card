@@ -204,13 +204,21 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
     []
   );
 
-  // Refetches whenever the visitor's language changes (including the one
-  // extra fetch on first load once useLanguage resolves the real starting
-  // language past its synchronous Tamil default — a small, one-time,
-  // accepted cost for not having to coordinate two hooks' init timing) —
-  // ?lang= drives the server-resolved greeting, system-prompt language
-  // directive, and suggested questions all switching together.
+  // Refetches whenever the visitor's language changes — ?lang= drives the
+  // server-resolved greeting, system-prompt language directive, and
+  // suggested questions all switching together.
+  //
+  // Waits for useLanguage to resolve the stored preference first
+  // (hasStoredPreference goes non-null in its mount effect, one commit
+  // later): fetching during that first commit used the synchronous platform
+  // default, so every returning visitor whose saved language differed paid
+  // an aborted request plus a full refetch before any content could render
+  // — measured in production on 2026-08-19 as ?lang=ta ERR_ABORTED followed
+  // by ?lang=en at +17ms, delaying card data by ~450ms. The UI already
+  // treats hasStoredPreference === null as loading, so nothing renders
+  // earlier than before — one fetch now simply carries the right language.
   useEffect(() => {
+    if (hasStoredPreference === null) return;
     let cancelled = false;
     // Captured once per effect run, not re-read later: this fetch's own
     // response must only ever be judged against the language IT was
@@ -251,7 +259,34 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
       cancelled = true;
       controller.abort();
     };
-  }, [companyId, employeeId, language, setLanguage]);
+  }, [companyId, employeeId, language, setLanguage, hasStoredPreference]);
+
+  // Warms the three fixed pitches for the confirmed language in the
+  // background, off the critical path (idle callback, low priority, one
+  // attempt, failures ignored). The pitch route persists renders durably,
+  // so the FIRST play of freshly-changed content — measured at 21–80s of
+  // synchronous Gemini generation when triggered by the visitor's click —
+  // happens here instead, invisibly; every later click (any visitor, any
+  // device) streams the stored asset via the CDN. Gated on
+  // languageConfirmed so a first-time visitor still at the language gate
+  // can't trigger generation for a language they're about to switch away
+  // from. One prefetch per language per mount (ref), and never while the
+  // demo fallback card is showing (card === null).
+  const prefetchedPitchLangsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!card || !languageConfirmed || prefetchedPitchLangsRef.current.has(language)) return;
+    prefetchedPitchLangsRef.current.add(language);
+    const warm = () => {
+      for (const type of ["elevator", "product", "usp"] as const) {
+        fetch(`/api/public/${companyId}/${employeeId}/pitch?type=${type}&lang=${encodeURIComponent(language)}`, {
+          priority: "low",
+        } as RequestInit).catch(() => undefined);
+      }
+    };
+    const idle = (window as { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number }).requestIdleCallback;
+    if (idle) idle(warm, { timeout: 4000 });
+    else setTimeout(warm, 2500);
+  }, [card, languageConfirmed, language, companyId, employeeId]);
 
   const { voiceState, isMuted, messages, durationSeconds, error, isPlayingIntro, isDemoMode, callId, startCall, endCall, toggleMute } = useVapiSession({
     companyId,

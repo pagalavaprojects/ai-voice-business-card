@@ -7,7 +7,7 @@ import { isEmployeeCardVisible } from "@/shared/lib/employeeVisibility";
 import { checkRateLimitDistributed } from "@/shared/lib/rateLimit";
 import { resolveRequestLanguage } from "@/features/language/server";
 import { composePitchScript, isPitchType, PitchSourceData } from "@/features/voice/lib/pitchScripts";
-import { isConfiguredKey, pcmToWav, renderGeminiPcm } from "@/shared/lib/tts/ttsBackends";
+import { GEMINI_TTS_MODEL, GEMINI_TTS_VOICE, isConfiguredKey, pcmToWav, renderGeminiPcm } from "@/shared/lib/tts/ttsBackends";
 
 export const dynamic = "force-dynamic";
 // First-ever render of a long pitch can take Gemini/OpenAI tens of seconds;
@@ -113,22 +113,35 @@ export async function GET(req: NextRequest, { params }: { params: { companyId: s
     }
 
     const scriptHash = createHash("sha1").update(script).digest("hex").slice(0, 8);
-    const mp3Path = `pitch/${companyId}/${employeeId}/${type}.${language}.${scriptHash}.mp3`;
-    // Provider is part of the cache identity: a Gemini WAV and an OpenAI
-    // MP3 of the same script are different recordings and must never be
-    // served for each other.
-    const geminiPath = `pitch/${companyId}/${employeeId}/${type}.${language}.${scriptHash}.gemini.wav`;
+    // The FULL cache identity: company/employee/type/language/script hash
+    // AND provider/model/voice — a Gemini WAV and an OpenAI MP3 of the same
+    // script are different recordings, and so are two renders after a model
+    // or voice upgrade; none may ever be served for another. (Renamed from
+    // the pre-2026-08-19 keys that carried only the provider implicitly —
+    // old objects simply age out unused; EN had nothing stored, TA is
+    // re-warmed post-deploy.)
+    const mp3Path = `pitch/${companyId}/${employeeId}/${type}.${language}.${scriptHash}.openai.tts-1-hd.nova.mp3`;
+    const geminiPath = `pitch/${companyId}/${employeeId}/${type}.${language}.${scriptHash}.gemini.${GEMINI_TTS_MODEL}.${GEMINI_TTS_VOICE}.wav`;
     const useGemini = language === "ta" && isConfiguredKey(process.env.GEMINI_API_KEY);
+
+    // Content identity for conditional requests: the URL never changes when
+    // content does (the hash lives in the storage key), so the ETag is what
+    // lets a returning browser revalidate its cached multi-megabyte WAV
+    // with an empty 304 instead of re-downloading it after max-age expires.
+    const etag = `"${type}-${language}-${scriptHash}-${useGemini ? "gemini" : "openai"}"`;
+    if (req.headers.get("if-none-match") === etag) {
+      return notModifiedResponse(etag);
+    }
 
     // Layer 2: the durable copy. download() rather than a redirect to the
     // bucket's public URL keeps the response same-origin under this
     // route's own cache headers, and never leaks bucket topology.
     if (useGemini) {
       const storedWav = await downloadStoredPitch(geminiPath);
-      if (storedWav) return audioResponse(storedWav, "audio/wav");
+      if (storedWav) return audioResponse(storedWav, "audio/wav", etag);
     }
     const stored = await downloadStoredPitch(mp3Path);
-    if (stored) return audioResponse(stored, "audio/mpeg");
+    if (stored) return audioResponse(stored, "audio/mpeg", etag);
 
     // Layer 3a: Tamil renders through Gemini TTS (POC-proven natural
     // Tamil). Persist-then-serve, same as the OpenAI path below; ANY
@@ -146,7 +159,7 @@ export async function GET(req: NextRequest, { params }: { params: { companyId: s
             error: err instanceof Error ? err.message : String(err),
           });
         }
-        return audioResponse(wav, "audio/wav");
+        return audioResponse(wav, "audio/wav", etag);
       }
     }
 
@@ -183,7 +196,7 @@ export async function GET(req: NextRequest, { params }: { params: { companyId: s
       });
     }
 
-    return audioResponse(audio, "audio/mpeg");
+    return audioResponse(audio, "audio/mpeg", etag);
   } catch (err) {
     Logger.warn("Pitch generation failed", { companyId, employeeId, type, error: err instanceof Error ? err.message : String(err) });
     return NextResponse.json({ message: "Voice pitch service unavailable" }, { status: 503 });
@@ -201,7 +214,9 @@ async function downloadStoredPitch(assetPath: string): Promise<Buffer | null> {
   }
 }
 
-function audioResponse(audio: Buffer, contentType: "audio/mpeg" | "audio/wav"): NextResponse {
+const AUDIO_CACHE_CONTROL = "public, max-age=3600, s-maxage=86400, stale-while-revalidate=86400";
+
+function audioResponse(audio: Buffer, contentType: "audio/mpeg" | "audio/wav", etag: string): NextResponse {
   return new NextResponse(new Uint8Array(audio), {
     status: 200,
     headers: {
@@ -210,9 +225,18 @@ function audioResponse(audio: Buffer, contentType: "audio/mpeg" | "audio/wav"): 
       // The URL never changes for the same content (the hash lives in the
       // storage key, not the URL), so the edge copy is capped at a day —
       // long enough that repeat plays are CDN hits, short enough that a
-      // company edit propagates within a day even at the edge.
-      "Cache-Control": "public, max-age=3600, s-maxage=86400, stale-while-revalidate=86400",
+      // company edit propagates within a day even at the edge. The ETag
+      // lets browser caches revalidate for free past max-age.
+      "Cache-Control": AUDIO_CACHE_CONTROL,
+      ETag: etag,
       "Accept-Ranges": "bytes",
     },
+  });
+}
+
+function notModifiedResponse(etag: string): NextResponse {
+  return new NextResponse(null, {
+    status: 304,
+    headers: { "Cache-Control": AUDIO_CACHE_CONTROL, ETag: etag },
   });
 }

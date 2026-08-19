@@ -84,3 +84,34 @@ describe("MetaCloudWhatsAppNotifier", () => {
     expect(await notifier.send("+91 94431 25639", "hi")).toEqual({ sent: false, reason: "network_error" });
   });
 });
+
+describe("send timeout bound (2026-08-19 perf round)", () => {
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it("aborts a stalled provider after 10s and reports {sent:false, reason:'timeout'} — a hung Meta endpoint can never hold a booking open", async () => {
+    jest.useFakeTimers();
+    // A fetch that never settles on its own — only the abort signal ends it,
+    // exactly like a provider that accepted the TCP connection and stalled.
+    const hanging = jest.fn(
+      (_url: RequestInfo | URL, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(Object.assign(new Error("This operation was aborted"), { name: "AbortError" })));
+        })
+    ) as unknown as jest.MockedFunction<typeof fetch>;
+    const notifier = new MetaCloudWhatsAppNotifier("EAAG-token", "1234567890", undefined, hanging);
+
+    const pending = notifier.send("+91 94431 25639", "hi");
+    await jest.advanceTimersByTimeAsync(10_000);
+
+    expect(await pending).toEqual({ sent: false, reason: "timeout" });
+    expect((hanging.mock.calls[0][1] as RequestInit).signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("a fast success is unaffected by the timeout plumbing", async () => {
+    const f = jest.fn().mockResolvedValue({ ok: true, text: async () => "", json: async () => ({}) }) as unknown as jest.MockedFunction<typeof fetch>;
+    const notifier = new MetaCloudWhatsAppNotifier("EAAG-token", "1234567890", undefined, f);
+    expect(await notifier.send("+91 94431 25639", "hi")).toEqual({ sent: true });
+  });
+});

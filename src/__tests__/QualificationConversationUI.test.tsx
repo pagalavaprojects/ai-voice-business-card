@@ -127,16 +127,18 @@ describe("qualification conversation UI", () => {
     expect(screen.queryByTestId("qual-history")).toBeNull();
   });
 
-  // Regression: the qualification-status poll fires every 3s with no
-  // sequencing between ticks. Real network timing does not guarantee
-  // responses resolve in the order they were requested — a slower EARLIER
-  // request resolving after a faster LATER one previously overwrote
-  // qualAnswers with stale (older) data, visibly regressing the displayed
-  // question/progress even though the server's actual state only ever
-  // moved forward. This is the class of bug behind "the flow doesn't
-  // reliably progress" reports where the underlying voice conversation and
-  // persistence were both actually fine.
-  it("a slower earlier poll response arriving after a faster later one does not regress the displayed progress", async () => {
+  // Regression, updated for the 2026-08-19 single-flight poll: out-of-order
+  // responses WITHIN one call used to be possible (each 3s tick fired
+  // unconditionally, so a slower EARLIER request could resolve after a
+  // faster LATER one and regress the displayed progress — the original bug
+  // behind "the flow doesn't reliably progress" reports). The poll is now
+  // single-flight, which makes that interleaving structurally impossible:
+  // while a request is pending, later ticks are SKIPPED rather than
+  // stacked. This test pins both halves — no second request while one is in
+  // flight, and a slow response still applying its (fresh) data once it
+  // finally lands, with polling resuming afterwards. The sequence guard
+  // itself remains in the code as defense-in-depth behind this.
+  it("ticks never stack requests; a slow response still applies when it lands and polling resumes after it", async () => {
     jest.useFakeTimers();
     const resolvers: Array<(payload: unknown) => void> = [];
     global.fetch = jest.fn((url: RequestInfo | URL) => {
@@ -154,32 +156,32 @@ describe("qualification conversation UI", () => {
     );
     startQualification();
 
-    // Tick 1 issues request #1, left unresolved (simulating a slow response).
+    // The immediate first fetch issues request #1, left unresolved
+    // (simulating a slow response).
     await act(async () => {
-      jest.advanceTimersByTime(3100);
+      jest.advanceTimersByTime(100);
     });
     expect(resolvers).toHaveLength(1);
 
-    // Tick 2 issues request #2 before request #1 has resolved.
+    // Multiple 3s ticks elapse while request #1 is still pending — every
+    // one of them must be skipped, never stacked into concurrent requests.
     await act(async () => {
-      jest.advanceTimersByTime(3000);
+      jest.advanceTimersByTime(9000);
+    });
+    expect(resolvers).toHaveLength(1);
+
+    // The slow response finally lands, carrying real progress — it applies.
+    await act(async () => {
+      resolvers[0]({ qualified: false, answers: [{ n: 1, c: "YES", a: "Yes" }, { n: 2, c: "NO", a: "No" }] });
+      await Promise.resolve();
+    });
+    expect(screen.getByTestId("qual-progress").textContent).toBe("appointment.qualifyProgress:3/6");
+
+    // With the flight slot free again, the next tick polls again.
+    await act(async () => {
+      jest.advanceTimersByTime(3100);
     });
     expect(resolvers).toHaveLength(2);
-
-    // Request #2 (newer) resolves FIRST, with real progress recorded.
-    await act(async () => {
-      resolvers[1]({ qualified: false, answers: [{ n: 1, c: "YES", a: "Yes" }, { n: 2, c: "NO", a: "No" }] });
-      await Promise.resolve();
-    });
-    expect(screen.getByTestId("qual-progress").textContent).toBe("appointment.qualifyProgress:3/6");
-
-    // Request #1 (older, stale) resolves SECOND, with empty answers — must
-    // be discarded rather than regressing the display back to Q1.
-    await act(async () => {
-      resolvers[0]({ qualified: false, answers: [] });
-      await Promise.resolve();
-    });
-    expect(screen.getByTestId("qual-progress").textContent).toBe("appointment.qualifyProgress:3/6");
   });
 
   // Regression: clearInterval on cleanup stops FUTURE ticks, but can never

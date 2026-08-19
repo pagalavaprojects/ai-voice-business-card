@@ -1,4 +1,5 @@
 import { isPlaceholderCredential } from "@/shared/lib/security";
+import { fetchWithTimeout } from "@/shared/lib/fetchTimeout";
 
 export interface SendEmailOptions {
   to: string;
@@ -55,19 +56,26 @@ export class ResendEmailAdapter {
       return { id: `sim_msg_${Date.now()}`, success: true };
     }
 
-    const response = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${this.apiKey}`,
+    // 10s bound: sends are awaited (allSettled) inside the booking flow —
+    // a stalled provider fails THIS send instead of holding the visitor's
+    // booking confirmation open (2026-08-19 perf round).
+    const response = await fetchWithTimeout(
+      "https://api.resend.com/emails",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${this.apiKey}`,
+        },
+        body: JSON.stringify({
+          from: `${sanitizeFromName(options.fromName)} <${FROM_ADDRESS}>`,
+          to: [options.to],
+          subject: options.subject,
+          html: options.html,
+        }),
       },
-      body: JSON.stringify({
-        from: `${sanitizeFromName(options.fromName)} <${FROM_ADDRESS}>`,
-        to: [options.to],
-        subject: options.subject,
-        html: options.html,
-      }),
-    });
+      10_000
+    );
 
     if (!response.ok) {
       const errorText = await response.text();

@@ -268,10 +268,12 @@ describe("GET /api/public/{companyId}/{employeeId}/pitch", () => {
       // Exactly one provider call, to Gemini, never OpenAI.
       expect(fetchSpy).toHaveBeenCalledTimes(1);
       expect(String(fetchSpy.mock.calls[0][0])).toContain("gemini-3.1-flash-tts-preview");
-      // Cache identity includes the provider: .gemini.wav, uploaded as audio/wav.
+      // Cache identity includes provider AND model AND voice (2026-08-19
+      // spec): a model or voice upgrade re-renders instead of serving the
+      // old recording under the same key.
       const [bucket, uploadPath, body, contentType] = upload.mock.calls[0];
       expect(bucket).toBe("voice-assets");
-      expect(uploadPath).toMatch(/\.ta\.[0-9a-f]{8}\.gemini\.wav$/);
+      expect(uploadPath).toMatch(/\.ta\.[0-9a-f]{8}\.gemini\.gemini-3\.1-flash-tts-preview\.Kore\.wav$/);
       expect(contentType).toBe("audio/wav");
       // WAV container: RIFF header + the PCM payload.
       expect((body as Buffer).slice(0, 4).toString()).toBe("RIFF");
@@ -311,7 +313,7 @@ describe("GET /api/public/{companyId}/{employeeId}/pitch", () => {
 
     it("a stored Gemini WAV is a cache hit — no provider is called and audio/wav is served", async () => {
       download.mockImplementation(async (path: string) =>
-        String(path).endsWith(".gemini.wav")
+        /\.gemini\.[^/]+\.wav$/.test(String(path))
           ? { data: { arrayBuffer: async () => new TextEncoder().encode("stored-wav").buffer }, error: null }
           : { data: null, error: { message: "not found" } }
       );
@@ -322,6 +324,33 @@ describe("GET /api/public/{companyId}/{employeeId}/pitch", () => {
 
       expect(res.status).toBe(200);
       expect(res.headers.get("Content-Type")).toBe("audio/wav");
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it("serves an ETag on 200 and answers a matching If-None-Match with an empty 304 — no storage read, no provider call", async () => {
+      const fetchSpy = jest.fn().mockImplementation(async (url: string) => {
+        if (String(url).includes("generativelanguage.googleapis.com")) return geminiSuccess;
+        throw new Error("unexpected fetch: " + url);
+      });
+      global.fetch = fetchSpy as unknown as typeof fetch;
+
+      const first = await GET(req("type=elevator&lang=ta"), { params: { companyId: COMPANY_ID, employeeId: EMPLOYEE_ID } });
+      const etag = first.headers.get("ETag");
+      expect(first.status).toBe(200);
+      expect(etag).toMatch(/^"elevator-ta-[0-9a-f]{8}-gemini"$/);
+
+      download.mockClear();
+      fetchSpy.mockClear();
+      const revalidation = new NextRequest(`http://localhost/api/public/${COMPANY_ID}/${EMPLOYEE_ID}/pitch?type=elevator&lang=ta`, {
+        headers: { "if-none-match": etag as string },
+      });
+      const second = await GET(revalidation, { params: { companyId: COMPANY_ID, employeeId: EMPLOYEE_ID } });
+      expect(second.status).toBe(304);
+      expect(second.headers.get("ETag")).toBe(etag);
+      expect(await second.text()).toBe("");
+      // The whole point: revalidating a multi-megabyte WAV costs neither a
+      // storage download nor a provider render.
+      expect(download).not.toHaveBeenCalled();
       expect(fetchSpy).not.toHaveBeenCalled();
     });
 

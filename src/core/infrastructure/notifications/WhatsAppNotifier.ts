@@ -78,11 +78,19 @@ export class MetaCloudWhatsAppNotifier implements IWhatsAppNotifier {
         }
       : { messaging_product: "whatsapp", to: digits, type: "text", text: { body } };
 
+    // Hard 10s bound (2026-08-19 perf round): these sends are awaited inside
+    // the booking flow (Promise.allSettled, non-fatal), so a Meta endpoint
+    // that accepts the connection and stalls must fail this ONE send after
+    // 10s — never hold the visitor's booking confirmation until the
+    // serverless platform kills the function.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10_000);
     try {
       const res = await this.fetchImpl(`https://graph.facebook.com/v20.0/${this.phoneNumberId}/messages`, {
         method: "POST",
         headers: { Authorization: `Bearer ${this.accessToken}`, "Content-Type": "application/json" },
         body: JSON.stringify(payload),
+        signal: controller.signal,
       });
       if (!res.ok) {
         const errBody = await res.text().catch(() => "");
@@ -100,8 +108,11 @@ export class MetaCloudWhatsAppNotifier implements IWhatsAppNotifier {
       }
       return { sent: true };
     } catch (err) {
-      Logger.warn("WhatsApp send errored", { error: err instanceof Error ? err.message : String(err) });
-      return { sent: false, reason: "network_error" };
+      const timedOut = err instanceof Error && err.name === "AbortError";
+      Logger.warn("WhatsApp send errored", { error: err instanceof Error ? err.message : String(err), timedOut });
+      return { sent: false, reason: timedOut ? "timeout" : "network_error" };
+    } finally {
+      clearTimeout(timer);
     }
   }
 }

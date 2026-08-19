@@ -1,4 +1,5 @@
 import { isPlaceholderCredential } from "@/shared/lib/security";
+import { fetchWithTimeout } from "@/shared/lib/fetchTimeout";
 
 export interface CalcomBookingRequest {
   eventTypeId: number;
@@ -68,9 +69,14 @@ export class CalcomAdapter {
       end: dateTo,
       timeZone,
     });
-    const response = await fetch(`https://api.cal.com/v2/slots?${params.toString()}`, {
-      headers: { Authorization: `Bearer ${this.apiKey}`, "cal-api-version": "2024-09-04" },
-    });
+    // 10s bound — the public booking widget awaits this on modal open; a
+    // stalled Cal.com must surface as the widget's existing "error" state,
+    // not an indefinite spinner (2026-08-19 perf round).
+    const response = await fetchWithTimeout(
+      `https://api.cal.com/v2/slots?${params.toString()}`,
+      { headers: { Authorization: `Bearer ${this.apiKey}`, "cal-api-version": "2024-09-04" } },
+      10_000
+    );
     if (!response.ok) throw new Error(`CalcomAdapter.getAvailableSlots failed: ${response.status} ${await response.text()}`);
 
     // Shape (verified against the live API): { data: { "YYYY-MM-DD":
@@ -97,7 +103,11 @@ export class CalcomAdapter {
       throw new CalcomUnavailableError();
     }
 
-    const response = await fetch("https://api.cal.com/v2/bookings", {
+    // 20s bound, deliberately looser than the read paths: this POST is the
+    // one non-retryable leg (a blind retry could double-book), so the bound
+    // exists only to convert "stalled provider" into the existing honest
+    // unconfirmed-booking fallback instead of a platform-killed function.
+    const response = await fetchWithTimeout("https://api.cal.com/v2/bookings", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -113,7 +123,7 @@ export class CalcomAdapter {
           timeZone: request.timeZone,
         },
       }),
-    });
+    }, 20_000);
 
     if (!response.ok) {
       const errorText = await response.text();
