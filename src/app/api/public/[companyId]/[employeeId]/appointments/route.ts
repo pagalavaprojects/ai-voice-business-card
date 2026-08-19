@@ -85,12 +85,19 @@ export async function GET(req: NextRequest, { params }: { params: { companyId: s
     return NextResponse.json({ configured: false, slots: [], reason: "rate_limited" }, { status: 429 });
   }
 
-  if (!(await cardIdentityExists(params.companyId, params.employeeId))) {
-    return NextResponse.json({ message: "Business card not found" }, { status: 404 });
-  }
-
   try {
-    const { eventTypeId } = await toolRegistry.resolveCompanyDefaults(params.companyId);
+    // Identity check and settings read ride one batch (2026-08-19 audit):
+    // resolveCompanyDefaults keys only off the URL's companyId, so awaiting
+    // it behind the identity check cost a serial DB round trip on every
+    // modal open. The 404 still wins — a discarded settings read on an
+    // unknown id is the whole price, and the rate limiter above bounds it.
+    const [identityOk, { eventTypeId }] = await Promise.all([
+      cardIdentityExists(params.companyId, params.employeeId),
+      toolRegistry.resolveCompanyDefaults(params.companyId),
+    ]);
+    if (!identityOk) {
+      return NextResponse.json({ message: "Business card not found" }, { status: 404 });
+    }
     if (!eventTypeId) {
       // A real Cal.com key is linked but no event type is configured
       // anywhere (company settings or CALCOM_EVENT_TYPE_ID) — there is

@@ -35,17 +35,20 @@ export async function buildProviderHealth(options: {
   const probe = options.probeTts;
   const probeBase = probe ? resolvePublicBaseUrl(probe.requestOrigin) : null;
   if (probe && probe.employeeId && probeBase && ttsStatus === "configured") {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 4000);
     try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 4000);
       const res = await fetch(`${probeBase}/api/public/${probe.companyId}/${probe.employeeId}/pitch?type=usp&lang=en`, {
         signal: controller.signal,
         cache: "no-store",
       });
-      clearTimeout(timer);
       ttsStatus = res.ok ? "available" : res.status === 503 ? "unavailable (provider/billing)" : `error (http ${res.status})`;
     } catch {
       ttsStatus = "configured (probe timeout)";
+    } finally {
+      // In a finally so a non-abort throw (DNS, TLS) can't leave the timer
+      // armed against a dead controller (2026-08-19 audit).
+      clearTimeout(timer);
     }
   }
 

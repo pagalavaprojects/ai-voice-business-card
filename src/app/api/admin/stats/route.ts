@@ -45,72 +45,12 @@ export async function GET(req: NextRequest) {
 
     const scoped = () => supabaseAdmin.from("leads").select("id", { count: "exact", head: true }).eq("company_id", companyId).is("deleted_at", null);
 
-    const [
-      conversations,
-      conversationsThisWeek,
-      conversationsPriorWeek,
-      leads,
-      qualifiedLeads,
-      appointmentsBooked,
-      appointmentsPending,
-      durations,
-      recentLeads,
-      recentConversations,
-      toolsCalledSample,
-    ] = await Promise.all([
-      supabaseAdmin.from("conversations").select("id", { count: "exact", head: true }).eq("company_id", companyId),
-      supabaseAdmin.from("conversations").select("id", { count: "exact", head: true }).eq("company_id", companyId).gte("created_at", weekAgo),
-      supabaseAdmin
-        .from("conversations")
-        .select("id", { count: "exact", head: true })
-        .eq("company_id", companyId)
-        .gte("created_at", twoWeeksAgo)
-        .lt("created_at", weekAgo),
-      scoped(),
-      supabaseAdmin
-        .from("leads")
-        .select("id", { count: "exact", head: true })
-        .eq("company_id", companyId)
-        .is("deleted_at", null)
-        .in("score_category", ["HIGH", "MEDIUM"]),
-      supabaseAdmin.from("appointments").select("id", { count: "exact", head: true }).eq("company_id", companyId).eq("status", "BOOKED"),
-      // Surfaced separately because a REQUESTED appointment has no calendar
-      // event behind it and is waiting on a human — it is a to-do, not a win.
-      supabaseAdmin.from("appointments").select("id", { count: "exact", head: true }).eq("company_id", companyId).eq("status", "REQUESTED"),
-      supabaseAdmin.from("conversations").select("duration_seconds").eq("company_id", companyId).not("duration_seconds", "is", null).limit(500),
-      supabaseAdmin
-        .from("leads")
-        .select("id, name, email, score, score_category, status, created_at")
-        .eq("company_id", companyId)
-        .is("deleted_at", null)
-        .order("created_at", { ascending: false })
-        .limit(5),
-      supabaseAdmin
-        .from("conversations")
-        .select("id, employee_id, status, started_at, ended_at, duration_seconds, summary, sentiment, channel, intent, audio_metadata")
-        .eq("company_id", companyId)
-        .order("started_at", { ascending: false })
-        .limit(8),
-      // Bounded sample, same cap as the duration average above — aggregating
-      // in JS over a capped set beats a second round trip for a bar-count
-      // query Postgres has no simpler way to express against a text[] column.
-      supabaseAdmin.from("conversations").select("tools_called").eq("company_id", companyId).not("tools_called", "eq", "{}").limit(500),
-    ]);
-
     // ---- Live-overview additions (all company-scoped, all bounded) -------
-    const [
-      conversationsToday,
-      minutesTodayRows,
-      minutes7dRows,
-      funnelRows,
-      appointmentsToday,
-      appointmentsCancelled,
-      upcomingAppointments,
-      recentAppointments,
-      inboundWhatsApp,
-      notificationActivities,
-      summaryStampRows,
-    ] = await Promise.all([
+    // Started HERE — before the core batch is awaited — because nothing in
+    // it depends on the core batch's results (only companyId and the date
+    // constants above). Awaiting the two batches serially doubled the DB
+    // round-trip latency of the endpoint for no reason (2026-08-19 audit).
+    const liveOverviewBatch = Promise.all([
       supabaseAdmin.from("conversations").select("id", { count: "exact", head: true }).eq("company_id", companyId).gte("created_at", todayStart),
       supabaseAdmin
         .from("conversations")
@@ -178,6 +118,88 @@ export async function GET(req: NextRequest) {
         .order("started_at", { ascending: false })
         .limit(8),
     ]);
+
+    const [
+      conversations,
+      conversationsThisWeek,
+      conversationsPriorWeek,
+      leads,
+      qualifiedLeads,
+      appointmentsBooked,
+      appointmentsPending,
+      durations,
+      recentLeads,
+      recentConversations,
+      toolsCalledSample,
+    ] = await Promise.all([
+      supabaseAdmin.from("conversations").select("id", { count: "exact", head: true }).eq("company_id", companyId),
+      supabaseAdmin.from("conversations").select("id", { count: "exact", head: true }).eq("company_id", companyId).gte("created_at", weekAgo),
+      supabaseAdmin
+        .from("conversations")
+        .select("id", { count: "exact", head: true })
+        .eq("company_id", companyId)
+        .gte("created_at", twoWeeksAgo)
+        .lt("created_at", weekAgo),
+      scoped(),
+      supabaseAdmin
+        .from("leads")
+        .select("id", { count: "exact", head: true })
+        .eq("company_id", companyId)
+        .is("deleted_at", null)
+        .in("score_category", ["HIGH", "MEDIUM"]),
+      supabaseAdmin.from("appointments").select("id", { count: "exact", head: true }).eq("company_id", companyId).eq("status", "BOOKED"),
+      // Surfaced separately because a REQUESTED appointment has no calendar
+      // event behind it and is waiting on a human — it is a to-do, not a win.
+      supabaseAdmin.from("appointments").select("id", { count: "exact", head: true }).eq("company_id", companyId).eq("status", "REQUESTED"),
+      // Ordered so the cap is "the 500 most recent" — without the order,
+      // Postgres returns an ARBITRARY 500 once the table outgrows the cap
+      // and the average silently loses meaning (2026-08-19 audit).
+      supabaseAdmin
+        .from("conversations")
+        .select("duration_seconds")
+        .eq("company_id", companyId)
+        .not("duration_seconds", "is", null)
+        .order("created_at", { ascending: false })
+        .limit(500),
+      supabaseAdmin
+        .from("leads")
+        .select("id, name, email, score, score_category, status, created_at")
+        .eq("company_id", companyId)
+        .is("deleted_at", null)
+        .order("created_at", { ascending: false })
+        .limit(5),
+      supabaseAdmin
+        .from("conversations")
+        .select("id, employee_id, status, started_at, ended_at, duration_seconds, summary, sentiment, channel, intent, audio_metadata")
+        .eq("company_id", companyId)
+        .order("started_at", { ascending: false })
+        .limit(8),
+      // Bounded sample, same cap as the duration average above — aggregating
+      // in JS over a capped set beats a second round trip for a bar-count
+      // query Postgres has no simpler way to express against a text[] column.
+      // Same most-recent-500 ordering rationale as the durations sample.
+      supabaseAdmin
+        .from("conversations")
+        .select("tools_called")
+        .eq("company_id", companyId)
+        .not("tools_called", "eq", "{}")
+        .order("created_at", { ascending: false })
+        .limit(500),
+    ]);
+
+    const [
+      conversationsToday,
+      minutesTodayRows,
+      minutes7dRows,
+      funnelRows,
+      appointmentsToday,
+      appointmentsCancelled,
+      upcomingAppointments,
+      recentAppointments,
+      inboundWhatsApp,
+      notificationActivities,
+      summaryStampRows,
+    ] = await liveOverviewBatch;
 
     const conversationRows = recentConversations.data ?? [];
     const employeeIds = [...new Set(conversationRows.map((c) => c.employee_id).filter(Boolean))];

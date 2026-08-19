@@ -110,6 +110,71 @@ describe("PublicBusinessCard — exactly one card fetch, in the stored language"
   });
 });
 
+describe("PublicBusinessCard — server-rendered fast path (2026-08-19 FCP round)", () => {
+  const INITIAL_CARD = {
+    company: { name: "Pagalava Data Analytics", website: "https://maylaanai.com", logoUrl: null },
+    employee: { name: "Srinivasan Kandasamy", designation: "Founder", email: "s@pagalava.com", phone: "+911234567890", officeAddress: null, workingHours: null, avatarUrl: null },
+    firstMessage: "Hello.",
+    systemPrompt: "PROMPT",
+    language: "en",
+    enabledLanguages: ["en", "ta", "hi", "kn", "te", "ml"],
+    tools: [],
+    serverUrl: "https://maylaanai.com/api/vapi/webhook",
+  } as never;
+  const BUNDLE = {} as never;
+
+  it("a cookie-resolved server render issues ZERO card fetches — the HTML already carried everything", async () => {
+    window.localStorage.clear();
+    window.localStorage.setItem("pagalava.language", "en");
+    const fetchSpy = jest.fn(() => Promise.resolve(cardResponse("en"))) as unknown as jest.Mock;
+    global.fetch = fetchSpy as unknown as typeof fetch;
+
+    render(
+      <PublicBusinessCard companyId="comp-1" employeeId="emp-1" initialCard={INITIAL_CARD} initialLanguage="en" initialBundle={BUNDLE} />
+    );
+    // Synchronously visible — no loader, no fetch round-trip.
+    expect(screen.getByTestId("voice-mic-button")).toBeTruthy();
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const cardCalls = fetchSpy.mock.calls.map((c) => String(c[0])).filter((u) => u.includes("/api/public/comp-1/emp-1?"));
+    expect(cardCalls).toHaveLength(0);
+  });
+
+  it("localStorage disagreeing with the server cookie issues exactly ONE corrective fetch in the visitor's own language", async () => {
+    window.localStorage.clear();
+    window.localStorage.setItem("pagalava.language", "ta"); // the visitor's real choice; cookie said en
+    const fetchSpy = jest.fn(() => Promise.resolve(cardResponse("ta"))) as unknown as jest.Mock;
+    global.fetch = fetchSpy as unknown as typeof fetch;
+
+    render(
+      <PublicBusinessCard companyId="comp-1" employeeId="emp-1" initialCard={INITIAL_CARD} initialLanguage="en" initialBundle={BUNDLE} />
+    );
+    await screen.findByTestId("voice-mic-button");
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const cardCalls = fetchSpy.mock.calls.map((c) => String(c[0])).filter((u) => u.includes("/api/public/comp-1/emp-1?"));
+    expect(cardCalls).toHaveLength(1);
+    expect(cardCalls[0]).toContain("lang=ta");
+  });
+
+  it("persistLanguage mirrors the choice into the cookie the server render reads", async () => {
+    window.localStorage.clear();
+    document.cookie = "pagalava.language=; path=/; max-age=0"; // clear
+    const { renderHook, act: hookAct } = await import("@testing-library/react");
+    const { useLanguage } = await import("@/features/language/hooks/useLanguage");
+    const { result } = renderHook(() => useLanguage());
+    hookAct(() => {
+      result.current.setLanguage("en");
+    });
+    expect(document.cookie).toContain("pagalava.language=en");
+    expect(window.localStorage.getItem("pagalava.language")).toBe("en");
+  });
+});
+
 describe("AppointmentModal — qualification polling discipline", () => {
   const t = (key: string) => key;
   const baseProps = {

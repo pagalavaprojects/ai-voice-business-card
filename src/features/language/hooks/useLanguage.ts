@@ -128,6 +128,12 @@ async function loadBundle(code: LanguageCode): Promise<LocaleBundle> {
   return promise;
 }
 
+/** Exported for the card pages' server renders (2026-08-19 FCP round):
+ * the same dynamic-import loader works at request time on the server, so a
+ * page that resolved the visitor's language cookie can ship the matching
+ * bundle in its HTML and seed useLanguage with it. */
+export { loadBundle };
+
 function readStoredLanguage(): LanguageCode | null {
   if (typeof window === "undefined") return null;
   try {
@@ -146,6 +152,15 @@ function persistLanguage(code: LanguageCode) {
     window.localStorage.setItem(STORAGE_KEY, code);
   } catch {
     /* best-effort — the session still works, it just won't remember next visit */
+  }
+  try {
+    // Mirrored into a cookie so the card PAGE's server render can resolve
+    // the visitor's language and ship a fully-rendered card in the HTML
+    // (2026-08-19 FCP round) — localStorage is invisible to the server.
+    // Same key name; one year; Lax is enough (read on top-level GETs only).
+    document.cookie = `${STORAGE_KEY}=${code}; path=/; max-age=31536000; SameSite=Lax`;
+  } catch {
+    /* best-effort, same as above */
   }
 }
 
@@ -168,22 +183,54 @@ function interpolate(template: string, vars?: Record<string, string>): string {
  * localStorage/navigator.language are browser-only, so this can't happen
  * during the initial render without risking a server/client mismatch.
  */
-export function useLanguage() {
-  const [language, setLanguageState] = useState<LanguageCode>(DEFAULT_LANGUAGE);
-  const [bundle, setBundle] = useState<LocaleBundle | null>(bundleCache.get(DEFAULT_LANGUAGE) ?? null);
-  const [isReady, setIsReady] = useState(false);
+export function useLanguage(initialLanguage?: LanguageCode, initialBundle?: LocaleBundle | null) {
+  // When the card page's server render resolved the visitor's cookie
+  // (2026-08-19 FCP round), it passes that language AND its already-loaded
+  // locale bundle down as props. Seeding state from them makes the server
+  // HTML and the client's first render agree exactly — full card, correct
+  // language, real translations — with no fetch, no bundle round-trip, and
+  // no hydration mismatch. Without the props (no cookie, or a non-SSR
+  // caller) everything behaves exactly as before.
+  const [language, setLanguageState] = useState<LanguageCode>(initialLanguage ?? DEFAULT_LANGUAGE);
+  const [bundle, setBundle] = useState<LocaleBundle | null>(() => {
+    if (initialLanguage && initialBundle) {
+      // Seed the module cache too, so the bundle-loading effect below sees
+      // a cache hit instead of re-importing what the HTML already carried.
+      if (!bundleCache.has(initialLanguage)) bundleCache.set(initialLanguage, initialBundle);
+      return initialBundle;
+    }
+    return bundleCache.get(initialLanguage ?? DEFAULT_LANGUAGE) ?? null;
+  });
+  const [isReady, setIsReady] = useState(Boolean(initialLanguage && initialBundle));
   // null until the mount effect below has actually checked localStorage —
   // callers (the pre-conversation language gate) need to tell "no
   // preference stored" apart from "haven't looked yet" so a returning
   // visitor's saved language can't flash the gate open before immediately
-  // skipping it.
-  const [hasStoredPreference, setHasStoredPreference] = useState<boolean | null>(null);
+  // skipping it. A server-resolved cookie IS a stored preference, known
+  // before mount — so the gate can be skipped in the server HTML itself.
+  const [hasStoredPreference, setHasStoredPreference] = useState<boolean | null>(initialLanguage ? true : null);
 
   useEffect(() => {
     const stored = readStoredLanguage();
+    if (initialLanguage) {
+      // The cookie drove the server render. localStorage normally mirrors
+      // it (persistLanguage writes both); when they disagree — cleared
+      // site data, an old visit predating the cookie — localStorage is the
+      // visitor's original choice and wins, at the cost of the one
+      // corrective refetch the fetch effect will issue. No stored value at
+      // all re-persists the cookie's language so the two stores converge.
+      if (stored && stored !== initialLanguage) setLanguageState(stored);
+      if (!stored) persistLanguage(initialLanguage);
+      return;
+    }
     const initial = stored ?? detectLanguageFromBrowser(navigator.language);
     setLanguageState(initial);
     setHasStoredPreference(stored !== null);
+    // Self-heal for visitors whose preference predates the cookie mirror:
+    // re-persisting the stored value writes the cookie too, so their NEXT
+    // visit takes the server-rendered fast path instead of never
+    // qualifying for it until they happen to switch language.
+    if (stored) persistLanguage(stored);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

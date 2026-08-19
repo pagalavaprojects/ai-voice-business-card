@@ -41,6 +41,12 @@ export class NotificationService {
             subject: request.subject,
             html: request.html,
             fromName: request.fromName,
+            // One key per LOGICAL send (the email_logs row), stable across
+            // every retry attempt inside this call: a first attempt whose
+            // response was lost (timeout abort, connection reset) may have
+            // been delivered anyway, and Resend dedupes on this key so the
+            // retry can never email the recipient twice (2026-08-19 audit).
+            idempotencyKey: `email-log-${log.id}`,
           });
         },
         { maxRetries: 2, initialDelayMs: 500, backoffFactor: 2 }

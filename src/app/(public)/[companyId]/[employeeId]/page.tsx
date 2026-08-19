@@ -5,6 +5,7 @@ import { headers } from "next/headers";
 import { PublicBusinessCard } from "@/features/voice/components/PublicBusinessCard";
 import { SupabaseKnowledgeRepository } from "@/core/infrastructure/database/supabase/SupabaseKnowledgeRepository";
 import { buildCardMetadata, buildCardJsonLd, serializeJsonLd } from "@/shared/lib/cardMetadata";
+import { resolveSsrCardProps } from "@/features/voice/lib/cardSsr";
 
 // Reads live data on every request — a card's name/photo/services can change
 // at any time, and this is a public page with no user-specific auth to key a
@@ -69,10 +70,14 @@ export default async function VoiceBusinessCardPage({ params }: { params: Params
     canonicalUrl: `${protocol}://${host}/${params.companyId}/${params.employeeId}`,
   });
 
+  // Same SSR fast path as /c/[slug]: cookie present → full card in the HTML,
+  // zero client fetches; absent → the client's existing flow, unchanged.
+  const ssrProps = await resolveSsrCardProps(params.companyId, params.employeeId);
+
   return (
     <>
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: serializeJsonLd(jsonLd) }} />
-      <PublicBusinessCard companyId={params.companyId} employeeId={params.employeeId} />
+      <PublicBusinessCard companyId={params.companyId} employeeId={params.employeeId} {...ssrProps} />
     </>
   );
 }

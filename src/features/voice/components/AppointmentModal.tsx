@@ -167,13 +167,20 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   }, [step, outcome, selectedSlot]);
 
   // Real availability, fetched fresh every time the modal opens — a slot
-  // list cached across opens could go stale within the same visit.
+  // list cached across opens could go stale within the same visit. Closing
+  // the modal aborts the in-flight request outright (2026-08-19 perf
+  // round): a response landing after close previously wrote slot state into
+  // a modal nobody could see, and the NEXT open would flash it before its
+  // own fresh fetch replaced it.
   useEffect(() => {
     if (!open) return;
+    const controller = new AbortController();
     setSlotsLoading(true);
     setSlotsReason(null);
     const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    fetch(`/api/public/${companyId}/${employeeId}/appointments?timeZone=${encodeURIComponent(timeZone)}`)
+    fetch(`/api/public/${companyId}/${employeeId}/appointments?timeZone=${encodeURIComponent(timeZone)}`, {
+      signal: controller.signal,
+    })
       // The route always returns a JSON body — including on 429 — so parse
       // it regardless of status rather than throwing away the `reason`
       // field on a non-2xx response.
@@ -183,11 +190,18 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
         setSlots(list);
         setSelectedSlot(list[0]?.time ?? null);
         setSlotsReason(list.length === 0 ? data.reason ?? "error" : null);
+        setSlotsLoading(false);
       })
-      // Only a genuine network-level failure (offline, DNS, CORS) reaches
-      // here — anything the server itself responded to is handled above.
-      .catch(() => setSlotsReason("error"))
-      .finally(() => setSlotsLoading(false));
+      // Only an abort (close) or a genuine network-level failure (offline,
+      // DNS, CORS) reaches here — anything the server itself responded to
+      // is handled above. An abort sets no state at all: the modal is gone,
+      // and the next open starts from its own clean loading state.
+      .catch((err: Error) => {
+        if (err?.name === "AbortError") return;
+        setSlotsReason("error");
+        setSlotsLoading(false);
+      });
+    return () => controller.abort();
   }, [open, companyId, employeeId]);
 
   // `language` (a BCP-47 primary subtag: en/ta/hi/te/ml/kn) is a valid

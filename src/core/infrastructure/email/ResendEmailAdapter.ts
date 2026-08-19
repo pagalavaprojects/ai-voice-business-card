@@ -8,6 +8,12 @@ export interface SendEmailOptions {
   /** The company's configured sender name (Settings → Email Sender Name).
    * Optional so a caller with no company context still sends. */
   fromName?: string;
+  /** Sent as Resend's Idempotency-Key header. REQUIRED for any caller that
+   * retries (NotificationService's exponential backoff): a send whose
+   * response was lost — the exact failure a timeout abort produces — may
+   * still have been delivered, and without this key the retry emails the
+   * recipient twice. Resend dedupes identical keys for 24h. */
+  idempotencyKey?: string;
 }
 
 /** The address half of the From header. Must be a domain verified with Resend,
@@ -66,6 +72,7 @@ export class ResendEmailAdapter {
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${this.apiKey}`,
+          ...(options.idempotencyKey ? { "Idempotency-Key": options.idempotencyKey } : {}),
         },
         body: JSON.stringify({
           from: `${sanitizeFromName(options.fromName)} <${FROM_ADDRESS}>`,

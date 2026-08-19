@@ -147,12 +147,15 @@ export class CalcomAdapter {
       return { id: 0, uid: bookingUid, title: "Rescheduled meeting (demo)", meetingUrl: "https://cal.com/demo-meeting", status: "ACCEPTED" };
     }
 
-    const response = await fetch(`https://api.cal.com/v2/bookings/${bookingUid}/reschedule`, {
+    // Same 20s bound as createBooking (2026-08-19 audit: these two were
+    // missed by the fetchWithTimeout retrofit). Not retried — a reschedule
+    // whose response was lost must surface as a failure, not a blind repeat.
+    const response = await fetchWithTimeout(`https://api.cal.com/v2/bookings/${bookingUid}/reschedule`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${this.apiKey}`, "cal-api-version": "2024-08-13" },
       // v2 derives the new end from the event type's own duration.
       body: JSON.stringify({ start: newStart }),
-    });
+    }, 20_000);
 
     if (!response.ok) throw new Error(`CalcomAdapter.rescheduleBooking failed: ${response.status} ${await response.text()} (requested end ${newEnd} is derived by Cal.com)`);
 
@@ -170,11 +173,11 @@ export class CalcomAdapter {
   async cancelBooking(bookingUid: string, reason?: string): Promise<void> {
     if (!this.isConfigured()) return;
 
-    const response = await fetch(`https://api.cal.com/v2/bookings/${bookingUid}/cancel`, {
+    const response = await fetchWithTimeout(`https://api.cal.com/v2/bookings/${bookingUid}/cancel`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${this.apiKey}`, "cal-api-version": "2024-08-13" },
       body: JSON.stringify({ cancellationReason: reason }),
-    });
+    }, 20_000);
 
     if (!response.ok) throw new Error(`CalcomAdapter.cancelBooking failed: ${response.status} ${await response.text()}`);
   }

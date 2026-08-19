@@ -91,29 +91,24 @@ async function persistPcm(assetPath: string, pcm: Buffer): Promise<void> {
   }
 }
 
-function withTimeout<T>(work: Promise<T | null>, ms: number): Promise<T | null> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<null>((resolve) => {
-    timer = setTimeout(() => resolve(null), ms);
-  });
-  // The loser's timer must not keep the (serverless) process alive.
-  return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
-}
-
 async function renderViaProvider(
   provider: TtsProviderName,
   text: string,
   language: string,
   sampleRate: number
 ): Promise<PcmAudio | null> {
+  // Every backend takes the timeout itself and ABORTS its request on
+  // expiry (2026-08-19 audit) — the previous Promise.race here advanced
+  // the fallback chain on time but left the losing request running,
+  // consuming the serverless function's connection budget for nothing.
   switch (provider) {
     case "custom":
       return renderCustomPcm(text, language === "ta" ? "ta" : "en", sampleRate, BACKEND_TIMEOUT_MS);
     case "gemini":
       if (!isConfiguredKey(process.env.GEMINI_API_KEY)) return null;
-      return withTimeout(renderGeminiPcm(text), BACKEND_TIMEOUT_MS);
+      return renderGeminiPcm(text, BACKEND_TIMEOUT_MS);
     case "openai":
-      return withTimeout(renderOpenAiPcm(text), BACKEND_TIMEOUT_MS);
+      return renderOpenAiPcm(text, "nova", BACKEND_TIMEOUT_MS);
   }
 }
 

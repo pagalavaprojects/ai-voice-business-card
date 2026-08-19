@@ -13,7 +13,7 @@ import { downloadVCard, imageUrlToDataUri } from "@/features/voice/lib/vcard";
 import { speakPitchWithBrowserTts, stopBrowserTts, pauseBrowserTts, resumeBrowserTts } from "@/features/voice/lib/pitchFallback";
 import { DEMO_COMPANY_ID } from "@/shared/lib/demoCard";
 import { getQualificationCallOpening, getQualificationDirective, toQualificationLanguage } from "@/features/voice/lib/qualificationScript";
-import { useLanguage } from "@/features/language/hooks/useLanguage";
+import { useLanguage, LocaleBundle } from "@/features/language/hooks/useLanguage";
 import { LanguageSelector } from "@/features/language/components/LanguageSelector";
 import { LanguageGate } from "@/features/language/components/LanguageGate";
 import { getLanguageDefinition, isSupportedLanguage, LanguageCode } from "@/features/language/config";
@@ -34,7 +34,7 @@ const AppointmentModal = dynamic(
 );
 
 
-interface PublicCardData {
+export interface PublicCardData {
   company: { name: string; website: string; logoUrl: string | null };
   employee: {
     name: string;
@@ -121,8 +121,26 @@ function toTelHref(phone: string): string {
  * a plain (companyId, employeeId) pair and renders this — so the two URLs
  * can never drift into two different card experiences.
  */
-export function PublicBusinessCard({ companyId, employeeId }: { companyId: string; employeeId: string }) {
-  const { language, setLanguage, t, hasStoredPreference } = useLanguage();
+export function PublicBusinessCard({
+  companyId,
+  employeeId,
+  initialCard,
+  initialLanguage,
+  initialBundle,
+}: {
+  companyId: string;
+  employeeId: string;
+  /** Server-rendered card payload (2026-08-19 FCP round): when the page's
+   * server component resolved the visitor's language cookie, it builds the
+   * exact same payload the API route serves and passes it here, so the
+   * first paint carries the full card with ZERO client fetches. Absent
+   * (first-ever visit, no cookie, or an SSR failure) everything behaves as
+   * before: loader → one client fetch. */
+  initialCard?: PublicCardData | null;
+  initialLanguage?: LanguageCode;
+  initialBundle?: LocaleBundle | null;
+}) {
+  const { language, setLanguage, t, hasStoredPreference } = useLanguage(initialLanguage, initialBundle);
 
   // The pre-conversation language gate is shown exactly once per visitor —
   // a returning visitor (hasStoredPreference true) never sees it again,
@@ -135,9 +153,16 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
 
   // No demo/fallback identity: a business card that silently renders someone
   // else's name and speaks their pitch is worse than one that admits it
-  // couldn't load. Every field below comes from the database or nothing does.
-  const [card, setCard] = useState<PublicCardData | null>(null);
-  const [cardLoading, setCardLoading] = useState(true);
+  // couldn't load. Every field below comes from the database or nothing does
+  // — the server-rendered initialCard included, which is the same payload
+  // from the same builder the API route serves.
+  const [card, setCard] = useState<PublicCardData | null>(initialCard ?? null);
+  const [cardLoading, setCardLoading] = useState(!initialCard);
+  // The language whose card data is currently held in `card` — lets the
+  // fetch effect below tell "we already have exactly this" (server-rendered
+  // or previously fetched) from "the visitor switched, refetch". Starts at
+  // the server-clamped language when server-rendered, null otherwise.
+  const loadedLanguageRef = useRef<string | null>(initialCard ? initialCard.language ?? null : null);
   const [loadError, setLoadError] = useState<"notfound" | "unavailable" | null>(null);
   const [qrOpen, setQrOpen] = useState(false);
   const [savingContact, setSavingContact] = useState(false);
@@ -219,6 +244,11 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
   // earlier than before — one fetch now simply carries the right language.
   useEffect(() => {
     if (hasStoredPreference === null) return;
+    // The card for this exact language is already in hand — server-rendered
+    // via initialCard, or fetched by a previous run of this effect. Zero
+    // client fetches on a server-rendered load; a real language switch
+    // changes `language`, misses this check, and fetches as before.
+    if (card && loadedLanguageRef.current === language) return;
     let cancelled = false;
     // Captured once per effect run, not re-read later: this fetch's own
     // response must only ever be judged against the language IT was
@@ -237,6 +267,11 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
         if (cancelled) return;
         setCard(data);
         setLoadError(null);
+        // Record what was actually LOADED (the server's clamped language,
+        // not the raw request) — so when the clamp path below re-runs this
+        // effect under the corrected language, it finds the data already in
+        // hand instead of fetching the same payload a second time.
+        loadedLanguageRef.current = data.language ?? requestedLanguage;
         // The server clamps the requested language down to the company's
         // enabled set (see clampToEnabledLanguages) — this only ever differs
         // from what was requested when an admin has disabled the language a
@@ -259,7 +294,7 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
       cancelled = true;
       controller.abort();
     };
-  }, [companyId, employeeId, language, setLanguage, hasStoredPreference]);
+  }, [companyId, employeeId, language, setLanguage, hasStoredPreference, card]);
 
   // Warms the three fixed pitches for the confirmed language in the
   // background, off the critical path (idle callback, low priority, one
@@ -1036,6 +1071,12 @@ export function PublicBusinessCard({ companyId, employeeId }: { companyId: strin
           {card.qrSvg && (
             <div
               className="bg-white p-3 rounded-2xl w-56 h-56 flex items-center justify-center [&>svg]:w-full [&>svg]:h-full"
+              // The qrcode package emits an SVG with no <title>, so without
+              // an accessible name a screen reader announces nothing here.
+              // The dialog's own instructions text below carries the detail;
+              // this names the graphic itself.
+              role="img"
+              aria-label={t("qr.title")}
               // Generated server-side by the `qrcode` package from this card's
               // own URL — not user-supplied content.
               dangerouslySetInnerHTML={{ __html: card.qrSvg }}

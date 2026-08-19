@@ -90,8 +90,17 @@ export function resamplePcm16(pcm: Buffer, fromRate: number, toRate: number): Bu
 
 /** Renders text via Gemini TTS to raw PCM. Extracted verbatim from the pitch
  * route's renderGeminiTts (which now wraps this in a WAV container) so the
- * real-time route reuses the identical request without duplicating it. */
-export async function renderGeminiPcm(text: string): Promise<PcmAudio | null> {
+ * real-time route reuses the identical request without duplicating it.
+ *
+ * timeoutMs bounds the request WITH a real abort (2026-08-19 audit: this was
+ * a bare fetch, so a stalled Gemini held the pitch route to its 120s
+ * maxDuration and left orphaned requests behind the realtime route's
+ * Promise.race). The default is generous because long Tamil pitches
+ * legitimately take 60–80s to generate; the realtime route passes its own
+ * much tighter bound. */
+export async function renderGeminiPcm(text: string, timeoutMs = 100_000): Promise<PcmAudio | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_TTS_MODEL}:generateContent`, {
       method: "POST",
@@ -103,6 +112,7 @@ export async function renderGeminiPcm(text: string): Promise<PcmAudio | null> {
           speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: GEMINI_TTS_VOICE } } },
         },
       }),
+      signal: controller.signal,
     });
     if (!res.ok) {
       const body = await res.text().catch(() => "");
@@ -120,8 +130,13 @@ export async function renderGeminiPcm(text: string): Promise<PcmAudio | null> {
     const sampleRate = Number((/rate=(\d+)/.exec(inline.mimeType ?? "") ?? [])[1] ?? 24000);
     return { pcm: Buffer.from(inline.data, "base64"), sampleRate };
   } catch (err) {
-    Logger.warn("Gemini TTS request threw", { error: err instanceof Error ? err.message : String(err) });
+    Logger.warn("Gemini TTS request threw", {
+      error: err instanceof Error ? err.message : String(err),
+      timedOut: err instanceof Error && err.name === "AbortError",
+    });
     return null;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -130,14 +145,17 @@ export async function renderGeminiPcm(text: string): Promise<PcmAudio | null> {
  * voice consumes. Uses tts-1 (not -hd): the realtime path values latency over
  * the marginal -hd quality difference, and this backend only serves as a
  * fallback when the primary is down. */
-export async function renderOpenAiPcm(text: string, voiceId = "nova"): Promise<PcmAudio | null> {
+export async function renderOpenAiPcm(text: string, voiceId = "nova", timeoutMs = 60_000): Promise<PcmAudio | null> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!isConfiguredKey(apiKey)) return null;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch("https://api.openai.com/v1/audio/speech", {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({ model: "tts-1", voice: voiceId, input: text, response_format: "pcm" }),
+      signal: controller.signal,
     });
     if (!res.ok) {
       const body = await res.text().catch(() => "");
@@ -146,8 +164,13 @@ export async function renderOpenAiPcm(text: string, voiceId = "nova"): Promise<P
     }
     return { pcm: Buffer.from(await res.arrayBuffer()), sampleRate: 24000 };
   } catch (err) {
-    Logger.warn("OpenAI PCM TTS threw", { error: err instanceof Error ? err.message : String(err) });
+    Logger.warn("OpenAI PCM TTS threw", {
+      error: err instanceof Error ? err.message : String(err),
+      timedOut: err instanceof Error && err.name === "AbortError",
+    });
     return null;
+  } finally {
+    clearTimeout(timer);
   }
 }
 

@@ -5,6 +5,7 @@ import { headers } from "next/headers";
 import { PublicBusinessCard } from "@/features/voice/components/PublicBusinessCard";
 import { SupabaseKnowledgeRepository } from "@/core/infrastructure/database/supabase/SupabaseKnowledgeRepository";
 import { buildCardMetadata, buildCardJsonLd, serializeJsonLd } from "@/shared/lib/cardMetadata";
+import { resolveSsrCardProps } from "@/features/voice/lib/cardSsr";
 
 // This route resolves a short slug to a live database row on every request,
 // so it can never be statically prerendered.
@@ -55,12 +56,18 @@ export default async function ShortLinkBusinessCardPage({ params }: { params: Pa
   const protocol = host.startsWith("localhost") || host.startsWith("127.") ? "http" : "https";
   const jsonLd = buildCardJsonLd({ employee, company, canonicalUrl: `${protocol}://${host}/c/${params.slug}` });
 
+  // With a language cookie present (any returning visitor), the full card
+  // payload + locale bundle render into this HTML — the client then paints
+  // the complete card with zero fetches. Without one, props are empty and
+  // the client keeps its existing gate → resolve → fetch flow.
+  const ssrProps = await resolveSsrCardProps(employee.company_id, employee.id);
+
   return (
     <>
       {/* Structured data for search engines — has no effect on rendering or
           behavior. See buildCardJsonLd for why the content is escaped. */}
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: serializeJsonLd(jsonLd) }} />
-      <PublicBusinessCard companyId={employee.company_id} employeeId={employee.id} />
+      <PublicBusinessCard companyId={employee.company_id} employeeId={employee.id} {...ssrProps} />
     </>
   );
 }

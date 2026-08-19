@@ -78,18 +78,18 @@ export async function GET(req: NextRequest, { params }: { params: { companyId: s
   }
 
   try {
-    const [company, employee] = await Promise.all([
+    // One batch (2026-08-19 audit): services/products key only off the
+    // URL's companyId, so awaiting them behind the identity pair cost a
+    // serial DB round trip per uncached render. 404 still checked first.
+    const [company, employee, services, products] = await Promise.all([
       knowledgeRepo.getCompanyById(companyId),
       knowledgeRepo.getEmployeeById(employeeId),
+      knowledgeRepo.getServicesByCompany(companyId).catch(() => []),
+      knowledgeRepo.getProductsByCompany(companyId).catch(() => []),
     ]);
     if (!company || !employee || employee.company_id !== companyId || !isEmployeeCardVisible(employee)) {
       return NextResponse.json({ message: "Business card not found" }, { status: 404 });
     }
-
-    const [services, products] = await Promise.all([
-      knowledgeRepo.getServicesByCompany(companyId).catch(() => []),
-      knowledgeRepo.getProductsByCompany(companyId).catch(() => []),
-    ]);
 
     const source: PitchSourceData = {
       companyId,
