@@ -27,7 +27,8 @@
     "nowYouCanAsk": "Now you can ask your questions",
     "defaultFirstMessage": "Hello, thank you for scanning my business card. How can I help you today?",
     "connectionError": "Voice connection error",
-    "startCallError": "Failed to start live voice call"
+    "startCallError": "Failed to start live voice call",
+    "playIntroduction": "Play Introduction"
   },
   "buttons": {
     "mute": "Mute",
@@ -51,7 +52,7 @@
   "pitch": {
     "sectionTitle": "Listen",
     "elevator": "Elevator Pitch",
-    "product": "Product Pitch",
+    "product": "Service Pitch",
     "usp": "Why Us",
     "playAria": "Play {label}",
     "error": "Could not play the pitch — please try again.",

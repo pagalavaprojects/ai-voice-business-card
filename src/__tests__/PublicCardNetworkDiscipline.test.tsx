@@ -96,8 +96,11 @@ describe("PublicBusinessCard — exactly one card fetch, in the stored language"
       await jest.advanceTimersByTimeAsync(3000);
     });
     const pitchCalls = fetchSpy.mock.calls.map((c) => String(c[0])).filter((u) => u.includes("/pitch?"));
-    expect(pitchCalls).toHaveLength(3);
-    for (const type of ["elevator", "product", "usp"]) {
+    // Four assets: the recorded introduction (2026-08-19 spec — its first
+    // render must happen here in the background, never on the Play tap)
+    // plus the three Listen pitches.
+    expect(pitchCalls).toHaveLength(4);
+    for (const type of ["intro", "elevator", "product", "usp"]) {
       expect(pitchCalls).toContainEqual(expect.stringContaining(`type=${type}`));
     }
     expect(pitchCalls.every((u) => u.includes("lang=en"))).toBe(true);
@@ -106,7 +109,7 @@ describe("PublicBusinessCard — exactly one card fetch, in the stored language"
     await act(async () => {
       await jest.advanceTimersByTimeAsync(10_000);
     });
-    expect(fetchSpy.mock.calls.map((c) => String(c[0])).filter((u) => u.includes("/pitch?"))).toHaveLength(3);
+    expect(fetchSpy.mock.calls.map((c) => String(c[0])).filter((u) => u.includes("/pitch?"))).toHaveLength(4);
   });
 });
 

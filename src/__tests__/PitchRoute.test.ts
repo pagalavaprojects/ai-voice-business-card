@@ -47,6 +47,14 @@ jest.mock("@/shared/lib/rateLimit", () => ({
   checkRateLimitDistributed: (...args: unknown[]) => checkRateLimitDistributed(...args),
 }));
 
+// The route pulls agentRepo (for the intro type's greeting resolution) from
+// the assistant-runtime bootstrap; mocked so this suite never touches the
+// real bootstrap graph.
+const getAgentByEmployee = jest.fn();
+jest.mock("@/core/infrastructure/bootstrap/assistantRuntime", () => ({
+  agentRepo: { getAgentByEmployee: (...args: unknown[]) => getAgentByEmployee(...args) },
+}));
+
 import { NextRequest } from "next/server";
 import { GET } from "@/app/api/public/[companyId]/[employeeId]/pitch/route";
 
@@ -365,6 +373,72 @@ describe("GET /api/public/{companyId}/{employeeId}/pitch", () => {
       const res = await GET(req("type=elevator&lang=ta"), { params: { companyId: COMPANY_ID, employeeId: EMPLOYEE_ID } });
       expect(res.status).toBe(200);
       expect(res.headers.get("Content-Type")).toBe("audio/mpeg");
+    });
+  });
+
+  // ---- The recorded introduction (type=intro, 2026-08-19 spec) ----------
+  // Served through this route so it inherits the full persist-then-serve
+  // cache stack and fallback chain; its script is resolveGreeting's output
+  // (identical content to the phone path's spoken greeting), NOT a
+  // composed pitch.
+  describe("type=intro — the card's recorded introduction", () => {
+    beforeEach(() => {
+      getAgentByEmployee.mockResolvedValue(null);
+      // Tamil rides the Gemini provider exactly like the Tamil pitches do.
+      process.env.GEMINI_API_KEY = "AQ.real-looking-gemini-test-key";
+    });
+
+    it("ENGLISH intro renders the greeting script through the TTS provider and caches under an intro-scoped key", async () => {
+      const ttsBodies: string[] = [];
+      const fetchSpy = jest.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+        if (String(url).includes("api.openai.com")) {
+          ttsBodies.push(String(init?.body));
+          return { ok: true, arrayBuffer: async () => new Uint8Array([9, 9]).buffer };
+        }
+        throw new Error("unexpected fetch: " + url);
+      });
+      global.fetch = fetchSpy as unknown as typeof fetch;
+
+      // The script the audio is rendered from must be EXACTLY what
+      // format=script (the browser-TTS fallback's source) returns.
+      const scriptRes = await GET(req("type=intro&lang=en&format=script"), { params: { companyId: COMPANY_ID, employeeId: EMPLOYEE_ID } });
+      expect(scriptRes.status).toBe(200);
+      const { script } = (await scriptRes.json()) as { script: string };
+      expect(script.length).toBeGreaterThan(10);
+
+      const res = await GET(req("type=intro&lang=en"), { params: { companyId: COMPANY_ID, employeeId: EMPLOYEE_ID } });
+      expect(res.status).toBe(200);
+      expect(JSON.parse(ttsBodies[0]).input).toBe(script);
+      // Cache identity carries the intro type — an intro recording can
+      // never be served for a pitch, nor across languages.
+      expect(String(upload.mock.calls[0][1])).toMatch(/\/intro\.en\.[0-9a-f]{8}\./);
+    });
+
+    it("TAMIL intro renders through Gemini (the natural-Tamil provider) under an intro+ta-scoped key", async () => {
+      const introGeminiSuccess = {
+        ok: true,
+        json: async () => ({
+          candidates: [
+            { content: { parts: [{ inlineData: { mimeType: "audio/l16; rate=24000; channels=1", data: Buffer.from([1, 2, 3, 4]).toString("base64") } }] } },
+          ],
+        }),
+      };
+      const fetchSpy = jest.fn().mockImplementation(async (url: string) => {
+        if (String(url).includes("generativelanguage.googleapis.com")) return introGeminiSuccess;
+        throw new Error("unexpected fetch: " + url);
+      });
+      global.fetch = fetchSpy as unknown as typeof fetch;
+
+      const res = await GET(req("type=intro&lang=ta"), { params: { companyId: COMPANY_ID, employeeId: EMPLOYEE_ID } });
+      expect(res.status).toBe(200);
+      expect(res.headers.get("Content-Type")).toBe("audio/wav");
+      expect(String(fetchSpy.mock.calls[0][0])).toContain("generativelanguage");
+      expect(String(upload.mock.calls[0][1])).toMatch(/\/intro\.ta\.[0-9a-f]{8}\.gemini\./);
+    });
+
+    it("a genuinely unknown type is still rejected with 400", async () => {
+      const res = await GET(req("type=banana&lang=en"), { params: { companyId: COMPANY_ID, employeeId: EMPLOYEE_ID } });
+      expect(res.status).toBe(400);
     });
   });
 });

@@ -426,6 +426,32 @@ describe("qualification conversation UI", () => {
     expect(screen.getByTestId("qualification-continue")).toBeTruthy();
   });
 
+  it("clicking Continue opens the Select Time step — the calendar never opens any other way", async () => {
+    jest.useFakeTimers();
+    const classifications = ["YES", "NO", "MAYBE", "YES", "NO", "MAYBE"] as const;
+    mockStatus({
+      qualified: true,
+      answers: classifications.map((c, i) => ({ n: i + 1, c, a: c === "YES" ? "Yes" : c === "NO" ? "No" : "Maybe" })),
+    });
+    const voice = voiceWith([{ role: "assistant", content: QUALIFICATION_QUESTIONS[0].question }]);
+    render(<AppointmentModal {...baseProps} voice={voice} />);
+    startQualification();
+    await act(async () => {
+      jest.advanceTimersByTime(3100);
+      await Promise.resolve();
+    });
+
+    fireEvent.click(screen.getByTestId("qualification-continue"));
+
+    // The qualification panel is gone and the slot-selection step renders
+    // (its own copy keys — chooseSlot/loading/unconfigured/error — echo
+    // through the key-mirroring t mock). The live mic is also released:
+    // reading slots must not keep the microphone hot.
+    expect(screen.queryByTestId("qualification-conversation")).toBeNull();
+    expect(document.body.textContent).toMatch(/appointment\.(chooseSlotTitle|loadingSlots|unconfiguredNotice|errorSlotsGeneric)/);
+    expect(voice.endCall).toHaveBeenCalled();
+  });
+
   it("Continue is absent until qualification genuinely completes, and never depends on lead scoring", () => {
     render(<AppointmentModal {...baseProps} voice={voiceWith([{ role: "assistant", content: QUALIFICATION_QUESTIONS[0].question }])} />);
     startQualification();

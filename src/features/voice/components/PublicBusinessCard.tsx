@@ -174,8 +174,8 @@ export function PublicBusinessCard({
   // from the pitch route — no microphone, no Vapi session, no permissions.
   // "loading" covers the fetch+decode window so the tapped button shows a
   // spinner instead of appearing dead while TTS renders on a cold cache.
-  const [pitchPlaying, setPitchPlaying] = useState<"elevator" | "product" | "usp" | null>(null);
-  const [pitchLoading, setPitchLoading] = useState<"elevator" | "product" | "usp" | null>(null);
+  const [pitchPlaying, setPitchPlaying] = useState<"elevator" | "product" | "usp" | "intro" | null>(null);
+  const [pitchLoading, setPitchLoading] = useState<"elevator" | "product" | "usp" | "intro" | null>(null);
   const [pitchPaused, setPitchPaused] = useState(false);
   const [pitchError, setPitchError] = useState(false);
   const pitchAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -312,7 +312,10 @@ export function PublicBusinessCard({
     if (!card || !languageConfirmed || prefetchedPitchLangsRef.current.has(language)) return;
     prefetchedPitchLangsRef.current.add(language);
     const warm = () => {
-      for (const type of ["elevator", "product", "usp"] as const) {
+      // "intro" first: it is the asset the visitor is invited to play
+      // before anything else, so its first render must happen here in the
+      // background — never synchronously on the Play tap.
+      for (const type of ["intro", "elevator", "product", "usp"] as const) {
         fetch(`/api/public/${companyId}/${employeeId}/pitch?type=${type}&lang=${encodeURIComponent(language)}`, {
           priority: "low",
         } as RequestInit).catch(() => undefined);
@@ -323,7 +326,7 @@ export function PublicBusinessCard({
     else setTimeout(warm, 2500);
   }, [card, languageConfirmed, language, companyId, employeeId]);
 
-  const { voiceState, isMuted, messages, durationSeconds, error, isPlayingIntro, isDemoMode, callId, startCall, endCall, toggleMute } = useVapiSession({
+  const { voiceState, isMuted, messages, durationSeconds, error, isPlayingIntro, callId, startCall, endCall, toggleMute } = useVapiSession({
     companyId,
     employeeId,
     firstMessage: card?.firstMessage,
@@ -340,25 +343,27 @@ export function PublicBusinessCard({
 
   const isCallActive = voiceState !== "idle";
 
-  // Opening the card must NOT start an AI conversation anymore — no
-  // microphone permission, no Vapi/WebRTC session, no getUserMedia prompt
-  // merely because someone scanned the QR. The interactive AI voice now
-  // starts only from an explicit tap (the mic button, or the booking
-  // flow's "Start voice qualification"). What the card attempts instead,
-  // once per identity, is the SPEAK-ONLY pre-recorded introduction (the
-  // elevator pitch): every major browser requires a user gesture before
-  // audible autoplay, so this is a best-effort attempt that fails
-  // completely silently — no error banner, no fallback TTS (speech
-  // synthesis is gesture-gated too), no permission prompt. When blocked,
-  // the always-visible Listen controls are the manual path, exactly as the
-  // autoplay policy intends.
-  //
-  // Skipped for automated browsers (navigator.webdriver) and demo mode —
-  // same reasoning as the old auto-call: automation has no one listening,
-  // and demo mode exists for manual step-by-step previewing.
-  const hasAutoAttemptedForRef = useRef<string | null>(null);
+  // ---- Recorded-introduction state machine (2026-08-19 spec) -------------
+  // ENTIRELY separate from the Vapi call: the introduction is a
+  // pre-generated audio asset (pitch route, type "intro" — the same
+  // greeting content the phone path speaks), played through the existing
+  // pitch player. INTRO_IDLE → (Play) → INTRO_PLAYING ⇄ INTRO_PAUSED →
+  // INTRO_COMPLETE → the mic button becomes "Tap to Speak" and only THEN
+  // can the interactive AI conversation start. No path exists from intro
+  // playback into a Vapi session, and none of the AI statuses render while
+  // it plays. Resets on language switch — each language has its own
+  // recorded introduction.
+  const [introDone, setIntroDone] = useState(false);
+  const introActive = pitchPlaying === "intro" || pitchLoading === "intro";
+
+  // NO AUTOPLAY OF ANY KIND (2026-08-19 product decision, superseding the
+  // earlier best-effort elevator-pitch autoplay that lived here): opening
+  // the card plays nothing — no audio element, no speech synthesis, no
+  // Vapi/WebRTC session, no getUserMedia prompt. Audio starts ONLY from an
+  // explicit tap: Play (the recorded introduction below), a Listen pitch
+  // button, or — strictly after the introduction has finished — Tap to
+  // Speak / the booking flow's "Start AI Conversation".
   const voiceStateRef = useRef(voiceState);
-  const cardIdentity = `${companyId}:${employeeId}:${language}`;
 
   // A language switch mid-call ends the current call rather than trying to
   // hot-swap its transcriber/voice language — Vapi has no API for changing
@@ -374,60 +379,16 @@ export function PublicBusinessCard({
       // new-language UI — and stopping here also invalidates (via the
       // session token) any old-language fallback fetch still in flight.
       stopPitch();
+      // Each language has its own recorded introduction — the new
+      // language's intro hasn't been heard, so Tap to Speak locks again
+      // behind a fresh Play.
+      setIntroDone(false);
     }
   }, [language, endCall, stopPitch]);
 
   useEffect(() => {
     voiceStateRef.current = voiceState;
   }, [voiceState]);
-
-  useEffect(() => {
-    const isAutomatedBrowser = typeof navigator !== "undefined" && navigator.webdriver === true;
-    // cardLoading specifically (not just !card): a language switch keeps the
-    // previous (now stale) card object in state while the new-language
-    // fetch is in flight — attempting with the old language's pitch would
-    // then permanently consume this identity's one attempt.
-    if (!card || cardLoading || !languageConfirmed || isDemoMode || isAutomatedBrowser || hasAutoAttemptedForRef.current === cardIdentity) return;
-    hasAutoAttemptedForRef.current = cardIdentity;
-
-    // Best-effort, silent-on-block: play the pre-recorded elevator pitch as
-    // the card's introduction. Browsers that block audible autoplay reject
-    // play() — nothing else happens, no fallback chain, no error state.
-    //
-    // The ref is claimed BEFORE play() settles so a visitor's own pitch tap
-    // during the pending window (a cold cache can hold play() open for
-    // seconds while the server renders TTS) can actually cancel this
-    // attempt — previously the audio lived outside the ref until .then, so
-    // stopPitch couldn't reach it and the late resolve then killed the
-    // visitor's chosen pitch and played the elevator over it.
-    const session = pitchSessionRef.current;
-    const audio = new Audio(`/api/public/${companyId}/${employeeId}/pitch?type=elevator&lang=${encodeURIComponent(language)}`);
-    pitchAudioRef.current = audio;
-    audio.onended = () => stopPitch();
-    audio
-      .play()
-      .then(() => {
-        // Superseded while pending (visitor tapped a pitch, or stopPitch
-        // ran for any reason) — that action owns playback now.
-        if (pitchSessionRef.current !== session) {
-          audio.pause();
-          audio.src = "";
-          return;
-        }
-        pitchSourceRef.current = "audio";
-        setPitchPlaying("elevator");
-      })
-      .catch(() => {
-        // Autoplay blocked or audio unavailable — the Listen buttons are the
-        // manual path, exactly as the browser's policy intends. Release the
-        // ref only if this attempt still owns it.
-        if (pitchAudioRef.current === audio) pitchAudioRef.current = null;
-        audio.src = "";
-      });
-    // playPitch/stopPitch identities change per render; the ref guard makes
-    // this run exactly once per card identity.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [card, cardLoading, cardIdentity, languageConfirmed, isDemoMode]);
 
   // The live conversation and a pre-recorded pitch are two different audio
   // sources — never let them talk over each other. A call starting (mic
@@ -442,7 +403,10 @@ export function PublicBusinessCard({
     }
   }, [isCallActive]);
 
-  const playPitch = (type: "elevator" | "product" | "usp") => {
+  // "intro" is the recorded introduction — same player, same fallback
+  // chain, same session-token guards; the ONLY difference is that finishing
+  // it unlocks Tap to Speak (see the onended/onEnd hooks below).
+  const playPitch = (type: "elevator" | "product" | "usp" | "intro") => {
     // Tapping the pitch that's already voicing toggles Pause/Resume; a
     // still-loading tap cancels. Tapping a different pitch switches to it.
     if (pitchPlaying === type) {
@@ -496,6 +460,9 @@ export function PublicBusinessCard({
             },
             onEnd: () => {
               if (pitchSessionRef.current !== session) return;
+              // A fully-heard introduction unlocks Tap to Speak — same
+              // rule on the fallback voice as on the audio element.
+              if (type === "intro") setIntroDone(true);
               setPitchPlaying(null);
               setPitchLoading(null);
             },
@@ -530,6 +497,9 @@ export function PublicBusinessCard({
     };
     audio.onended = () => {
       if (pitchSessionRef.current !== session) return;
+      // Completion — not cancellation — is what unlocks Tap to Speak: this
+      // handler only fires when the element actually reached the end.
+      if (type === "intro") setIntroDone(true);
       stopPitch();
     };
     audio.onerror = () => {
@@ -561,10 +531,14 @@ export function PublicBusinessCard({
   const statusLabel = useMemo(() => {
     if (voiceState === "idle") return t("status.availableNow");
     if (voiceState === "connecting") return t("status.preparingVoice");
-    if (voiceState === "speaking") return isPlayingIntro ? t("status.playingIntroduction") : t("status.speaking");
+    // "Playing Introduction" belongs EXCLUSIVELY to the recorded
+    // introduction now (2026-08-19 spec) — the call's scripted opening is
+    // simply the AI speaking, like any later reply. The mic-gating
+    // mechanics during that opening are unchanged; only the label moved.
+    if (voiceState === "speaking") return t("status.speaking");
     if (voiceState === "thinking") return t("status.thinking");
     return t("status.listening");
-  }, [voiceState, isPlayingIntro, t]);
+  }, [voiceState, t]);
 
   if (cardLoading || hasStoredPreference === null) {
     // Kept static/language-neutral rather than routed through t(): this can
@@ -758,52 +732,90 @@ export function PublicBusinessCard({
             <VoiceMicButton
               state={voiceState}
               isMuted={isMuted}
-              onClick={isCallActive ? endCall : startCall}
+              // The introduction state machine gates the conversation
+              // (2026-08-19 spec): before the recorded introduction has
+              // been heard, this button PLAYS it; once it has finished, the
+              // button becomes Tap to Speak and starts the AI call. While
+              // the introduction is playing/paused the button is disabled —
+              // Pause/Resume below are the only playback controls, and
+              // there is no path from here into a Vapi session.
+              onClick={
+                isCallActive
+                  ? endCall
+                  : introDone
+                    ? () =>
+                        // The recorded introduction already delivered the
+                        // full introduction content — the call opens with
+                        // the short, approved "now you can ask" line
+                        // instead of speaking the same introduction twice.
+                        startCall({ firstMessage: t("mic.nowYouCanAsk") })
+                    : () => playPitch("intro")
+              }
               ringActive={false}
-              // The mic is force-muted at the SDK level for the whole
+              // In-call: the mic stays force-muted at the SDK level for the
               // scripted opening (see useVapiSession.ts) — disabling the
-              // button too means there is no control on screen that looks
-              // interactive but does nothing, or that could end the intro
-              // early by racing the End Call action against it.
-              disabled={isPlayingIntro}
+              // button too means no control on screen looks interactive but
+              // does nothing. During recorded-intro playback the button is
+              // disabled for the same reason: Pause/Resume own that state.
+              disabled={isPlayingIntro || introActive}
               ariaLabels={{
-                idle: t("aria.startCall"),
+                idle: introActive
+                  ? t("aria.introPlaying")
+                  : introDone
+                    ? t("aria.startCall")
+                    : t("mic.playIntroduction"),
                 connecting: t("aria.connecting"),
                 listening: t("aria.listening"),
                 speaking: t("aria.speaking"),
                 thinking: t("aria.thinking"),
-                disabled: t("aria.introPlaying"),
+                disabled: introActive ? t("aria.introPlaying") : t("aria.speaking"),
               }}
             />
 
-            {/* "Talk with {name}'s AI" and the idle mic-permission helper
-                are removed by request — the resting card carries no heading
-                or microphone messaging here. In-call state copy remains. */}
-            {(isPlayingIntro || isCallActive) && (
-              <p className="text-sm text-slate-200 text-center font-semibold mt-4">
-                {isPlayingIntro
+            {/* Idle-state copy is the introduction state machine's: Play →
+                Playing Introduction (+Pause/Resume) → Tap to Speak. In-call
+                state copy is the AI conversation's — the two never mix. */}
+            {!isCallActive && (
+              <p className="text-sm text-slate-200 text-center font-semibold mt-4" data-testid="intro-state-label">
+                {introActive
                   ? t("status.playingIntroduction")
-                  : voiceState === "connecting"
-                    ? t("status.preparingVoice")
-                    : t("mic.tapToSpeak")}
+                  : introDone
+                    ? t("mic.tapToSpeak")
+                    : t("mic.playIntroduction")}
               </p>
             )}
-            {(isPlayingIntro || isCallActive) && (
+            {introActive && (
+              <div className="flex gap-2 mt-4">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={togglePitchPause}
+                  data-testid="intro-pause-resume"
+                  className="text-xs"
+                >
+                  {pitchPaused ? t("buttons.resumeVoice") : t("buttons.pauseVoice")}
+                </Button>
+              </div>
+            )}
+            {isCallActive && (
+              <p className="text-sm text-slate-200 text-center font-semibold mt-4">
+                {voiceState === "connecting" ? t("status.preparingVoice") : t("mic.tapToSpeak")}
+              </p>
+            )}
+            {isCallActive && (
               <p className="text-xs text-slate-400 text-center mt-1 max-w-xs">
-                {isPlayingIntro
-                  ? t("mic.introHelper")
-                  : voiceState === "connecting"
-                    ? t("mic.connectingHelper")
-                    : voiceState === "thinking"
-                      ? t("mic.thinkingHelper")
-                      : voiceState === "speaking"
-                        ? t("mic.speakingHelper")
-                        : // Exactly once per call — the moment the mic first opens
-                          // (no messages yet) — before settling into the more
-                          // detailed ongoing-conversation helper text.
-                          messages.length === 0
-                          ? t("mic.nowYouCanAsk")
-                          : t("mic.listeningHelper")}
+                {voiceState === "connecting"
+                  ? t("mic.connectingHelper")
+                  : voiceState === "thinking"
+                    ? t("mic.thinkingHelper")
+                    : voiceState === "speaking"
+                      ? t("mic.speakingHelper")
+                      : // Exactly once per call — the moment the mic first opens
+                        // (no messages yet) — before settling into the more
+                        // detailed ongoing-conversation helper text.
+                        messages.length === 0
+                        ? t("mic.nowYouCanAsk")
+                        : t("mic.listeningHelper")}
               </p>
             )}
 

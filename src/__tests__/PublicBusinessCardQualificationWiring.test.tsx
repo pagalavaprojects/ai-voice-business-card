@@ -52,9 +52,41 @@ function cardResponse(language: "ta" | "en" = "ta") {
   };
 }
 
+class IntroFakeAudio {
+  static instances: IntroFakeAudio[] = [];
+  src: string;
+  onplaying: (() => void) | null = null;
+  onended: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  constructor(src: string) {
+    this.src = src;
+    IntroFakeAudio.instances.push(this);
+  }
+  play() {
+    return Promise.resolve();
+  }
+  pause() {}
+}
+const RealAudioCtor = global.Audio;
+
+/** 2026-08-19 spec: the mic button plays the recorded introduction first;
+ * only after it completes does the button start the general AI call. This
+ * walks that gate so tests can reach the call-starting state. */
+async function completeIntroduction() {
+  const mic = await screen.findByTestId("voice-mic-button");
+  fireEvent.click(mic);
+  await act(async () => {
+    IntroFakeAudio.instances[IntroFakeAudio.instances.length - 1].onplaying?.();
+    IntroFakeAudio.instances[IntroFakeAudio.instances.length - 1].onended?.();
+  });
+  return mic;
+}
+
 describe("PublicBusinessCard — mic button vs. qualification call wiring", () => {
   beforeEach(() => {
     startCall.mockClear();
+    IntroFakeAudio.instances = [];
+    (global as unknown as { Audio: unknown }).Audio = IntroFakeAudio;
     window.localStorage.clear();
     // A stored preference skips the LanguageGate entirely, landing straight
     // on the main card view (mic button + Book an Appointment).
@@ -62,21 +94,27 @@ describe("PublicBusinessCard — mic button vs. qualification call wiring", () =
     global.fetch = jest.fn(() => Promise.resolve(cardResponse())) as unknown as typeof fetch;
   });
 
-  it("the plain mic button calls startCall with NO qualification overrides — general conversation, no closed-ended directive", async () => {
+  afterEach(() => {
+    (global as unknown as { Audio: unknown }).Audio = RealAudioCtor;
+  });
+
+  it("the mic button's general conversation carries NO qualification directive — and cannot start before the introduction completes", async () => {
     render(<PublicBusinessCard companyId="comp-1" employeeId="emp-1" />);
-    const mic = await screen.findByTestId("voice-mic-button");
+    const mic = await completeIntroduction();
+    // The intro click itself started no call.
+    expect(startCall).not.toHaveBeenCalled();
 
     await act(async () => {
       fireEvent.click(mic);
     });
 
     expect(startCall).toHaveBeenCalledTimes(1);
-    // The button binds startCall directly as its onClick handler, so the
-    // DOM click event is what actually lands in the "overrides" parameter —
-    // what matters is neither qualification field is ever set on it.
-    const arg = startCall.mock.calls[0][0] as { firstMessage?: unknown; systemPrompt?: unknown } | undefined;
-    expect(arg?.firstMessage).toBeUndefined();
-    expect(arg?.systemPrompt).toBeUndefined();
+    // The post-intro general call opens with the short approved line — and
+    // the isolation that matters: the qualification systemPrompt directive
+    // is NEVER set on this path.
+    const arg = startCall.mock.calls[0][0] as { firstMessage?: unknown; systemPrompt?: unknown };
+    expect(arg.firstMessage).toBe("இப்போது உங்கள் கேள்விகளைக் கேட்கலாம்");
+    expect(arg.systemPrompt).toBeUndefined();
   });
 
   it("a TAMIL card starts qualification with the TAMIL Q1 opening AND the Tamil directive — never leaking into the plain mic path", async () => {
@@ -101,15 +139,16 @@ describe("PublicBusinessCard — mic button vs. qualification call wiring", () =
     expect(overrides.systemPrompt).toContain("STRICT CLOSED-ENDED questionnaire");
     expect(overrides.systemPrompt).toContain("TAMIL ONLY");
 
-    // The plain mic button, untouched by the modal interaction above, must
-    // still be wired with no qualification overrides if used afterward.
+    // The plain mic button, untouched by the modal interaction above, is
+    // still behind the introduction gate: a tap plays the recorded intro,
+    // never a call — the qualification overrides can't leak into it because
+    // no call starts from it at all here.
     startCall.mockClear();
     await act(async () => {
       fireEvent.click(screen.getByTestId("voice-mic-button"));
     });
-    const micArg = startCall.mock.calls[0][0] as { firstMessage?: unknown; systemPrompt?: unknown } | undefined;
-    expect(micArg?.firstMessage).toBeUndefined();
-    expect(micArg?.systemPrompt).toBeUndefined();
+    expect(startCall).not.toHaveBeenCalled();
+    expect(IntroFakeAudio.instances.some((a) => a.src.includes("type=intro"))).toBe(true);
   });
 
   it("an ENGLISH card starts qualification with the ENGLISH Q1 opening and directive — no Tamil leaks into it", async () => {

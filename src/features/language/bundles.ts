@@ -35,7 +35,8 @@ export interface LocaleBundle {
     | "nowYouCanAsk"
     | "defaultFirstMessage"
     | "connectionError"
-    | "startCallError",
+    | "startCallError"
+    | "playIntroduction",
     string
   >;
   buttons: Record<"mute" | "unmute" | "endCall" | "bookMeeting" | "saveContact" | "contactSaved" | "shareQR" | "close", string>;

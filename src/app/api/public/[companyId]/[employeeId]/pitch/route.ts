@@ -5,7 +5,8 @@ import { SupabaseStorageAdapter } from "@/core/infrastructure/storage/SupabaseSt
 import { Logger } from "@/shared/lib/logger";
 import { isEmployeeCardVisible } from "@/shared/lib/employeeVisibility";
 import { checkRateLimitDistributed } from "@/shared/lib/rateLimit";
-import { resolveRequestLanguage } from "@/features/language/server";
+import { resolveRequestLanguage, resolveGreeting } from "@/features/language/server";
+import { agentRepo } from "@/core/infrastructure/bootstrap/assistantRuntime";
 import { composePitchScript, isPitchType, PitchSourceData } from "@/features/voice/lib/pitchScripts";
 import { GEMINI_TTS_MODEL, GEMINI_TTS_VOICE, isConfiguredKey, pcmToWav, renderGeminiPcm } from "@/shared/lib/tts/ttsBackends";
 
@@ -67,7 +68,15 @@ export async function GET(req: NextRequest, { params }: { params: { companyId: s
   const { companyId, employeeId } = params;
 
   const type = req.nextUrl.searchParams.get("type");
-  if (!isPitchType(type)) {
+  // "intro" (2026-08-19) is the card's recorded introduction — served
+  // through this route so it inherits the entire persist-then-serve cache
+  // stack, the Gemini/OpenAI/browser-TTS fallback chain, and the ETag
+  // handling. It is deliberately NOT added to PitchType/PITCH_TYPES: its
+  // script is the card's greeting (resolveGreeting — identical content to
+  // what the phone path speaks), not a composed pitch, and the LISTEN grid
+  // must not grow a fourth button.
+  const isIntro = type === "intro";
+  if (!isIntro && !isPitchType(type)) {
     return NextResponse.json({ message: "Unknown pitch type" }, { status: 400 });
   }
   const language = resolveRequestLanguage(req.nextUrl.searchParams.get("lang"));
@@ -81,11 +90,14 @@ export async function GET(req: NextRequest, { params }: { params: { companyId: s
     // One batch (2026-08-19 audit): services/products key only off the
     // URL's companyId, so awaiting them behind the identity pair cost a
     // serial DB round trip per uncached render. 404 still checked first.
-    const [company, employee, services, products] = await Promise.all([
+    // The agent row rides along only for the intro type — its greeting
+    // fields are the introduction's script source.
+    const [company, employee, services, products, agent] = await Promise.all([
       knowledgeRepo.getCompanyById(companyId),
       knowledgeRepo.getEmployeeById(employeeId),
       knowledgeRepo.getServicesByCompany(companyId).catch(() => []),
       knowledgeRepo.getProductsByCompany(companyId).catch(() => []),
+      isIntro ? agentRepo.getAgentByEmployee(employeeId).catch(() => null) : Promise.resolve(null),
     ]);
     if (!company || !employee || employee.company_id !== companyId || !isEmployeeCardVisible(employee)) {
       return NextResponse.json({ message: "Business card not found" }, { status: 404 });
@@ -101,7 +113,12 @@ export async function GET(req: NextRequest, { params }: { params: { companyId: s
       services: services.map((s) => ({ name: s.name, description: s.description })),
       products: products.map((p) => ({ name: p.name, description: p.description })),
     };
-    const script = composePitchScript(type, language, source);
+    // The introduction speaks EXACTLY what the phone path's greeting
+    // speaks — resolveGreeting is the single source of that content (the
+    // approved MAYLAANAI_INTRODUCTION for the demo company's English, the
+    // approved Tamil greeting for Tamil) — so the recorded intro and a
+    // phone caller's opening can never drift apart.
+    const script = isIntro ? resolveGreeting(agent, company, employee, language) : composePitchScript(type, language, source);
 
     if (wantsScript) {
       return NextResponse.json(
