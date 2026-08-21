@@ -160,3 +160,51 @@ describe("the user surface never carries platform-wide fields", () => {
     expect(serviceStatusKeys).not.toContain("cron");
   });
 });
+
+/**
+ * A platform admin administers the PLATFORM, so their reachable companies
+ * must not be derived from company_members. Regression: /api/admin/me
+ * resolved scope purely from membership rows, so a platform admin with no
+ * membership received an empty list and the dashboard rendered "No company
+ * selected" — making platform administration depend on company ownership,
+ * exactly the coupling the role model forbids. The helper below is the pure
+ * form of the rule the route applies.
+ */
+function resolveSelectableCompanies(
+  isPlatformAdmin: boolean,
+  memberships: Array<{ company_id: string; role: UserRole }>,
+  allCompanies: Array<{ id: string }>
+): Array<{ company_id: string; role: string }> {
+  if (!isPlatformAdmin) return memberships.map((m) => ({ company_id: m.company_id, role: m.role }));
+  const own = new Map(memberships.map((m) => [m.company_id, m]));
+  return allCompanies.map((c) => {
+    const mine = own.get(c.id);
+    return { company_id: c.id, role: mine ? mine.role : "PLATFORM_ADMIN" };
+  });
+}
+
+describe("selectable companies by role", () => {
+  const ALL = [{ id: COMPANY_A }, { id: COMPANY_B }];
+
+  it("gives a membership-less platform admin every company, so admin never depends on ownership", () => {
+    const selectable = resolveSelectableCompanies(true, [], ALL);
+    expect(selectable.map((s) => s.company_id).sort()).toEqual([COMPANY_A, COMPANY_B].sort());
+    expect(selectable.every((s) => s.role === "PLATFORM_ADMIN")).toBe(true);
+  });
+
+  it("keeps an admin's genuine membership role rather than relabelling it", () => {
+    const selectable = resolveSelectableCompanies(true, [{ company_id: COMPANY_A, role: "OWNER" }], ALL);
+    expect(selectable.find((s) => s.company_id === COMPANY_A)!.role).toBe("OWNER");
+    expect(selectable.find((s) => s.company_id === COMPANY_B)!.role).toBe("PLATFORM_ADMIN");
+  });
+
+  it("gives a NON-admin only their own memberships, never the whole platform", () => {
+    const selectable = resolveSelectableCompanies(false, [{ company_id: COMPANY_A, role: "OWNER" }], ALL);
+    expect(selectable).toEqual([{ company_id: COMPANY_A, role: "OWNER" }]);
+    expect(selectable.some((s) => s.company_id === COMPANY_B)).toBe(false);
+  });
+
+  it("gives an identity with no memberships and no admin flag nothing at all", () => {
+    expect(resolveSelectableCompanies(false, [], ALL)).toEqual([]);
+  });
+});

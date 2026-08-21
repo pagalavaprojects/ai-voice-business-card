@@ -27,3 +27,7 @@ node_modules
 
 .vercel
 .env*
+
+# Locally generated dashboard login credentials — never commit.
+*.local.txt
+.dashboard-credentials.local.txt
