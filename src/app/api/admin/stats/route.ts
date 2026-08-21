@@ -5,7 +5,18 @@ import { requireCompanyAccess } from "@/shared/lib/tenant";
 import { supabaseAdmin } from "@/shared/lib/supabase";
 import { computeTopTopics } from "@/shared/lib/dashboardTopics";
 import { buildProviderHealth } from "@/shared/lib/providerHealth";
-import { bookingConversionPercent, computeQualificationFunnel, mergeActivityFeed } from "@/shared/lib/dashboardLive";
+import {
+  bookingConversionPercent,
+  computeQualificationFunnel,
+  mergeActivityFeed,
+  resolveRangeWindow,
+  isDashboardRange,
+  computeLanguageSplit,
+  computeDailySeries,
+  computeWhatsAppBreakdown,
+  computeEmailBreakdown,
+  deriveBlockers,
+} from "@/shared/lib/dashboardLive";
 
 export const dynamic = "force-dynamic";
 
@@ -44,6 +55,36 @@ export async function GET(req: NextRequest) {
         : new Date(new Date(now).setUTCHours(0, 0, 0, 0)).toISOString();
 
     const scoped = () => supabaseAdmin.from("leads").select("id", { count: "exact", head: true }).eq("company_id", companyId).is("deleted_at", null);
+
+    // ---- Owner-selected range (single-page control centre) ----------------
+    // One extra batch, started alongside everything else, that answers the
+    // "how much am I using, over what period" half of the page. Rows are
+    // narrow (started_at + duration + language) and bounded, so the trend and
+    // the range KPIs cost one round trip rather than one per widget.
+    const rangeParam = req.nextUrl.searchParams.get("range");
+    const rangeWindow = resolveRangeWindow(isDashboardRange(rangeParam) ? rangeParam : "30d", now, todayStartParam);
+    const rangeBatch = Promise.all([
+      supabaseAdmin
+        .from("conversations")
+        .select("started_at, duration_seconds, language, status")
+        .eq("company_id", companyId)
+        .gte("started_at", rangeWindow.sinceIso)
+        .order("started_at", { ascending: false })
+        .limit(5000),
+      supabaseAdmin
+        .from("appointments")
+        .select("id", { count: "exact", head: true })
+        .eq("company_id", companyId)
+        .gte("created_at", rangeWindow.sinceIso),
+      // Email outcomes are company-scoped and small; the breakdown needs the
+      // provider id to tell a real acceptance from a simulated one.
+      supabaseAdmin
+        .from("email_logs")
+        .select("status, provider_message_id, template_name")
+        .eq("company_id", companyId)
+        .gte("created_at", rangeWindow.sinceIso)
+        .limit(1000),
+    ]);
 
     // ---- Live-overview additions (all company-scoped, all bounded) -------
     // Started HERE — before the core batch is awaited — because nothing in
@@ -255,9 +296,63 @@ export async function GET(req: NextRequest) {
       (notificationActivities.data ?? []) as Array<{ created_at: string; content: string | null; metadata?: Record<string, unknown> | null }>
     );
 
+    const [rangeConversations, rangeAppointments, rangeEmails] = await rangeBatch;
+    const rangeRows = (rangeConversations.data ?? []) as Array<{
+      started_at: string;
+      duration_seconds: number | null;
+      language: string | null;
+      status: string;
+    }>;
+    const rangeSeconds = rangeRows.reduce((sum, r) => sum + (Number(r.duration_seconds) || 0), 0);
+    const whatsappBreakdown = computeWhatsAppBreakdown(
+      summaryStamps as Array<{ channel?: string | null; audio_metadata?: { summaryNotification?: { sent: boolean } } | null }>,
+      (notificationActivities.data ?? []) as Array<{ created_at: string; content: string | null; metadata?: Record<string, unknown> | null }>
+    );
+    // WhatsApp-channel conversations are counted from the dedicated count
+    // query (whole history), not the range rows, so the category cannot
+    // silently change meaning with the selected range.
+    whatsappBreakdown.qualificationConversations = inboundWhatsApp.count ?? 0;
+    const emailBreakdown = computeEmailBreakdown(
+      (rangeEmails.data ?? []) as Array<{ status?: string | null; provider_message_id?: string | null; template_name?: string | null }>
+    );
+    const health = await buildProviderHealth({});
+
     return formatApiResponse(
       {
         generatedAt: new Date().toISOString(),
+        // ---- Owner-selected range ------------------------------------------
+        range: {
+          key: rangeWindow.range,
+          label: rangeWindow.label,
+          sinceIso: rangeWindow.sinceIso,
+          conversations: rangeRows.length,
+          voiceMinutes: Math.round((rangeSeconds / 60) * 10) / 10,
+          completedConversations: rangeRows.filter((r) => r.status !== "FAILED").length,
+          appointments: rangeAppointments.count ?? 0,
+          // Averages need a denominator; null renders as "—", never as 0s.
+          avgDurationSeconds: rangeRows.length > 0 ? Math.round(rangeSeconds / rangeRows.length) : null,
+          longestCallSeconds: rangeRows.reduce((max, r) => Math.max(max, Number(r.duration_seconds) || 0), 0) || null,
+          languageSplit: computeLanguageSplit(rangeRows),
+          series: computeDailySeries(rangeRows, rangeWindow, now),
+        },
+        whatsappBreakdown,
+        email: {
+          ...emailBreakdown,
+          // The provider gives no delivery callback, so the page must say
+          // "accepted", never "delivered".
+          deliveryConfirmable: false,
+          providerState: health.email,
+        },
+        // Pitch/introduction playback is NOT instrumented anywhere in this
+        // system — no table records a play, a render or a cache hit. Rather
+        // than invent counts, the page states what is and isn't measurable
+        // and shows the provider configuration that IS real.
+        tts: {
+          playbackInstrumented: false,
+          note: "Pitch and introduction playback is not instrumented; only provider state is measurable.",
+          providerState: health.tts,
+        },
+        issues: deriveBlockers(health as unknown as Record<string, string>, whatsappBreakdown, emailBreakdown),
         totalConversations,
         conversationsThisWeek: thisWeek,
         weekOverWeekPercent,
@@ -314,7 +409,9 @@ export async function GET(req: NextRequest) {
             lastOutcome: summaryStamps[0]?.audio_metadata?.summaryNotification ?? null,
           },
         },
-        providerHealth: await buildProviderHealth({}),
+        // Same object the range/issues blocks above were derived from —
+        // computed once per request, never probed twice.
+        providerHealth: health,
         activityFeed,
       },
       200,

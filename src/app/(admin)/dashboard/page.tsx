@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { MessageSquare, Users, Calendar, Clock, Loader2, AlertCircle, Download, MessagesSquare, Activity, Mic, TrendingUp } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/shared/ui/card";
@@ -11,6 +11,7 @@ import { apiFetch } from "@/shared/lib/apiClient";
 import { useLivePoll } from "@/features/dashboard/hooks/useLivePoll";
 import { useToast } from "@/shared/ui/toast";
 import { toCsv, downloadCsv } from "@/shared/lib/csv";
+import { CallVolumeChart } from "@/features/dashboard/components/charts";
 
 interface RecentLead {
   id: string;
@@ -85,7 +86,59 @@ interface DashboardStats {
     note: string;
   };
   activityFeed: ActivityEvent[];
+  range: {
+    key: DashboardRange;
+    label: string;
+    sinceIso: string;
+    conversations: number;
+    voiceMinutes: number;
+    completedConversations: number;
+    appointments: number;
+    avgDurationSeconds: number | null;
+    longestCallSeconds: number | null;
+    languageSplit: Record<string, number>;
+    series: Array<{ key: string; calls: number; minutes: number }>;
+  };
+  whatsappBreakdown: {
+    qualificationConversations: number;
+    appointmentConfirmations: { sent: number; failed: number };
+    ownerSummaries: { sent: number; failed: number };
+    reminders: { sent: number };
+  };
+  email: {
+    providerAccepted: number;
+    failed: number;
+    simulated: number;
+    clientConfirmations: number;
+    adminConfirmations: number;
+    deliveryConfirmable: boolean;
+    providerState: string;
+  };
+  tts: { playbackInstrumented: boolean; note: string; providerState: string };
+  issues: Array<{ id: string; problem: string; status: string; action: string; severity: "blocked" | "degraded" }>;
 }
+
+type DashboardRange = "today" | "7d" | "30d" | "90d";
+
+const RANGE_OPTIONS: Array<{ key: DashboardRange; label: string }> = [
+  { key: "today", label: "Today" },
+  { key: "7d", label: "7D" },
+  { key: "30d", label: "30D" },
+  { key: "90d", label: "90D" },
+];
+
+/** Human labels for the language codes the conversations table persists.
+ * Anything unrecognised falls back to the raw code rather than being
+ * relabelled or hidden. */
+const LANGUAGE_LABELS: Record<string, string> = {
+  en: "English",
+  ta: "Tamil",
+  hi: "Hindi",
+  te: "Telugu",
+  ml: "Malayalam",
+  kn: "Kannada",
+  unspecified: "Unspecified (legacy)",
+};
 
 /** Live refresh cadence for operational metrics. Provider health rides the
  * same consolidated request, so nothing polls separately. */
@@ -123,19 +176,34 @@ export default function DashboardOverviewPage() {
   const { activeCompanyId, loading: companyLoading } = useCompany();
   const { showToast } = useToast();
 
+  const [range, setRange] = useState<DashboardRange>("30d");
+
   const fetchStats = useCallback(async () => {
     // The owner's LOCAL midnight defines "today" — computed here because
     // only the browser knows the owner's timezone.
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
     return apiFetch<DashboardStats>(
-      `/api/admin/stats?companyId=${activeCompanyId}&todayStart=${encodeURIComponent(todayStart.toISOString())}`
+      `/api/admin/stats?companyId=${activeCompanyId}&todayStart=${encodeURIComponent(todayStart.toISOString())}&range=${range}`
     );
-  }, [activeCompanyId]);
+  }, [activeCompanyId, range]);
 
   const { data: stats, status, lastUpdatedAt, error: pollError, refresh } = useLivePoll(fetchStats, LIVE_REFRESH_MS, Boolean(activeCompanyId));
   const loading = status === "loading";
   const error = status === "error" ? pollError : null;
+
+  // The poll hook keeps its fetcher in a ref (so a changing closure never
+  // restarts the timer), which means a new range would otherwise wait up to
+  // a full interval to appear. Refresh immediately on an actual range
+  // CHANGE — skipping the first render, where the hook has already fetched.
+  const mountedRangeRef = useRef(false);
+  useEffect(() => {
+    if (!mountedRangeRef.current) {
+      mountedRangeRef.current = true;
+      return;
+    }
+    refresh();
+  }, [range, refresh]);
 
   const exportRecentLeads = () => {
     if (!stats || stats.recentLeads.length === 0) return;
@@ -171,10 +239,30 @@ export default function DashboardOverviewPage() {
     <div className="space-y-8 max-w-7xl mx-auto">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-slate-100 tracking-tight">System Overview</h1>
-          <p className="text-xs text-slate-400">Live metrics from your own conversations, leads and appointments.</p>
+          <h1 className="text-2xl font-bold text-slate-100 tracking-tight">MaylaanAI</h1>
+          <p className="text-xs text-slate-400">
+            Your Business Insight, Backed by Deep-Tech — live metrics from your own conversations, leads and appointments.
+          </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Range control. Changing it re-keys the live fetch, so the whole
+              page moves to the new window in ONE request — no per-widget
+              refetch. */}
+          <div className="inline-flex rounded-lg border border-white/[0.08] bg-white/[0.02] p-0.5" role="group" aria-label="Time range">
+            {RANGE_OPTIONS.map((opt) => (
+              <button
+                key={opt.key}
+                type="button"
+                onClick={() => setRange(opt.key)}
+                aria-pressed={range === opt.key}
+                className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-colors ${
+                  range === opt.key ? "bg-sky-500/20 text-sky-200" : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
           <span
             className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11px] font-semibold ${STATUS_META[status].className}`}
             role="status"
@@ -444,6 +532,208 @@ export default function DashboardOverviewPage() {
             </div>
           )}
 
+          {/* ---- Current blockers. Rendered ONLY from persisted evidence
+              (recorded send failures, probe results) — a provider that is
+              merely unused raises nothing. Server-derived so the rule lives
+              in one tested place, not in JSX. ---- */}
+          {stats.issues.length > 0 && (
+            <Card className="glass-panel border-white/[0.08] p-6 space-y-3">
+              <div>
+                <h2 className="text-base font-bold text-slate-100">Current blockers</h2>
+                <p className="text-xs text-slate-400">Active issues with recorded evidence, and what resolves each one.</p>
+              </div>
+              <ul className="space-y-2.5">
+                {stats.issues.map((issue) => (
+                  <li
+                    key={issue.id}
+                    className={`p-3 rounded-xl border ${
+                      issue.severity === "blocked" ? "bg-rose-500/[0.08] border-rose-500/20" : "bg-amber-500/[0.07] border-amber-500/20"
+                    }`}
+                  >
+                    <div className="flex items-start gap-2.5">
+                      <AlertCircle
+                        className={`h-4 w-4 shrink-0 mt-0.5 ${issue.severity === "blocked" ? "text-rose-400" : "text-amber-400"}`}
+                        aria-hidden="true"
+                      />
+                      <div className="min-w-0">
+                        <p className="text-xs font-semibold text-slate-100">{issue.problem}</p>
+                        <p className="text-[11px] text-slate-300 mt-0.5">{issue.status}</p>
+                        <p className="text-[11px] text-slate-400 mt-1">Action: {issue.action}</p>
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          )}
+
+          {/* ---- AI voice usage for the selected range ---- */}
+          <Card className="glass-panel border-white/[0.08] p-6 space-y-5">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <div>
+                <h2 className="text-base font-bold text-slate-100">AI voice usage</h2>
+                <p className="text-xs text-slate-400">
+                  {stats.range.label} · every figure counted from your own conversation records.
+                </p>
+              </div>
+              <span className="text-[11px] text-slate-500">since {new Date(stats.range.sinceIso).toLocaleDateString()}</span>
+            </div>
+
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              <RangeStat label="Conversations" value={String(stats.range.conversations)} hint={stats.range.label} />
+              <RangeStat label="Voice minutes" value={stats.range.voiceMinutes.toFixed(1)} hint="Sum of recorded call durations" />
+              <RangeStat
+                label="Average call"
+                value={formatDuration(stats.range.avgDurationSeconds)}
+                hint={stats.range.conversations === 0 ? "No calls in range" : "Mean recorded duration"}
+              />
+              <RangeStat
+                label="Longest call"
+                value={formatDuration(stats.range.longestCallSeconds)}
+                hint={stats.range.longestCallSeconds === null ? "No calls in range" : "Single longest recorded call"}
+              />
+            </div>
+
+            {stats.range.conversations === 0 ? (
+              <p className="text-xs text-slate-400 py-6 text-center">No AI conversations in this range.</p>
+            ) : (
+              <div className="grid lg:grid-cols-2 gap-5">
+                <div>
+                  <h3 className="text-xs font-semibold text-slate-300 mb-2">Calls per day</h3>
+                  <CallVolumeChart data={stats.range.series.map((p) => ({ key: p.key, calls: p.calls }))} label="Calls" />
+                </div>
+                <div>
+                  <h3 className="text-xs font-semibold text-slate-300 mb-2">Voice minutes per day</h3>
+                  <CallVolumeChart data={stats.range.series.map((p) => ({ key: p.key, calls: p.minutes }))} label="Minutes" />
+                </div>
+              </div>
+            )}
+
+            <div>
+              <h3 className="text-xs font-semibold text-slate-300 mb-2">Conversation language</h3>
+              {Object.keys(stats.range.languageSplit).length === 0 ? (
+                <p className="text-xs text-slate-400">No data</p>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {Object.entries(stats.range.languageSplit)
+                    .sort((a, b) => b[1] - a[1])
+                    .map(([code, count]) => (
+                      <span
+                        key={code}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-white/[0.08] bg-white/[0.03] text-[11px] text-slate-200"
+                      >
+                        {LANGUAGE_LABELS[code] ?? code}
+                        <span className="font-mono font-bold tabular-nums text-slate-100">{count}</span>
+                      </span>
+                    ))}
+                </div>
+              )}
+            </div>
+          </Card>
+
+          {/* ---- Notification truth: four DISTINCT WhatsApp categories, and
+              email acceptance that never claims delivery. ---- */}
+          <div className="grid lg:grid-cols-2 gap-5">
+            <Card className="glass-panel border-white/[0.08] p-6 space-y-4">
+              <div>
+                <h2 className="text-base font-bold text-slate-100">WhatsApp activity</h2>
+                <p className="text-xs text-slate-400">
+                  &ldquo;Sent&rdquo; means the provider accepted the message. Handset delivery is not observable here.
+                </p>
+              </div>
+              <dl className="space-y-2 text-xs">
+                <OutcomeRow label="Qualification conversations (inbound)" value={String(stats.whatsappBreakdown.qualificationConversations)} />
+                <OutcomeRow
+                  label="Appointment confirmations"
+                  value={`${stats.whatsappBreakdown.appointmentConfirmations.sent} sent / ${stats.whatsappBreakdown.appointmentConfirmations.failed} failed`}
+                  warn={stats.whatsappBreakdown.appointmentConfirmations.failed > 0}
+                />
+                <OutcomeRow
+                  label="Owner conversation summaries"
+                  value={`${stats.whatsappBreakdown.ownerSummaries.sent} sent / ${stats.whatsappBreakdown.ownerSummaries.failed} failed`}
+                  warn={stats.whatsappBreakdown.ownerSummaries.failed > 0}
+                />
+                <OutcomeRow label="24-hour reminders" value={String(stats.whatsappBreakdown.reminders.sent)} />
+              </dl>
+            </Card>
+
+            <Card className="glass-panel border-white/[0.08] p-6 space-y-4">
+              <div>
+                <h2 className="text-base font-bold text-slate-100">Email</h2>
+                <p className="text-xs text-slate-400">
+                  Provider state: {stats.email.providerState}. No delivery receipts are available, so these are acceptances.
+                </p>
+              </div>
+              <dl className="space-y-2 text-xs">
+                <OutcomeRow label="Accepted by provider" value={String(stats.email.providerAccepted)} />
+                <OutcomeRow label="Failed" value={String(stats.email.failed)} warn={stats.email.failed > 0} />
+                <OutcomeRow label="Client confirmations" value={String(stats.email.clientConfirmations)} />
+                <OutcomeRow label="Admin confirmations" value={String(stats.email.adminConfirmations)} />
+                {stats.email.simulated > 0 && (
+                  <OutcomeRow label="Simulated (never delivered)" value={String(stats.email.simulated)} warn />
+                )}
+              </dl>
+            </Card>
+          </div>
+
+          {/* ---- Consumption & cost. Consumption is measured; monetary cost
+              is NOT recorded anywhere in this system, so it is declared
+              unavailable rather than estimated from an assumed price. ---- */}
+          <div className="grid lg:grid-cols-2 gap-5">
+            <Card className="glass-panel border-white/[0.08] p-6 space-y-4">
+              <div>
+                <h2 className="text-base font-bold text-slate-100">Consumption &amp; cost</h2>
+                <p className="text-xs text-slate-400">Measured usage for {stats.range.label.toLowerCase()}.</p>
+              </div>
+              <dl className="space-y-2 text-xs">
+                <OutcomeRow label="AI voice calls" value={String(stats.range.conversations)} />
+                <OutcomeRow label="AI voice minutes" value={stats.range.voiceMinutes.toFixed(1)} />
+                <OutcomeRow label="Appointments created" value={String(stats.range.appointments)} />
+                <OutcomeRow label="Qualification conversations" value={String(stats.qualificationFunnel.q1)} />
+              </dl>
+              <div className="p-3 rounded-xl bg-white/[0.03] border border-white/[0.08]">
+                <p className="text-[11px] font-semibold text-slate-200">Cost data unavailable</p>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  Provider charges are not recorded in this system, so no monetary figure is shown. Usage above is measured;
+                  any cost number here would be an assumption.
+                </p>
+              </div>
+            </Card>
+
+            <Card className="glass-panel border-white/[0.08] p-6 space-y-4">
+              <div>
+                <h2 className="text-base font-bold text-slate-100">Pitch &amp; introduction audio</h2>
+                <p className="text-xs text-slate-400">Pre-recorded playback — a separate system from the live AI conversation.</p>
+              </div>
+              <dl className="space-y-2 text-xs">
+                <OutcomeRow label="Speech provider" value={stats.tts.providerState} warn={!/available|configured/.test(stats.tts.providerState)} />
+              </dl>
+              <div className="p-3 rounded-xl bg-white/[0.03] border border-white/[0.08]">
+                <p className="text-[11px] font-semibold text-slate-200">Playback not measurable</p>
+                <p className="text-[11px] text-slate-400 mt-0.5">{stats.tts.note}</p>
+              </div>
+            </Card>
+          </div>
+
+          {/* ---- Project information. Non-sensitive facts only. ---- */}
+          <Card className="glass-panel border-white/[0.08] p-6 space-y-4">
+            <div>
+              <h2 className="text-base font-bold text-slate-100">Project information</h2>
+              <p className="text-xs text-slate-400">Configuration as this deployment actually reports it.</p>
+            </div>
+            <dl className="grid sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-2 text-xs">
+              <OutcomeRow label="Project" value="MaylaanAI" />
+              <OutcomeRow label="AI voice" value={stats.providerHealth.vapi} />
+              <OutcomeRow label="Calendar" value={stats.providerHealth.calendar} />
+              <OutcomeRow label="WhatsApp" value={stats.providerHealth.whatsapp} />
+              <OutcomeRow label="Email" value={stats.providerHealth.email} />
+              <OutcomeRow label="Scheduled reminders" value={stats.providerHealth.cron} />
+              <OutcomeRow label="Database" value={stats.providerHealth.database} />
+              <OutcomeRow label="Speech (pitch audio)" value={stats.providerHealth.tts} />
+              <OutcomeRow label="Last successful sync" value={lastUpdatedAt ? new Date(lastUpdatedAt).toLocaleTimeString() : "—"} />
+            </dl>
+          </Card>
+
           <Card className="glass-panel border-white/[0.08] p-6 space-y-4">
             <div className="flex items-center justify-between">
               <div>
@@ -602,5 +892,28 @@ function Metric({
         <p className={`text-[11px] font-medium mt-1 ${toneClass}`}>{sub}</p>
       </CardContent>
     </Card>
+  );
+}
+
+/** A single range-scoped figure. `hint` states what the number is counted
+ * from, so no value on this page is unexplained. */
+function RangeStat({ label, value, hint }: { label: string; value: string; hint: string }) {
+  return (
+    <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/[0.08]">
+      <p className="text-[11px] font-semibold text-slate-400">{label}</p>
+      <p className="text-xl font-extrabold text-slate-100 font-mono tabular-nums mt-0.5">{value}</p>
+      <p className="text-[10px] text-slate-500 mt-0.5">{hint}</p>
+    </div>
+  );
+}
+
+/** A label/value row for recorded outcomes. `warn` tints only when the value
+ * genuinely represents a failure — never as decoration. */
+function OutcomeRow({ label, value, warn = false }: { label: string; value: string; warn?: boolean }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <dt className="text-slate-300">{label}</dt>
+      <dd className={`font-mono font-bold tabular-nums ${warn ? "text-amber-300" : "text-slate-100"}`}>{value}</dd>
+    </div>
   );
 }
