@@ -128,6 +128,20 @@ export function computeDailySeries(
 ): DailyPoint[] {
   const buckets = new Map<string, { calls: number; seconds: number }>();
   const sinceMs = Date.parse(window.sinceIso);
+
+  // A single-day window is the OWNER's local day, which generally is not a
+  // UTC day: for an IST owner it begins 18:30Z the previous date. Bucketing
+  // those rows by their UTC date therefore both mislabels the bar and drops
+  // the rows — observed live as "4 conversations" beside a bar reading 0 on
+  // yesterday's date. Every row the query returned is by definition inside
+  // this one day, so they all belong to one bucket, labelled with the
+  // owner's own date (taken at local midday, which lands on the correct
+  // date for every real UTC offset).
+  if (window.days === 1) {
+    const ownerDate = new Date(sinceMs + 12 * 3600_000).toISOString().slice(0, 10);
+    const seconds = rows.reduce((sum, r) => sum + (Number(r.duration_seconds) || 0), 0);
+    return [{ key: ownerDate, calls: rows.length, minutes: Math.round((seconds / 60) * 10) / 10 }];
+  }
   for (let i = 0; i < window.days; i++) {
     const day = new Date(sinceMs + i * 24 * 3600_000);
     if (day.getTime() > nowMs + 24 * 3600_000) break;

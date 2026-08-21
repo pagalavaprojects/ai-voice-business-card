@@ -19,6 +19,8 @@ import {
   bookingConversionPercent,
   computeQualificationFunnel,
 } from "@/shared/lib/dashboardLive";
+import { isConfiguredValue } from "@/shared/lib/providerHealth";
+import { isPlaceholderCredential } from "@/shared/lib/security";
 
 const NOW = Date.parse("2026-08-21T12:00:00.000Z");
 
@@ -104,6 +106,38 @@ describe("computeDailySeries", () => {
     expect(day.calls).toBe(2);
     expect(day.minutes).toBe(2); // 120s
     expect(series.reduce((s, p) => s + p.calls, 0)).toBe(2); // the stray row is not counted
+  });
+
+  it("a single-day window buckets every row it was given, labelled with the OWNER's date", () => {
+    // Regression seen live for an IST owner (UTC+5:30): their local day
+    // starts 18:30Z the previous date, so bucketing by UTC date labelled the
+    // bar "2026-08-20" AND counted 0 calls, directly contradicting the "4
+    // conversations" KPI beside it.
+    const ownerMidnight = "2026-08-20T18:30:00.000Z"; // = 2026-08-21 00:00 IST
+    const w = resolveRangeWindow("today", Date.parse("2026-08-21T09:00:00.000Z"), ownerMidnight);
+    const series = computeDailySeries(
+      [
+        { started_at: "2026-08-20T19:00:00.000Z", duration_seconds: 60 }, // early local day, previous UTC date
+        { started_at: "2026-08-21T04:00:00.000Z", duration_seconds: 120 }, // later same local day
+      ],
+      w,
+      Date.parse("2026-08-21T09:00:00.000Z")
+    );
+    expect(series).toHaveLength(1);
+    expect(series[0].key).toBe("2026-08-21"); // the owner's date, not the UTC date of their midnight
+    expect(series[0].calls).toBe(2); // no row dropped across the UTC date boundary
+    expect(series[0].minutes).toBe(3);
+  });
+
+  it("a single-day bucket never contradicts the range KPI count", () => {
+    const w = resolveRangeWindow("today", NOW, "2026-08-20T18:30:00.000Z");
+    const rows = [
+      { started_at: "2026-08-20T19:00:00.000Z", duration_seconds: 30 },
+      { started_at: "2026-08-21T02:00:00.000Z", duration_seconds: 30 },
+      { started_at: "2026-08-21T08:00:00.000Z", duration_seconds: 30 },
+    ];
+    const series = computeDailySeries(rows, w, NOW);
+    expect(series.reduce((s, p) => s + p.calls, 0)).toBe(rows.length);
   });
 
   it("treats a null duration as zero minutes without dropping the call", () => {
@@ -222,6 +256,54 @@ describe("deriveBlockers", () => {
     expect(blockers.length).toBeGreaterThan(0);
     const text = blockers.map((b) => `${b.problem} ${b.status} ${b.action}`).join(" ");
     expect(text).not.toMatch(/api[_-]?key|secret|token=|bearer|sk-|re_[A-Za-z0-9]{10}|supabase\.co|graph\.facebook/i);
+  });
+});
+
+describe("provider-health honesty: one definition of a real credential", () => {
+  /**
+   * Regression for a defect seen on the LIVE dashboard: the health pills used
+   * a laxer placeholder test than the adapters that actually send, so the
+   * page displayed "Email: configured" while every send failed closed with
+   * "Email provider not configured" and the booking audit recorded exactly
+   * that. A health pill must never contradict the runtime.
+   */
+  it("agrees with the send path's placeholder test for every value shape", () => {
+    const shapes = [
+      "your-key-here",
+      "placeholder",
+      "example-key",
+      "xxxx",
+      "changeme",
+      "sample",
+      "dummy",
+      "replace",
+      "todo",
+      "test",
+      "demo",
+      // The template shape that caused the live mismatch: lowercase words
+      // joined by separators, which reads like a real key but is not one.
+      "resend-api-key",
+      "my_email_provider_key",
+      "",
+      undefined,
+      // ...and genuine-looking credentials, which must stay "configured".
+      "re_8Kd93jXmQp02LasdfQ",
+      "sk-proj-9dK2mfoQ",
+      "b8c69ca9-64a7-43b1-9020-9f820bd6eda7",
+    ];
+    for (const value of shapes) {
+      expect(isConfiguredValue(value)).toBe(!isPlaceholderCredential(value));
+    }
+  });
+
+  it("treats a lowercase-words placeholder as NOT configured", () => {
+    expect(isConfiguredValue("resend-api-key")).toBe(false);
+    expect(isConfiguredValue("changeme")).toBe(false);
+  });
+
+  it("still treats a realistic key as configured", () => {
+    expect(isConfiguredValue("re_8Kd93jXmQp02LasdfQ")).toBe(true);
+    expect(isConfiguredValue("b8c69ca9-64a7-43b1-9020-9f820bd6eda7")).toBe(true);
   });
 });
 

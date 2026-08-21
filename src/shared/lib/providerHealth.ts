@@ -1,9 +1,23 @@
 import { resolvePublicBaseUrl } from "@/shared/lib/publicUrl";
+import { isPlaceholderCredential } from "@/shared/lib/security";
 
-/** True when the env var holds a real-looking value rather than a
- * placeholder — the same test security.ts applies to webhook secrets. */
+/**
+ * True when the env var holds a real-looking value rather than a placeholder.
+ *
+ * Delegates to isPlaceholderCredential — the SAME test the adapters that
+ * actually send apply — rather than keeping a second, laxer pattern here.
+ * They had drifted apart: this file rejected only `your-/placeholder/
+ * example/xxxx`, while the email adapter additionally rejects
+ * `changeme|sample|dummy|replace|todo|test|demo|xxx` and the
+ * lowercase-words-with-separators template shape. The consequence was
+ * observed on the live dashboard: it told the owner "Email: configured"
+ * while every send failed closed with "Email provider not configured" and
+ * the booking audit recorded exactly that. A health pill that contradicts
+ * the runtime is worse than no pill, so there is now one definition of
+ * "this credential is real" for both.
+ */
 export function isConfiguredValue(v: string | undefined): boolean {
-  return Boolean(v && !/your-|placeholder|example|xxxx/i.test(v));
+  return !isPlaceholderCredential(v);
 }
 
 export interface ProviderHealth {
