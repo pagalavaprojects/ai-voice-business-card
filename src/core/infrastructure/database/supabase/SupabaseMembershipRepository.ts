@@ -15,6 +15,18 @@ export class SupabaseMembershipRepository implements IMembershipRepository {
     return (data as CompanyMember) || null;
   }
 
+  async listActiveMembershipsForUser(userId: string): Promise<CompanyMember[]> {
+    const { data, error } = await supabaseAdmin
+      .from("company_members")
+      .select()
+      .eq("user_id", userId)
+      .eq("status", "ACTIVE")
+      .order("created_at", { ascending: true });
+
+    if (error) throw new Error(`SupabaseMembershipRepository.listActiveMembershipsForUser failed: ${error.message}`);
+    return (data as CompanyMember[]) || [];
+  }
+
   async listMembers(companyId: string): Promise<Array<CompanyMember & { user: UserProfile | null }>> {
     const { data, error } = await supabaseAdmin
       .from("company_members")

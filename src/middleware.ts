@@ -20,7 +20,7 @@ export async function middleware(request: NextRequest) {
   // requireCompanyAccess (Node runtime), which all 28 admin routes await.
   // The ceiling here is deliberately looser so it catches abuse without
   // pre-empting the accurate limit downstream.
-  if (request.nextUrl.pathname.startsWith("/api/admin")) {
+  if (request.nextUrl.pathname.startsWith("/api/admin") || request.nextUrl.pathname.startsWith("/api/user")) {
     const identifier = request.headers.get("x-forwarded-for") || "unknown";
     const { allowed } = checkRateLimit(`admin:${identifier}`, 300, 60_000);
     if (!allowed) {
@@ -67,7 +67,11 @@ export async function middleware(request: NextRequest) {
   // Protect Admin Dashboard and Admin API Routes
   const isProtectedPath =
     request.nextUrl.pathname.startsWith("/dashboard") ||
-    request.nextUrl.pathname.startsWith("/api/admin");
+    request.nextUrl.pathname.startsWith("/api/admin") ||
+    // The user dashboard's API. Its route handler is the authoritative gate
+    // (it derives the tenant from the session), but rejecting anonymous
+    // callers at the edge keeps them off the database entirely.
+    request.nextUrl.pathname.startsWith("/api/user");
 
   if (isProtectedPath && !user) {
     // Demo-mode bypass is only permitted outside production. Production must
@@ -77,7 +81,7 @@ export async function middleware(request: NextRequest) {
       return response;
     }
 
-    if (request.nextUrl.pathname.startsWith("/api/admin")) {
+    if (request.nextUrl.pathname.startsWith("/api/admin") || request.nextUrl.pathname.startsWith("/api/user")) {
       return NextResponse.json(
         { status: 401, success: false, message: "Unauthorized", data: null, errors: ["Authentication required"] },
         { status: 401 }
@@ -92,5 +96,5 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/api/admin/:path*"],
+  matcher: ["/dashboard/:path*", "/api/admin/:path*", "/api/user/:path*"],
 };
