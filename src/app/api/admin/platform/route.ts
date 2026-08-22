@@ -72,7 +72,7 @@ export async function GET(req: NextRequest) {
       // Platform-wide, so deliberately NOT company-filtered.
       supabaseAdmin
         .from("conversations")
-        .select("started_at, duration_seconds, language, status, channel")
+        .select("started_at, duration_seconds, language, status, channel, employee_id")
         .gte("started_at", window.sinceIso)
         .order("started_at", { ascending: false })
         .limit(10000),
@@ -124,6 +124,63 @@ export async function GET(req: NextRequest) {
     );
     const health = await buildProviderHealth({});
 
+    // Per-person breakdown: who on the platform is generating what. Built
+    // from the SAME rows already fetched for the platform totals plus one
+    // narrow employee/company listing, so it adds a single query rather
+    // than a query per person, and the parts sum to the whole rather than
+    // double-counting.
+    const [employeeList, companyList, apptByEmployeeRows, funnelByEmployeeRows] = await Promise.all([
+      supabaseAdmin.from("employees").select("id, name, email, company_id, user_id").is("deleted_at", null).limit(500),
+      supabaseAdmin.from("companies").select("id, name").limit(500),
+      supabaseAdmin.from("appointments").select("employee_id").limit(5000),
+      supabaseAdmin
+        .from("leads")
+        .select("employee_id, qualification_notes")
+        .is("deleted_at", null)
+        .like("qualification_notes", "%Q1 [%")
+        .limit(5000),
+    ]);
+    const companyNames = new Map(((companyList.data ?? []) as Array<{ id: string; name: string }>).map((c) => [c.id, c.name]));
+    const perEmployee = new Map<string, { calls: number; seconds: number }>();
+    for (const row of (rangeConversations.data ?? []) as Array<{ employee_id: string | null; duration_seconds: number | null }>) {
+      const key = row.employee_id ?? "unattributed";
+      const bucket = perEmployee.get(key) ?? { calls: 0, seconds: 0 };
+      bucket.calls++;
+      bucket.seconds += Number(row.duration_seconds) || 0;
+      perEmployee.set(key, bucket);
+    }
+    const apptByEmployee = new Map<string, number>();
+    for (const a of (apptByEmployeeRows.data ?? []) as Array<{ employee_id: string | null }>) {
+      const key = a.employee_id ?? "unattributed";
+      apptByEmployee.set(key, (apptByEmployee.get(key) ?? 0) + 1);
+    }
+    const leadFunnelByEmployee = new Map<string, number>();
+    for (const l of (funnelByEmployeeRows.data ?? []) as Array<{ employee_id: string | null; qualification_notes: string | null }>) {
+      const key = l.employee_id ?? "unattributed";
+      // Reuses the tested funnel helper so "completed" means exactly
+      // what it means everywhere else — no second definition to drift.
+      const completed = computeQualificationFunnel([{ qualification_notes: l.qualification_notes }]).completed > 0;
+      if (completed) leadFunnelByEmployee.set(key, (leadFunnelByEmployee.get(key) ?? 0) + 1);
+    }
+    const userBreakdown = ((employeeList.data ?? []) as Array<{ id: string; name: string; email: string | null; company_id: string; user_id: string | null }>)
+      .map((e) => {
+        const usage = perEmployee.get(e.id) ?? { calls: 0, seconds: 0 };
+        return {
+          employeeId: e.id,
+          name: e.name,
+          email: e.email,
+          company: companyNames.get(e.company_id) ?? null,
+          // Whether this person can actually sign in and see their own
+          // dashboard — an employee record with no linked login cannot.
+          hasLogin: Boolean(e.user_id),
+          calls: usage.calls,
+          voiceMinutes: Math.round((usage.seconds / 60) * 10) / 10,
+          completedQualifications: leadFunnelByEmployee.get(e.id) ?? 0,
+          appointments: apptByEmployee.get(e.id) ?? 0,
+        };
+      })
+      .sort((a, b) => b.calls - a.calls);
+
     return formatApiResponse(
       {
         generatedAt: new Date().toISOString(),
@@ -145,6 +202,7 @@ export async function GET(req: NextRequest) {
           languageSplit: computeLanguageSplit(rows),
           series: computeDailySeries(rows, window, now),
         },
+        userBreakdown,
         qualificationFunnel: funnel,
         bookingConversion: {
           definition: "Confirmed appointments ÷ completed six-question qualifications (platform-wide).",

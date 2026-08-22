@@ -27,6 +27,24 @@ export class SupabaseMembershipRepository implements IMembershipRepository {
     return (data as CompanyMember[]) || [];
   }
 
+  /** The employee record this login owns, if any. Used to narrow a staff
+   * member's dashboard to their OWN rows — the link that makes two staff
+   * logins in one company genuinely separate. Deleted employees are
+   * excluded so a removed account cannot keep reading. */
+  async findEmployeeForUser(userId: string, companyId: string): Promise<{ id: string } | null> {
+    const { data, error } = await supabaseAdmin
+      .from("employees")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("company_id", companyId)
+      .is("deleted_at", null)
+      .limit(1)
+      .maybeSingle();
+
+    if (error) throw new Error(`SupabaseMembershipRepository.findEmployeeForUser failed: ${error.message}`);
+    return data ? { id: data.id as string } : null;
+  }
+
   async listMembers(companyId: string): Promise<Array<CompanyMember & { user: UserProfile | null }>> {
     const { data, error } = await supabaseAdmin
       .from("company_members")

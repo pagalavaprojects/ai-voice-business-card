@@ -44,8 +44,23 @@ export async function GET(req: NextRequest) {
       req.nextUrl.searchParams.get("todayStart")
     );
 
+    // Staff see ONLY rows attributed to their own employee record; an
+    // OWNER/ADMIN runs the tenant and legitimately sees all of it. The
+    // narrowing is applied to every query that CAN carry an employee, so
+    // two staff logins in one company are genuinely separate rather than
+    // two views of the same numbers. A staff account with no linked
+    // employee resolves to an impossible id rather than falling back to
+    // company-wide reading — an unlinked account must read nothing.
+    const employeeScoped = scope.breadth === "employee";
+    const ownEmployeeId = scope.employeeId ?? "00000000-0000-0000-0000-000000000000";
+    // Expressed as a match object rather than chained .eq() calls so the
+    // employee narrowing is one value applied identically everywhere.
+    const scopeMatch: Record<string, string> = employeeScoped
+      ? { company_id: companyId, employee_id: ownEmployeeId }
+      : { company_id: companyId };
+
     const scopedCount = (table: string) =>
-      supabaseAdmin.from(table).select("id", { count: "exact", head: true }).eq("company_id", companyId);
+      supabaseAdmin.from(table).select("id", { count: "exact", head: true }).match(scopeMatch);
 
     const [
       company,
@@ -66,7 +81,7 @@ export async function GET(req: NextRequest) {
       supabaseAdmin
         .from("conversations")
         .select("started_at, duration_seconds, language, status, channel, intent, audio_metadata")
-        .eq("company_id", companyId)
+        .match(scopeMatch)
         .gte("started_at", window.sinceIso)
         .order("started_at", { ascending: false })
         .limit(5000),
@@ -76,7 +91,7 @@ export async function GET(req: NextRequest) {
       supabaseAdmin
         .from("appointments")
         .select("id, start_time, status, timezone")
-        .eq("company_id", companyId)
+        .match(scopeMatch)
         .gte("start_time", new Date(now).toISOString())
         .in("status", ["BOOKED", "REQUESTED"])
         .order("start_time", { ascending: true })
@@ -84,7 +99,7 @@ export async function GET(req: NextRequest) {
       supabaseAdmin
         .from("leads")
         .select("qualification_notes")
-        .eq("company_id", companyId)
+        .match(scopeMatch)
         .is("deleted_at", null)
         .gte("created_at", window.sinceIso)
         .like("qualification_notes", "%Q1 [%")
@@ -92,25 +107,44 @@ export async function GET(req: NextRequest) {
       supabaseAdmin
         .from("conversations")
         .select("channel, audio_metadata")
-        .eq("company_id", companyId)
+        .match(scopeMatch)
         .not("audio_metadata->summaryNotification", "is", null)
         .limit(500),
-      supabaseAdmin
-        .from("lead_activities")
-        .select("created_at, content, metadata")
-        .eq("company_id", companyId)
-        .order("created_at", { ascending: false })
-        .limit(20),
-      supabaseAdmin
-        .from("email_logs")
-        .select("status, provider_message_id, template_name")
-        .eq("company_id", companyId)
-        .gte("created_at", window.sinceIso)
-        .limit(500),
+      // lead_activities carries no employee_id, so for staff it is narrowed
+      // through the leads that ARE theirs. Resolved before the cap is
+      // applied, otherwise the newest 20 company-wide rows would be fetched
+      // and then filtered down to a misleadingly short list.
+      (async () => {
+        let q = supabaseAdmin.from("lead_activities").select("created_at, content, metadata").eq("company_id", companyId);
+        if (employeeScoped) {
+          const ownLeads = await supabaseAdmin
+            .from("leads")
+            .select("id")
+            .match(scopeMatch)
+            .is("deleted_at", null)
+            .limit(2000);
+          q = q.in("lead_id", (ownLeads.data ?? []).map((l) => l.id as string));
+        }
+        return q.order("created_at", { ascending: false }).limit(20);
+      })(),
+      // email_logs records only a recipient address and the company — there
+      // is no employee attribution in the schema. Showing a staff member the
+      // company-wide email counts would therefore be showing them other
+      // people's, so the query is simply not run for them and the payload
+      // says the figure is not attributable rather than reporting a
+      // company total or a misleading zero.
+      employeeScoped
+        ? Promise.resolve({ data: [] as Array<{ status?: string | null; provider_message_id?: string | null; template_name?: string | null }> })
+        : supabaseAdmin
+            .from("email_logs")
+            .select("status, provider_message_id, template_name")
+            .eq("company_id", companyId)
+            .gte("created_at", window.sinceIso)
+            .limit(500),
       supabaseAdmin
         .from("appointments")
         .select("created_at, status, start_time")
-        .eq("company_id", companyId)
+        .match(scopeMatch)
         .order("created_at", { ascending: false })
         .limit(10),
     ]);
@@ -170,6 +204,9 @@ export async function GET(req: NextRequest) {
         ),
         email: {
           ...computeEmailBreakdown((emailRows.data ?? []) as Array<{ status?: string | null; provider_message_id?: string | null; template_name?: string | null }>),
+          // True when this identity is staff: email is company-level in the
+          // schema, so it cannot honestly be reported per person.
+          attributable: !employeeScoped,
           deliveryConfirmable: false,
           providerState: health.email,
         },

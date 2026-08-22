@@ -208,3 +208,84 @@ describe("selectable companies by role", () => {
     expect(resolveSelectableCompanies(false, [], ALL)).toEqual([]);
   });
 });
+
+/**
+ * Per-EMPLOYEE separation: two staff logins inside ONE company.
+ *
+ * The schema supports this (employees.user_id links a login to an employee,
+ * and conversations/appointments/leads all carry employee_id), so two staff
+ * accounts must be genuinely separate rather than two views of the same
+ * company totals. The rules encoded here: whoever runs the company reads the
+ * whole company; staff read only their own employee's rows; and a staff
+ * account with NO linked employee reads nothing at all rather than falling
+ * back to company-wide.
+ */
+function employeeLookup(
+  employees: Record<string, string | null>,
+  memberships: Record<string, Array<{ company_id: string; role: UserRole }>>
+): ScopeLookup {
+  return {
+    isPlatformAdmin: async (userId) => userId === "admin-1",
+    listActiveMembershipsForUser: async (userId) => memberships[userId] ?? [],
+    findEmployeeForUser: async (userId) => {
+      const id = employees[userId];
+      return id ? { id } : null;
+    },
+  };
+}
+
+describe("two staff logins in one company are separated by employee", () => {
+  const STAFF_1: AuthenticatedUser = { id: "staff-1", email: "user@example.com" };
+  const STAFF_2: AuthenticatedUser = { id: "staff-2", email: "user2@example.com" };
+  const OWNER_USER: AuthenticatedUser = { id: "owner-1", email: "owner@example.com" };
+
+  const lookup = employeeLookup(
+    { "staff-1": "employee-A", "staff-2": "employee-B", "owner-1": null, "staff-orphan": null },
+    {
+      "staff-1": [{ company_id: COMPANY_A, role: "EMPLOYEE" }],
+      "staff-2": [{ company_id: COMPANY_A, role: "EMPLOYEE" }],
+      "owner-1": [{ company_id: COMPANY_A, role: "OWNER" }],
+      "staff-orphan": [{ company_id: COMPANY_A, role: "EMPLOYEE" }],
+    }
+  );
+
+  it("gives each staff login its OWN employee id, never the other's", async () => {
+    const one = await resolveDashboardScope(STAFF_1, lookup);
+    const two = await resolveDashboardScope(STAFF_2, lookup);
+    expect(one.employeeId).toBe("employee-A");
+    expect(two.employeeId).toBe("employee-B");
+    expect(one.employeeId).not.toBe(two.employeeId);
+    // Same tenant — so employee scoping is the ONLY thing separating them.
+    expect(one.companyId).toBe(two.companyId);
+    expect(one.breadth).toBe("employee");
+    expect(two.breadth).toBe("employee");
+  });
+
+  it("lets whoever runs the company read the whole company", async () => {
+    const owner = await resolveDashboardScope(OWNER_USER, lookup);
+    expect(owner.breadth).toBe("company");
+    expect(owner.employeeId).toBeNull();
+    expect(owner.isPlatformAdmin).toBe(false); // still NOT a platform admin
+  });
+
+  it("gives a staff account with no linked employee an empty scope, never company-wide", async () => {
+    const orphan = await resolveDashboardScope({ id: "staff-orphan", email: "orphan@example.com" }, lookup);
+    expect(orphan.breadth).toBe("employee");
+    expect(orphan.employeeId).toBeNull();
+    // breadth "employee" + null id is what the route turns into an
+    // impossible filter, so an unlinked account reads nothing.
+    expect(orphan.breadth === "employee" && orphan.employeeId === null).toBe(true);
+  });
+
+  it("still refuses a staff login the admin audience", async () => {
+    const one = await resolveDashboardScope(STAFF_1, lookup);
+    expect(one.audience).toBe("user");
+    expect(one.isPlatformAdmin).toBe(false);
+  });
+
+  it("keeps the platform admin cross-tenant and unscoped to any employee", async () => {
+    const admin = await resolveDashboardScope({ id: "admin-1", email: "admin@example.com" }, lookup);
+    expect(admin.audience).toBe("admin");
+    expect(admin.employeeId).toBeNull();
+  });
+});

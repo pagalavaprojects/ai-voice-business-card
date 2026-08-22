@@ -31,11 +31,31 @@ export interface DashboardScope {
   companyId: string | null;
   /** Their role in that company; null alongside a null companyId. */
   role: UserRole | null;
+  /** The employee record this login owns, when one is linked
+   * (`employees.user_id`). Null when the account is not an employee. */
+  employeeId: string | null;
+  /**
+   * How wide this identity's own dashboard is inside their tenant.
+   *
+   * "company" — they run the business (OWNER/ADMIN), so every row belonging
+   *   to the tenant is legitimately theirs to read.
+   * "employee" — they are staff, so they see ONLY the rows attributed to
+   *   their own employee record. This is what makes two staff logins in one
+   *   company genuinely separate rather than two views of the same numbers.
+   *
+   * Staff with no linked employee record get "employee" with a null id,
+   * which resolves to an empty scope: an unlinked account must never fall
+   * back to company-wide reading.
+   */
+  breadth: "company" | "employee";
 }
 
 export interface ScopeLookup {
   isPlatformAdmin(userId: string): Promise<boolean>;
   listActiveMembershipsForUser(userId: string): Promise<Array<{ company_id: string; role: UserRole }>>;
+  /** The employee record linked to this login, if any. Session-derived like
+   * everything else here — never supplied by the client. */
+  findEmployeeForUser?(userId: string, companyId: string): Promise<{ id: string } | null>;
 }
 
 const membershipRepo = new SupabaseMembershipRepository();
@@ -60,13 +80,25 @@ export async function resolveDashboardScope(
   // aggregating several would make "my numbers" ambiguous and would leak one
   // tenant's totals into another's view.
   const primary = memberships[0] ?? null;
+  const companyId = primary?.company_id ?? null;
+  const role = primary?.role ?? null;
+
+  // OWNER/ADMIN run the tenant, so their own dashboard is the whole company.
+  // Everyone else is staff and sees only what is attributed to them.
+  const runsTheCompany = role === "OWNER" || role === "ADMIN";
+  const employee =
+    companyId && !runsTheCompany && lookup.findEmployeeForUser
+      ? await lookup.findEmployeeForUser(user.id, companyId)
+      : null;
 
   return {
     user,
     audience: isPlatformAdmin ? "admin" : "user",
     isPlatformAdmin,
-    companyId: primary?.company_id ?? null,
-    role: primary?.role ?? null,
+    companyId,
+    role,
+    employeeId: employee?.id ?? null,
+    breadth: runsTheCompany ? "company" : "employee",
   };
 }
 
