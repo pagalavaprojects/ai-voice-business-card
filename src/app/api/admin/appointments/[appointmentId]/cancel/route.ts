@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { z } from "zod";
 import { formatApiResponse } from "@/shared/lib/security";
 import { handleApiError } from "@/shared/lib/apiHandler";
-import { requireCompanyAccess } from "@/shared/lib/tenant";
+import { requireCompanyDataScope } from "@/shared/lib/tenant";
 import { SupabaseBookingRepository } from "@/core/infrastructure/database/supabase/SupabaseBookingRepository";
 import { SupabaseCRMRepository } from "@/core/infrastructure/database/supabase/SupabaseCRMRepository";
 import { CalcomAdapter } from "@/core/infrastructure/booking/calcom/CalcomAdapter";
@@ -30,10 +30,16 @@ export async function PUT(req: NextRequest, { params }: { params: { appointmentI
     const body = await req.json();
     const parsed = CancelSchema.parse(body);
 
-    await requireCompanyAccess(req, parsed.company_id, "write:appointments");
+    // Staff may only act on appointments attributed to them — cancelling
+    // or rescheduling a colleague's booking is the same exposure as reading
+    // it, with a side effect attached.
+    const { employeeId } = await requireCompanyDataScope(req, parsed.company_id, "write:appointments");
 
     const existing = await bookingRepo.getAppointmentById(params.appointmentId);
-    if (!existing || existing.company_id !== parsed.company_id) return formatApiResponse(null, 404, "Appointment not found");
+    if (!existing || existing.company_id !== parsed.company_id || (employeeId && existing.employee_id !== employeeId)) {
+      // Same 404 as a missing row: the refusal must not confirm it exists.
+      return formatApiResponse(null, 404, "Appointment not found");
+    }
 
     if (existing.calcom_booking_id) {
       await calcom.cancelBooking(existing.calcom_booking_id, parsed.reason);
