@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { z } from "zod";
 import { formatApiResponse } from "@/shared/lib/security";
 import { handleApiError } from "@/shared/lib/apiHandler";
-import { requireCompanyAccess } from "@/shared/lib/tenant";
+import { requireCompanyAccess, requireCompanyDataScope } from "@/shared/lib/tenant";
 import { SupabaseBookingRepository } from "@/core/infrastructure/database/supabase/SupabaseBookingRepository";
 import { CalcomAdapter } from "@/core/infrastructure/booking/calcom/CalcomAdapter";
 import { AppointmentStatus } from "@/core/domain/models/types";
@@ -35,10 +35,14 @@ export async function GET(req: NextRequest) {
     const companyId = req.nextUrl.searchParams.get("companyId");
     if (!companyId) return formatApiResponse(null, 400, "companyId query parameter is required");
 
-    await requireCompanyAccess(req, companyId, "read:appointments");
+    const { employeeId: ownEmployeeId } = await requireCompanyDataScope(req, companyId, "read:appointments");
 
     const status = req.nextUrl.searchParams.get("status") as AppointmentStatus | null;
-    const employeeId = req.nextUrl.searchParams.get("employeeId") || undefined;
+    // The client's employeeId is a convenience FILTER for someone entitled
+    // to the whole company. For staff it is ignored entirely and replaced by
+    // their own id, so it can never widen what they see.
+    const requestedEmployeeId = req.nextUrl.searchParams.get("employeeId") || undefined;
+    const employeeId = ownEmployeeId ?? requestedEmployeeId;
     const limit = Math.min(Number(req.nextUrl.searchParams.get("limit")) || 20, 100);
     const offset = Number(req.nextUrl.searchParams.get("offset")) || 0;
 

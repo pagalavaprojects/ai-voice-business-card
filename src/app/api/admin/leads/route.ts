@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { formatApiResponse } from "@/shared/lib/security";
 import { handleApiError } from "@/shared/lib/apiHandler";
-import { requireCompanyAccess } from "@/shared/lib/tenant";
+import { requireCompanyAccess, requireCompanyDataScope } from "@/shared/lib/tenant";
 import { SupabaseCRMRepository } from "@/core/infrastructure/database/supabase/SupabaseCRMRepository";
 import { CreateLeadSchema } from "@/core/domain/models/types";
 
@@ -23,7 +23,8 @@ export async function GET(req: NextRequest) {
       return formatApiResponse(null, 400, "companyId query parameter is required");
     }
 
-    await requireCompanyAccess(req, companyId, "read:leads");
+    // Staff see only their own leads; OWNER/ADMIN see the company's.
+    const { employeeId } = await requireCompanyDataScope(req, companyId, "read:leads");
 
     const status = searchParams.get("status") || undefined;
     const search = searchParams.get("search") || undefined;
@@ -34,6 +35,7 @@ export async function GET(req: NextRequest) {
 
     const result = await crmRepo.listLeads({
       company_id: companyId,
+      ...(employeeId ? { employee_id: employeeId } : {}),
       status,
       search,
       sortBy,

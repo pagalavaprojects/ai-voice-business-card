@@ -237,6 +237,9 @@ export class SupabaseCRMRepository implements ICRMRepository {
       .eq("company_id", filter.company_id)
       .is("deleted_at", null);
 
+    // Staff-scoped callers pass their own employee id so the list can never
+    // include a colleague's leads (see requireCompanyDataScope).
+    if (filter.employee_id) query = query.eq("employee_id", filter.employee_id);
     if (filter.status) query = query.eq("status", filter.status);
     if (filter.min_score !== undefined) query = query.gte("score", filter.min_score);
     if (filter.search) {

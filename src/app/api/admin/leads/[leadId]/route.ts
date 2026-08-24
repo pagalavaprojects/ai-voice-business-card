@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { z } from "zod";
 import { formatApiResponse } from "@/shared/lib/security";
 import { handleApiError } from "@/shared/lib/apiHandler";
-import { requireCompanyAccess } from "@/shared/lib/tenant";
+import { requireCompanyAccess, requireCompanyDataScope } from "@/shared/lib/tenant";
 import { SupabaseCRMRepository } from "@/core/infrastructure/database/supabase/SupabaseCRMRepository";
 import { SupabaseBookingRepository } from "@/core/infrastructure/database/supabase/SupabaseBookingRepository";
 import { SupabaseConversationRepository } from "@/core/infrastructure/database/supabase/SupabaseConversationRepository";
@@ -34,10 +34,12 @@ export async function GET(req: NextRequest, { params }: { params: { leadId: stri
     const companyId = req.nextUrl.searchParams.get("companyId");
     if (!companyId) return formatApiResponse(null, 400, "companyId query parameter is required");
 
-    await requireCompanyAccess(req, companyId, "read:leads");
+    const { employeeId } = await requireCompanyDataScope(req, companyId, "read:leads");
 
     const lead = await crmRepo.getLeadById(params.leadId);
-    if (!lead || lead.company_id !== companyId) {
+    // A staff caller may only open a lead carrying their own employee id.
+    // Same 404 either way: the refusal must not confirm the lead exists.
+    if (!lead || lead.company_id !== companyId || (employeeId && lead.employee_id !== employeeId)) {
       return formatApiResponse(null, 404, "Lead not found");
     }
 
@@ -62,10 +64,12 @@ export async function PUT(req: NextRequest, { params }: { params: { leadId: stri
     const body = await req.json();
     const parsed = UpdateLeadSchema.parse(body);
 
-    const access = await requireCompanyAccess(req, parsed.company_id, "write:leads");
+    const { access, employeeId } = await requireCompanyDataScope(req, parsed.company_id, "write:leads");
 
     let lead = await crmRepo.getLeadById(params.leadId);
-    if (!lead || lead.company_id !== parsed.company_id) {
+    // Writes are narrowed exactly like reads — a staff caller must not be
+    // able to mutate a colleague's lead they cannot even open.
+    if (!lead || lead.company_id !== parsed.company_id || (employeeId && lead.employee_id !== employeeId)) {
       return formatApiResponse(null, 404, "Lead not found");
     }
 
@@ -84,10 +88,10 @@ export async function DELETE(req: NextRequest, { params }: { params: { leadId: s
     const companyId = req.nextUrl.searchParams.get("companyId");
     if (!companyId) return formatApiResponse(null, 400, "companyId query parameter is required");
 
-    await requireCompanyAccess(req, companyId, "delete:leads");
+    const { employeeId } = await requireCompanyDataScope(req, companyId, "delete:leads");
 
     const lead = await crmRepo.getLeadById(params.leadId);
-    if (!lead || lead.company_id !== companyId) {
+    if (!lead || lead.company_id !== companyId || (employeeId && lead.employee_id !== employeeId)) {
       return formatApiResponse(null, 404, "Lead not found");
     }
 

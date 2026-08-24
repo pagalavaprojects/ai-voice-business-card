@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { z } from "zod";
 import { formatApiResponse } from "@/shared/lib/security";
 import { handleApiError } from "@/shared/lib/apiHandler";
-import { requireCompanyAccess } from "@/shared/lib/tenant";
+import { requireCompanyAccess, requireCompanyDataScope } from "@/shared/lib/tenant";
 import { SupabaseCRMRepository } from "@/core/infrastructure/database/supabase/SupabaseCRMRepository";
 
 // Reads the session cookie and/or query params, so it can never be rendered
@@ -21,7 +21,7 @@ export async function POST(req: NextRequest, { params }: { params: { leadId: str
     const body = await req.json();
     const parsed = AddNoteSchema.parse(body);
 
-    const access = await requireCompanyAccess(req, parsed.company_id, "write:leads");
+    const { access, employeeId } = await requireCompanyDataScope(req, parsed.company_id, "write:leads");
 
     const lead = await crmRepo.getLeadById(params.leadId);
     if (!lead || lead.company_id !== parsed.company_id) return formatApiResponse(null, 404, "Lead not found");

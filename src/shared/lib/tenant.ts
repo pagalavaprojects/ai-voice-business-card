@@ -142,3 +142,41 @@ export async function requireCompanyAccess(
 
   return resolveCompanyAccess(user, companyId, permission, membershipRepo);
 }
+
+
+/**
+ * Company authorization PLUS the person-level narrowing that authorization
+ * alone does not give you.
+ *
+ * requireCompanyAccess answers "may this caller touch this company?", which
+ * was sufficient while one login meant one company. It stops being
+ * sufficient the moment two staff logins share a tenant: both pass the
+ * company check, so a company-scoped query hands each of them the other's
+ * rows. Verified against production before this existed — a staff account
+ * with no data of its own read a colleague's lead by id and listed twenty
+ * of the company's leads.
+ *
+ * The rule mirrors the dashboard's: OWNER/ADMIN run the tenant and read all
+ * of it; everyone else reads only rows carrying their own employee id.
+ * Platform admins are unnarrowed by construction. `employeeId` is null when
+ * no narrowing applies; when narrowing DOES apply but the account has no
+ * employee record, it resolves to an id that matches nothing rather than
+ * falling back to company-wide.
+ */
+export async function requireCompanyDataScope(
+  req: NextRequest,
+  companyId: string,
+  permission: Permission
+): Promise<{ access: CompanyAccess; employeeId: string | null }> {
+  const access = await requireCompanyAccess(req, companyId, permission);
+
+  const runsTheCompany = access.isPlatformAdmin || access.role === "OWNER" || access.role === "ADMIN";
+  if (runsTheCompany) return { access, employeeId: null };
+
+  const employee = await membershipRepo.findEmployeeForUser(access.userId, companyId);
+  return { access, employeeId: employee?.id ?? NO_MATCHING_EMPLOYEE };
+}
+
+/** A syntactically valid uuid that no row can carry, so a staff account with
+ * no employee record reads nothing instead of everything. */
+export const NO_MATCHING_EMPLOYEE = "00000000-0000-0000-0000-000000000000";

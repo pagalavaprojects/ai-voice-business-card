@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { formatApiResponse } from "@/shared/lib/security";
 import { handleApiError } from "@/shared/lib/apiHandler";
-import { requireCompanyAccess } from "@/shared/lib/tenant";
+import { requireCompanyDataScope } from "@/shared/lib/tenant";
 import { supabaseAdmin } from "@/shared/lib/supabase";
 
 // Reads the session cookie and/or query params, so it can never be rendered
@@ -30,16 +30,23 @@ export async function GET(req: NextRequest) {
     if (!companyId) return formatApiResponse(null, 400, "companyId query parameter is required");
     if (!q || q.trim().length < 2) return formatApiResponse([], 200, "Query too short");
 
-    await requireCompanyAccess(req, companyId, "read:leads");
+    const { employeeId } = await requireCompanyDataScope(req, companyId, "read:leads");
 
     const term = q.trim().replace(/[%_]/g, "");
     const like = `%${term}%`;
+    // Global search must obey the same person-level narrowing as the pages
+    // it links to, otherwise it becomes the way around them: a staff caller
+    // types a colleague's client name and gets the record they are not
+    // allowed to open.
+    const scopeMatch: Record<string, string> = employeeId
+      ? { company_id: companyId, employee_id: employeeId }
+      : { company_id: companyId };
 
     const [leads, agents, knowledge, appointments, employees] = await Promise.all([
       supabaseAdmin
         .from("leads")
         .select("id, name, email, business_name")
-        .eq("company_id", companyId)
+        .match(scopeMatch)
         .is("deleted_at", null)
         .or(`name.ilike.${like},email.ilike.${like},business_name.ilike.${like}`)
         .limit(5),
@@ -48,7 +55,7 @@ export async function GET(req: NextRequest) {
       supabaseAdmin
         .from("appointments")
         .select("id, start_time, status, leads(name)")
-        .eq("company_id", companyId)
+        .match(scopeMatch)
         .filter("leads.name", "ilike", like)
         .limit(5),
       supabaseAdmin.from("employees").select("id, name, designation").eq("company_id", companyId).is("deleted_at", null).ilike("name", like).limit(5),

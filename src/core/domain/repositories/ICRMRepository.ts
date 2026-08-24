@@ -3,6 +3,9 @@ import { z } from "zod";
 
 export interface LeadFilter {
   company_id: string;
+  /** Narrows the list to ONE employee's leads. Set by the server from the
+   * caller's own identity for staff roles — never from a client parameter. */
+  employee_id?: string;
   status?: string;
   min_score?: number;
   search?: string;

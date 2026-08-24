@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { formatApiResponse } from "@/shared/lib/security";
 import { handleApiError } from "@/shared/lib/apiHandler";
-import { requireCompanyAccess } from "@/shared/lib/tenant";
+import { requireCompanyDataScope } from "@/shared/lib/tenant";
 import { supabaseAdmin } from "@/shared/lib/supabase";
 import { computeTopTopics } from "@/shared/lib/dashboardTopics";
 import { buildProviderHealth } from "@/shared/lib/providerHealth";
@@ -37,7 +37,12 @@ export async function GET(req: NextRequest) {
     const companyId = req.nextUrl.searchParams.get("companyId");
     if (!companyId) return formatApiResponse(null, 400, "companyId query parameter is required");
 
-    await requireCompanyAccess(req, companyId, "read:leads");
+    // Aggregates are person-level data in disguise: company-wide totals
+    // handed to one of two staff members describe the other's work too.
+    const { employeeId } = await requireCompanyDataScope(req, companyId, "read:leads");
+    const scopeMatch: Record<string, string> = employeeId
+      ? { company_id: companyId, employee_id: employeeId }
+      : { company_id: companyId };
 
     const now = Date.now();
     const weekAgo = new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString();
@@ -54,7 +59,7 @@ export async function GET(req: NextRequest) {
         ? new Date(todayStartMs).toISOString()
         : new Date(new Date(now).setUTCHours(0, 0, 0, 0)).toISOString();
 
-    const scoped = () => supabaseAdmin.from("leads").select("id", { count: "exact", head: true }).eq("company_id", companyId).is("deleted_at", null);
+    const scoped = () => supabaseAdmin.from("leads").select("id", { count: "exact", head: true }).match(scopeMatch).is("deleted_at", null);
 
     // ---- Owner-selected range (single-page control centre) ----------------
     // One extra batch, started alongside everything else, that answers the
@@ -67,23 +72,28 @@ export async function GET(req: NextRequest) {
       supabaseAdmin
         .from("conversations")
         .select("started_at, duration_seconds, language, status")
-        .eq("company_id", companyId)
+        .match(scopeMatch)
         .gte("started_at", rangeWindow.sinceIso)
         .order("started_at", { ascending: false })
         .limit(5000),
       supabaseAdmin
         .from("appointments")
         .select("id", { count: "exact", head: true })
-        .eq("company_id", companyId)
+        .match(scopeMatch)
         .gte("created_at", rangeWindow.sinceIso),
       // Email outcomes are company-scoped and small; the breakdown needs the
       // provider id to tell a real acceptance from a simulated one.
-      supabaseAdmin
-        .from("email_logs")
-        .select("status, provider_message_id, template_name")
-        .eq("company_id", companyId)
-        .gte("created_at", rangeWindow.sinceIso)
-        .limit(1000),
+      // email_logs carries no employee_id — there is no per-person
+      // attribution to be had, so for staff the query is skipped rather
+      // than reporting the company's mail as theirs.
+      employeeId
+        ? Promise.resolve({ data: [] as Array<{ status?: string | null; provider_message_id?: string | null; template_name?: string | null }> })
+        : supabaseAdmin
+            .from("email_logs")
+            .select("status, provider_message_id, template_name")
+            .eq("company_id", companyId)
+            .gte("created_at", rangeWindow.sinceIso)
+            .limit(1000),
     ]);
 
     // ---- Live-overview additions (all company-scoped, all bounded) -------
@@ -92,18 +102,18 @@ export async function GET(req: NextRequest) {
     // constants above). Awaiting the two batches serially doubled the DB
     // round-trip latency of the endpoint for no reason (2026-08-19 audit).
     const liveOverviewBatch = Promise.all([
-      supabaseAdmin.from("conversations").select("id", { count: "exact", head: true }).eq("company_id", companyId).gte("created_at", todayStart),
+      supabaseAdmin.from("conversations").select("id", { count: "exact", head: true }).match(scopeMatch).gte("created_at", todayStart),
       supabaseAdmin
         .from("conversations")
         .select("duration_seconds")
-        .eq("company_id", companyId)
+        .match(scopeMatch)
         .gte("created_at", todayStart)
         .not("duration_seconds", "is", null)
         .limit(2000),
       supabaseAdmin
         .from("conversations")
         .select("duration_seconds")
-        .eq("company_id", companyId)
+        .match(scopeMatch)
         .gte("created_at", weekAgo)
         .not("duration_seconds", "is", null)
         .limit(2000),
@@ -113,17 +123,17 @@ export async function GET(req: NextRequest) {
       supabaseAdmin
         .from("leads")
         .select("qualification_notes")
-        .eq("company_id", companyId)
+        .match(scopeMatch)
         .is("deleted_at", null)
         .gte("created_at", thirtyDaysAgo)
         .like("qualification_notes", "%Q1 [%")
         .limit(2000),
-      supabaseAdmin.from("appointments").select("id", { count: "exact", head: true }).eq("company_id", companyId).gte("created_at", todayStart),
-      supabaseAdmin.from("appointments").select("id", { count: "exact", head: true }).eq("company_id", companyId).eq("status", "CANCELLED"),
+      supabaseAdmin.from("appointments").select("id", { count: "exact", head: true }).match(scopeMatch).gte("created_at", todayStart),
+      supabaseAdmin.from("appointments").select("id", { count: "exact", head: true }).match(scopeMatch).eq("status", "CANCELLED"),
       supabaseAdmin
         .from("appointments")
         .select("id, start_time, status, lead:leads(name)")
-        .eq("company_id", companyId)
+        .match(scopeMatch)
         .gte("start_time", new Date(now).toISOString())
         .in("status", ["BOOKED", "REQUESTED"])
         .order("start_time", { ascending: true })
@@ -131,7 +141,7 @@ export async function GET(req: NextRequest) {
       supabaseAdmin
         .from("appointments")
         .select("created_at, status, start_time")
-        .eq("company_id", companyId)
+        .match(scopeMatch)
         .order("created_at", { ascending: false })
         .limit(8),
       // Inbound WhatsApp qualification conversations — recorded on the
@@ -139,22 +149,30 @@ export async function GET(req: NextRequest) {
       supabaseAdmin
         .from("conversations")
         .select("id", { count: "exact", head: true })
-        .eq("company_id", companyId)
+        .match(scopeMatch)
         .eq("channel", "whatsapp"),
-      supabaseAdmin
-        .from("lead_activities")
-        .select("created_at, content, metadata")
-        .eq("company_id", companyId)
-        .in("content", ["appointment_notifications", "whatsapp_reminder_24h"])
-        .order("created_at", { ascending: false })
-        .limit(8),
+      // lead_activities has no employee_id, so for staff it is narrowed
+      // through the leads that ARE theirs — before the cap, so the feed is
+      // not a truncated company-wide list.
+      (async () => {
+        let q = supabaseAdmin
+          .from("lead_activities")
+          .select("created_at, content, metadata")
+          .eq("company_id", companyId)
+          .in("content", ["appointment_notifications", "whatsapp_reminder_24h"]);
+        if (employeeId) {
+          const own = await supabaseAdmin.from("leads").select("id").match(scopeMatch).is("deleted_at", null).limit(2000);
+          q = q.in("lead_id", (own.data ?? []).map((l) => l.id as string));
+        }
+        return q.order("created_at", { ascending: false }).limit(8);
+      })(),
       // The durable per-conversation owner-summary outcomes stamped by the
       // Vapi webhook — the ONLY honest source for "did the owner summary
       // actually send".
       supabaseAdmin
         .from("conversations")
         .select("started_at, status, duration_seconds, channel, intent, audio_metadata")
-        .eq("company_id", companyId)
+        .match(scopeMatch)
         .not("audio_metadata->summaryNotification", "is", null)
         .order("started_at", { ascending: false })
         .limit(8),
@@ -173,46 +191,46 @@ export async function GET(req: NextRequest) {
       recentConversations,
       toolsCalledSample,
     ] = await Promise.all([
-      supabaseAdmin.from("conversations").select("id", { count: "exact", head: true }).eq("company_id", companyId),
-      supabaseAdmin.from("conversations").select("id", { count: "exact", head: true }).eq("company_id", companyId).gte("created_at", weekAgo),
+      supabaseAdmin.from("conversations").select("id", { count: "exact", head: true }).match(scopeMatch),
+      supabaseAdmin.from("conversations").select("id", { count: "exact", head: true }).match(scopeMatch).gte("created_at", weekAgo),
       supabaseAdmin
         .from("conversations")
         .select("id", { count: "exact", head: true })
-        .eq("company_id", companyId)
+        .match(scopeMatch)
         .gte("created_at", twoWeeksAgo)
         .lt("created_at", weekAgo),
       scoped(),
       supabaseAdmin
         .from("leads")
         .select("id", { count: "exact", head: true })
-        .eq("company_id", companyId)
+        .match(scopeMatch)
         .is("deleted_at", null)
         .in("score_category", ["HIGH", "MEDIUM"]),
-      supabaseAdmin.from("appointments").select("id", { count: "exact", head: true }).eq("company_id", companyId).eq("status", "BOOKED"),
+      supabaseAdmin.from("appointments").select("id", { count: "exact", head: true }).match(scopeMatch).eq("status", "BOOKED"),
       // Surfaced separately because a REQUESTED appointment has no calendar
       // event behind it and is waiting on a human — it is a to-do, not a win.
-      supabaseAdmin.from("appointments").select("id", { count: "exact", head: true }).eq("company_id", companyId).eq("status", "REQUESTED"),
+      supabaseAdmin.from("appointments").select("id", { count: "exact", head: true }).match(scopeMatch).eq("status", "REQUESTED"),
       // Ordered so the cap is "the 500 most recent" — without the order,
       // Postgres returns an ARBITRARY 500 once the table outgrows the cap
       // and the average silently loses meaning (2026-08-19 audit).
       supabaseAdmin
         .from("conversations")
         .select("duration_seconds")
-        .eq("company_id", companyId)
+        .match(scopeMatch)
         .not("duration_seconds", "is", null)
         .order("created_at", { ascending: false })
         .limit(500),
       supabaseAdmin
         .from("leads")
         .select("id, name, email, score, score_category, status, created_at")
-        .eq("company_id", companyId)
+        .match(scopeMatch)
         .is("deleted_at", null)
         .order("created_at", { ascending: false })
         .limit(5),
       supabaseAdmin
         .from("conversations")
         .select("id, employee_id, status, started_at, ended_at, duration_seconds, summary, sentiment, channel, intent, audio_metadata")
-        .eq("company_id", companyId)
+        .match(scopeMatch)
         .order("started_at", { ascending: false })
         .limit(8),
       // Bounded sample, same cap as the duration average above — aggregating
@@ -222,7 +240,7 @@ export async function GET(req: NextRequest) {
       supabaseAdmin
         .from("conversations")
         .select("tools_called")
-        .eq("company_id", companyId)
+        .match(scopeMatch)
         .not("tools_called", "eq", "{}")
         .order("created_at", { ascending: false })
         .limit(500),

@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { formatApiResponse } from "@/shared/lib/security";
 import { handleApiError } from "@/shared/lib/apiHandler";
-import { requireCompanyAccess } from "@/shared/lib/tenant";
+import { requireCompanyDataScope } from "@/shared/lib/tenant";
 import { supabaseAdmin } from "@/shared/lib/supabase";
 import { buildProviderHealth } from "@/shared/lib/providerHealth";
 
@@ -73,7 +73,12 @@ export async function GET(req: NextRequest) {
     const companyId = req.nextUrl.searchParams.get("companyId");
     if (!companyId) return formatApiResponse(null, 400, "companyId query parameter is required");
 
-    await requireCompanyAccess(req, companyId, "read:leads");
+    // Same person-level narrowing as the overview: for staff these charts
+    // describe only their own work, never a colleague's.
+    const { employeeId } = await requireCompanyDataScope(req, companyId, "read:leads");
+    const scopeMatch: Record<string, string> = employeeId
+      ? { company_id: companyId, employee_id: employeeId }
+      : { company_id: companyId };
 
     const windowDays = Math.min(Number(req.nextUrl.searchParams.get("days")) || 30, 365);
     const since = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000).toISOString();
@@ -82,21 +87,21 @@ export async function GET(req: NextRequest) {
       supabaseAdmin
         .from("conversations")
         .select("id, employee_id, created_at, duration_seconds, status, tools_called, audio_metadata, channel, intent")
-        .eq("company_id", companyId)
+        .match(scopeMatch)
         .gte("created_at", since)
         .order("created_at", { ascending: true })
         .limit(5000),
       supabaseAdmin
         .from("leads")
         .select("id, employee_id, status, score, score_category, created_at")
-        .eq("company_id", companyId)
+        .match(scopeMatch)
         .is("deleted_at", null)
         .gte("created_at", since)
         .limit(5000),
       supabaseAdmin
         .from("appointments")
         .select("id, status, created_at, start_time")
-        .eq("company_id", companyId)
+        .match(scopeMatch)
         .gte("created_at", since)
         .order("created_at", { ascending: false })
         .limit(5000),
@@ -108,7 +113,7 @@ export async function GET(req: NextRequest) {
       supabaseAdmin
         .from("leads")
         .select("id, name, created_at")
-        .eq("company_id", companyId)
+        .match(scopeMatch)
         .is("deleted_at", null)
         .gte("created_at", since)
         .like("qualification_notes", "%Q6 [%")
@@ -116,12 +121,17 @@ export async function GET(req: NextRequest) {
         .limit(5000),
       // 24h WhatsApp reminders actually sent — the cron's own idempotency
       // markers on the lead timeline are the audit trail.
-      supabaseAdmin
-        .from("lead_activities")
-        .select("id", { count: "exact", head: true })
-        .eq("company_id", companyId)
-        .eq("content", "whatsapp_reminder_24h")
-        .gte("created_at", since),
+      // lead_activities carries no employee_id. Rather than show a staff
+      // member the company's reminder count as if it were theirs, the
+      // query is skipped for them.
+      employeeId
+        ? Promise.resolve({ count: 0 })
+        : supabaseAdmin
+            .from("lead_activities")
+            .select("id", { count: "exact", head: true })
+            .eq("company_id", companyId)
+            .eq("content", "whatsapp_reminder_24h")
+            .gte("created_at", since),
     ]);
 
     const convRows = conversations.data ?? [];

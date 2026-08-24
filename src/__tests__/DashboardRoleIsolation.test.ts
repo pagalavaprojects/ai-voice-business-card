@@ -289,3 +289,71 @@ describe("two staff logins in one company are separated by employee", () => {
     expect(admin.employeeId).toBeNull();
   });
 });
+
+/**
+ * Company-level authorization is NOT sufficient once two staff logins share
+ * a tenant. Verified against production before this was fixed: a staff
+ * account with no data of its own opened a colleague's lead by id (HTTP 200,
+ * the client's name in the body) and listed twenty of the company's leads,
+ * because every /api/admin/* route authorized with requireCompanyAccess —
+ * which both staff pass — and then queried by company_id alone.
+ *
+ * The rule below is what requireCompanyDataScope applies, and what each of
+ * those routes now composes into its query or ownership check.
+ */
+function dataScopeFor(
+  role: UserRole | null,
+  isPlatformAdmin: boolean,
+  linkedEmployeeId: string | null
+): { employeeId: string | null } {
+  if (isPlatformAdmin || role === "OWNER" || role === "ADMIN") return { employeeId: null };
+  return { employeeId: linkedEmployeeId ?? "00000000-0000-0000-0000-000000000000" };
+}
+
+/** How a detail route decides whether a row may be opened. */
+function mayOpen(row: { company_id: string; employee_id: string | null }, companyId: string, employeeId: string | null): boolean {
+  if (row.company_id !== companyId) return false;
+  if (employeeId && row.employee_id !== employeeId) return false;
+  return true;
+}
+
+describe("company access alone does not authorize a colleague's row", () => {
+  const COMPANY = COMPANY_A;
+  const usersLead = { company_id: COMPANY, employee_id: "employee-A" };
+  const colleaguesLead = { company_id: COMPANY, employee_id: "employee-B" };
+  const otherTenantLead = { company_id: COMPANY_B, employee_id: "employee-A" };
+
+  it("narrows staff to their own employee id, and leaves owners unnarrowed", () => {
+    expect(dataScopeFor("EMPLOYEE", false, "employee-A").employeeId).toBe("employee-A");
+    expect(dataScopeFor("VIEWER", false, "employee-B").employeeId).toBe("employee-B");
+    expect(dataScopeFor("OWNER", false, "employee-A").employeeId).toBeNull();
+    expect(dataScopeFor("ADMIN", false, null).employeeId).toBeNull();
+    expect(dataScopeFor("EMPLOYEE", true, null).employeeId).toBeNull(); // platform admin
+  });
+
+  it("refuses a staff member the colleague's lead they could previously open", () => {
+    const { employeeId } = dataScopeFor("EMPLOYEE", false, "employee-B");
+    expect(mayOpen(colleaguesLead, COMPANY, employeeId)).toBe(true); // their own
+    expect(mayOpen(usersLead, COMPANY, employeeId)).toBe(false); // the regression
+  });
+
+  it("still lets whoever runs the company open either row", () => {
+    const { employeeId } = dataScopeFor("OWNER", false, null);
+    expect(mayOpen(usersLead, COMPANY, employeeId)).toBe(true);
+    expect(mayOpen(colleaguesLead, COMPANY, employeeId)).toBe(true);
+  });
+
+  it("keeps refusing another tenant's row regardless of role", () => {
+    for (const role of ["OWNER", "ADMIN", "EMPLOYEE"] as UserRole[]) {
+      const { employeeId } = dataScopeFor(role, false, "employee-A");
+      expect(mayOpen(otherTenantLead, COMPANY, employeeId)).toBe(false);
+    }
+  });
+
+  it("gives a staff account with no employee record an id that matches nothing", () => {
+    const { employeeId } = dataScopeFor("EMPLOYEE", false, null);
+    expect(employeeId).toBe("00000000-0000-0000-0000-000000000000");
+    expect(mayOpen(usersLead, COMPANY, employeeId)).toBe(false);
+    expect(mayOpen(colleaguesLead, COMPANY, employeeId)).toBe(false);
+  });
+});
