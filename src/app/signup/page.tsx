@@ -5,7 +5,7 @@ import { Loader2, UserPlus, Eye, EyeOff } from "lucide-react";
 import { createBrowserClient } from "@supabase/ssr";
 import { Button } from "@/shared/ui/button";
 import { AuthShell, AuthError, AuthNotice, AuthLink, authInputClass } from "@/features/auth/components/AuthShell";
-import { assessPassword, MIN_PASSWORD_LENGTH } from "@/features/auth/lib/passwordPolicy";
+import { assessPassword, signUpErrorMessage, MIN_PASSWORD_LENGTH } from "@/features/auth/lib/passwordPolicy";
 
 /**
  * Public sign-up.
@@ -64,7 +64,8 @@ export default function SignUpPage() {
       });
 
       if (signUpError) {
-        setError(signUpError.message);
+        // Never the provider's own wording — see signUpErrorMessage.
+        setError(signUpErrorMessage(signUpError.message));
         return;
       }
 

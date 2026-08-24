@@ -40,7 +40,7 @@ import LoginPage from "@/app/login/page";
 import SignUpPage from "@/app/signup/page";
 import ForgotPasswordPage from "@/app/forgot-password/page";
 import ResetPasswordPage from "@/app/reset-password/page";
-import { assessPassword, GENERIC_SIGN_IN_ERROR, MIN_PASSWORD_LENGTH } from "@/features/auth/lib/passwordPolicy";
+import { assessPassword, signUpErrorMessage, GENERIC_SIGN_IN_ERROR, GENERIC_SIGN_UP_ERROR, MIN_PASSWORD_LENGTH } from "@/features/auth/lib/passwordPolicy";
 
 const STRONG = "Vault-Harbour-71!";
 
@@ -174,6 +174,28 @@ describe("/signup", () => {
     // A brand-new account belongs to no workspace yet, and says so rather
     // than showing an empty dashboard that looks broken.
     expect(screen.getByText(/linked to a workspace yet/i)).toBeInTheDocument();
+  });
+
+  it("translates provider failures into something a visitor can act on", async () => {
+    // Observed against production: Supabase answered a real sign-up with the
+    // bare string "email rate limit exceeded", which describes the project's
+    // mail quota rather than anything the visitor did.
+    mockAuth.signUp.mockResolvedValue({ data: { session: null, user: null }, error: { message: "email rate limit exceeded" } });
+    render(<SignUpPage />);
+
+    fillValidSignup();
+    fireEvent.click(screen.getByRole("button", { name: /create account/i }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(/too many sign-up attempts/i);
+    expect(alert).not.toHaveTextContent(/rate limit exceeded/i);
+  });
+
+  it("says nothing about the project's configuration when it fails", () => {
+    expect(signUpErrorMessage("Database error saving new user")).toBe(GENERIC_SIGN_UP_ERROR);
+    expect(signUpErrorMessage("Error sending confirmation mail")).toBe(GENERIC_SIGN_UP_ERROR);
+    expect(signUpErrorMessage("Password should be at least 6 characters")).toMatch(new RegExp(String(MIN_PASSWORD_LENGTH)));
+    expect(signUpErrorMessage("Unable to validate email address: invalid format")).toMatch(/valid email/i);
   });
 
   it("will not submit a weak password or a mismatched confirmation", () => {

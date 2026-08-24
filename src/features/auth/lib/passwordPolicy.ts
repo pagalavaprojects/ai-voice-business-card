@@ -56,3 +56,37 @@ export const GENERIC_SIGN_IN_ERROR = "Unable to sign in with those credentials."
  * registered, for the same reason. */
 export const GENERIC_RECOVERY_MESSAGE =
   "If that address has an account, a password reset link is on its way. Check your inbox and spam folder.";
+
+/**
+ * What a visitor is told when sign-up fails.
+ *
+ * Supabase's own message is written for a developer reading a stack trace,
+ * not for someone at a sign-up form: a real attempt against production came
+ * back as the bare string "email rate limit exceeded", which describes the
+ * project's mail quota rather than anything the visitor did or can fix.
+ * Worse, passing provider text straight through means any future message
+ * Supabase adds is published verbatim, including ones that describe
+ * configuration.
+ *
+ * Only the cases a visitor can act on get their own wording; everything else
+ * gets one neutral message.
+ */
+export const GENERIC_SIGN_UP_ERROR = "We couldn't create that account just now. Please try again in a moment.";
+
+export function signUpErrorMessage(providerMessage: string): string {
+  const message = providerMessage.toLowerCase();
+
+  if (/rate limit|too many/.test(message)) {
+    return "Too many sign-up attempts right now. Please wait a few minutes and try again.";
+  }
+  if (/password/.test(message)) {
+    return `Choose a stronger password — at least ${MIN_PASSWORD_LENGTH} characters, mixing letters, numbers or symbols.`;
+  }
+  if (/email address.*invalid|invalid.*email|unable to validate email/.test(message)) {
+    return "Enter a valid email address.";
+  }
+  if (/signups? not allowed|signup is disabled/.test(message)) {
+    return "New accounts aren't being accepted at the moment.";
+  }
+  return GENERIC_SIGN_UP_ERROR;
+}
