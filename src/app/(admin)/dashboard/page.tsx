@@ -2,6 +2,8 @@ import { redirect } from "next/navigation";
 import { AdminDashboard } from "@/features/dashboard/components/AdminDashboard";
 import { UserDashboard } from "@/features/dashboard/components/UserDashboard";
 import { resolveScopeForPage } from "@/features/dashboard/lib/pageScope";
+import { UnlinkedAccountNotice } from "@/features/dashboard/components/UnlinkedAccountNotice";
+import { dashboardExperienceFor } from "@/shared/lib/dashboardScope";
 
 export const dynamic = "force-dynamic";
 
@@ -22,5 +24,14 @@ export const dynamic = "force-dynamic";
 export default async function DashboardPage() {
   const scope = await resolveScopeForPage();
   if (!scope) redirect("/login");
-  return scope.isPlatformAdmin ? <AdminDashboard /> : <UserDashboard />;
+
+  switch (dashboardExperienceFor(scope)) {
+    case "platform":
+      return <AdminDashboard />;
+    case "company":
+      return <UserDashboard />;
+    default:
+      // Authenticated, but not a member of any company yet — a new sign-up.
+      return <UnlinkedAccountNotice email={scope.user.email} />;
+  }
 }

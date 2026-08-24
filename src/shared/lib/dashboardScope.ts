@@ -50,6 +50,20 @@ export interface DashboardScope {
   breadth: "company" | "employee";
 }
 
+/**
+ * Which of the three dashboard experiences an identity should be shown.
+ *
+ * The third one is the reason this exists. A freshly self-registered account
+ * is authenticated but belongs to no company yet, and rendering the company
+ * dashboard for it produces a red API failure ("not linked to a company")
+ * where an explanation belongs — the account is not broken, it is simply
+ * waiting to be added to a workspace.
+ */
+export function dashboardExperienceFor(scope: DashboardScope): "platform" | "company" | "unlinked" {
+  if (scope.isPlatformAdmin) return "platform";
+  return scope.companyId ? "company" : "unlinked";
+}
+
 export interface ScopeLookup {
   isPlatformAdmin(userId: string): Promise<boolean>;
   listActiveMembershipsForUser(userId: string): Promise<Array<{ company_id: string; role: UserRole }>>;

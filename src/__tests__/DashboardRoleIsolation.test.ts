@@ -6,7 +6,7 @@
  * identity is not entitled to, including IDOR attempts through every
  * parameter a client can influence.
  */
-import { resolveDashboardScope, ScopeLookup } from "@/shared/lib/dashboardScope";
+import { resolveDashboardScope, dashboardExperienceFor, ScopeLookup } from "@/shared/lib/dashboardScope";
 import { resolveCompanyAccess, AuthError, AuthenticatedUser } from "@/shared/lib/tenant";
 import { UserRole } from "@/shared/lib/rbac";
 
@@ -355,5 +355,33 @@ describe("company access alone does not authorize a colleague's row", () => {
     expect(employeeId).toBe("00000000-0000-0000-0000-000000000000");
     expect(mayOpen(usersLead, COMPANY, employeeId)).toBe(false);
     expect(mayOpen(colleaguesLead, COMPANY, employeeId)).toBe(false);
+  });
+});
+
+describe("which experience each identity is shown", () => {
+  it("gives the platform control centre only to a platform admin", async () => {
+    const scope = await resolveDashboardScope(ADMIN, lookup());
+    expect(dashboardExperienceFor(scope)).toBe("platform");
+  });
+
+  it("gives a company member their own company dashboard", async () => {
+    const scope = await resolveDashboardScope(MEMBER, lookup());
+    expect(dashboardExperienceFor(scope)).toBe("company");
+  });
+
+  it("explains itself to a new sign-up rather than failing at them", async () => {
+    // A self-registered account is authenticated but belongs to nothing yet.
+    // Sending it to the company dashboard produced a red API error for a
+    // state that is not an error.
+    const scope = await resolveDashboardScope(OUTSIDER, lookup());
+    expect(scope.companyId).toBeNull();
+    expect(scope.isPlatformAdmin).toBe(false);
+    expect(dashboardExperienceFor(scope)).toBe("unlinked");
+  });
+
+  it("still prefers platform admin for an admin who happens to own no company", async () => {
+    const scope = await resolveDashboardScope(ADMIN, lookup({ "admin-1": [] }));
+    expect(scope.companyId).toBeNull();
+    expect(dashboardExperienceFor(scope)).toBe("platform");
   });
 });
