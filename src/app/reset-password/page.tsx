@@ -7,6 +7,7 @@ import { createBrowserClient } from "@supabase/ssr";
 import { Button } from "@/shared/ui/button";
 import { AuthShell, AuthError, AuthNotice, AuthLink, authInputClass } from "@/features/auth/components/AuthShell";
 import { assessPassword, MIN_PASSWORD_LENGTH } from "@/features/auth/lib/passwordPolicy";
+import { RECOVERY_FLOW_COOKIE } from "@/features/auth/lib/recoveryFlow";
 
 type SessionState = "checking" | "ready" | "missing";
 
@@ -20,12 +21,23 @@ type SessionState = "checking" | "ready" | "missing";
  * or forged link gets an explanation and a way to request another, not a
  * password field that would fail on submit.
  *
+ * A session alone is NOT enough, and that distinction is the whole point of
+ * the extra check below. "Is anyone signed in?" is the wrong question: any
+ * unrelated session already in the browser would silently become the account
+ * whose password this page changes — which is exactly what happened when
+ * this page shipped with only the session test. The page therefore also
+ * requires evidence that the visitor arrived through recovery (the marker
+ * /auth/callback sets for the PKCE links, or Supabase's PASSWORD_RECOVERY
+ * event for the token-in-fragment links), and it names the account it is
+ * about to change so the person can see it too.
+ *
  * The new password lives in component state only until the request returns,
  * and is never sent anywhere except Supabase's own updateUser.
  */
 export default function ResetPasswordPage() {
   const router = useRouter();
   const [sessionState, setSessionState] = useState<SessionState>("checking");
+  const [accountEmail, setAccountEmail] = useState<string | null>(null);
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [show, setShow] = useState(false);
@@ -40,17 +52,41 @@ export default function ResetPasswordPage() {
 
   useEffect(() => {
     let cancelled = false;
+
+    // The fragment-token links (Supabase generates these for admin-issued and
+    // non-PKCE recovery mail) authenticate in the browser, and this event is
+    // how the client says so.
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
+      if (cancelled || event !== "PASSWORD_RECOVERY") return;
+      setAccountEmail(session?.user?.email ?? null);
+      setSessionState("ready");
+    });
+
+    const arrivedThroughRecovery = document.cookie
+      .split("; ")
+      .some((c) => c.startsWith(`${RECOVERY_FLOW_COOKIE}=`));
+
     supabase.auth
       .getUser()
       .then(({ data }) => {
         if (cancelled) return;
-        setSessionState(data.user ? "ready" : "missing");
+        if (data.user && arrivedThroughRecovery) {
+          setAccountEmail(data.user.email ?? null);
+          setSessionState("ready");
+          return;
+        }
+        // Either nobody is signed in, or somebody is but did not get here
+        // through a recovery link. Both must be refused: the second is a
+        // session that was never nominated for a password change.
+        setSessionState((current) => (current === "ready" ? current : "missing"));
       })
       .catch(() => {
-        if (!cancelled) setSessionState("missing");
+        if (!cancelled) setSessionState((current) => (current === "ready" ? current : "missing"));
       });
+
     return () => {
       cancelled = true;
+      authListener.subscription.unsubscribe();
     };
     // The client is recreated per render but is stateless here; the check is
     // intentionally once-per-mount.
@@ -84,9 +120,11 @@ export default function ResetPasswordPage() {
         setSessionState("missing");
         return;
       }
-      // Clear the entered value as soon as it is no longer needed.
+      // Clear the entered value as soon as it is no longer needed, and spend
+      // the recovery marker so the page cannot be reused on a later visit.
       setPassword("");
       setConfirm("");
+      document.cookie = `${RECOVERY_FLOW_COOKIE}=; path=/; max-age=0; SameSite=Lax; Secure`;
       setDone(true);
       // The session is already authenticated, so land them where they belong.
       setTimeout(() => router.push("/dashboard"), 1200);
@@ -121,7 +159,11 @@ export default function ResetPasswordPage() {
   }
 
   return (
-    <AuthShell title="Choose a new password" footer={<AuthLink href="/login">Back to sign in</AuthLink>}>
+    <AuthShell
+      title="Choose a new password"
+      subtitle={accountEmail ? `For ${accountEmail}` : undefined}
+      footer={<AuthLink href="/login">Back to sign in</AuthLink>}
+    >
       {error && <AuthError message={error} />}
       {done && <AuthNotice message="Password updated. Taking you to your dashboard…" />}
 

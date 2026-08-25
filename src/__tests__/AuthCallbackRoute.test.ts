@@ -71,6 +71,21 @@ describe("GET /auth/callback", () => {
     }
   });
 
+  it("marks a recovery arrival so the reset page knows which flow this is", async () => {
+    const res = await GET(callbackRequest("?code=one-time-code&next=/reset-password"));
+    const marker = res.cookies.get("maylaan-recovery-flow");
+
+    // Without this the reset page can only ask "is anyone signed in?", and an
+    // unrelated session already in the browser becomes the account it changes.
+    expect(marker?.value).toBe("1");
+    expect(marker?.maxAge).toBe(600);
+  });
+
+  it("does not mark ordinary sign-in arrivals as recovery", async () => {
+    const res = await GET(callbackRequest("?code=one-time-code&next=/dashboard"));
+    expect(res.cookies.get("maylaan-recovery-flow")).toBeUndefined();
+  });
+
   it("defaults to the dashboard when no destination is given", async () => {
     const res = await GET(callbackRequest("?code=c"));
     expect(new URL(res.headers.get("location") as string).pathname).toBe("/dashboard");

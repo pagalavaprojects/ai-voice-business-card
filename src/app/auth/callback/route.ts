@@ -1,5 +1,6 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { RECOVERY_FLOW_COOKIE } from "@/features/auth/lib/recoveryFlow";
 
 export const dynamic = "force-dynamic";
 
@@ -52,6 +53,21 @@ export async function GET(req: NextRequest) {
   if (error) {
     // Expired, already used, or forged — all the same to the visitor.
     return NextResponse.redirect(new URL("/login?error=link_expired", req.url));
+  }
+
+  if (next.startsWith("/reset-password")) {
+    // Tell the reset page that THIS session came from a recovery link.
+    // Without a marker that page can only ask "is anyone signed in?", and an
+    // unrelated session that happens to exist in the browser would silently
+    // become the account whose password gets changed.
+    response.cookies.set({
+      name: RECOVERY_FLOW_COOKIE,
+      value: "1",
+      path: "/",
+      maxAge: 600,
+      sameSite: "lax",
+      secure: true,
+    });
   }
 
   return response;

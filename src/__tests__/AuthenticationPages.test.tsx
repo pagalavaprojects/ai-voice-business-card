@@ -25,6 +25,7 @@ const mockAuth = {
   resetPasswordForEmail: jest.fn(),
   updateUser: jest.fn(),
   getUser: jest.fn(),
+  onAuthStateChange: jest.fn((_cb: (event: string, session: unknown) => void) => ({ data: { subscription: { unsubscribe: jest.fn() } } })),
 };
 const mockPush = jest.fn();
 
@@ -48,8 +49,19 @@ function typeInto(label: RegExp, value: string) {
   fireEvent.change(screen.getByLabelText(label), { target: { value } });
 }
 
+/** The marker /auth/callback sets when it exchanges a recovery link. */
+const RECOVERY_COOKIE = "maylaan-recovery-flow";
+const arriveThroughRecovery = () => {
+  document.cookie = `${RECOVERY_COOKIE}=1; path=/`;
+};
+const clearRecoveryMarker = () => {
+  document.cookie = `${RECOVERY_COOKIE}=; path=/; max-age=0`;
+};
+
 beforeEach(() => {
   jest.clearAllMocks();
+  clearRecoveryMarker();
+  mockAuth.onAuthStateChange.mockImplementation(() => ({ data: { subscription: { unsubscribe: jest.fn() } } }));
   window.history.replaceState({}, "", "/login");
 });
 
@@ -263,7 +275,8 @@ describe("/reset-password", () => {
   });
 
   it("updates the password and moves on to the dashboard", async () => {
-    mockAuth.getUser.mockResolvedValue({ data: { user: { id: "u1" } } });
+    arriveThroughRecovery();
+    mockAuth.getUser.mockResolvedValue({ data: { user: { id: "u1", email: "user@maylaanai.com" } } });
     mockAuth.updateUser.mockResolvedValue({ error: null });
     render(<ResetPasswordPage />);
     await screen.findByLabelText(/^new password$/i);
@@ -277,7 +290,8 @@ describe("/reset-password", () => {
   });
 
   it("recovers gracefully when the session expires mid-form", async () => {
-    mockAuth.getUser.mockResolvedValue({ data: { user: { id: "u1" } } });
+    arriveThroughRecovery();
+    mockAuth.getUser.mockResolvedValue({ data: { user: { id: "u1", email: "user@maylaanai.com" } } });
     mockAuth.updateUser.mockResolvedValue({ error: { message: "Auth session missing!" } });
     render(<ResetPasswordPage />);
     await screen.findByLabelText(/^new password$/i);
@@ -290,7 +304,8 @@ describe("/reset-password", () => {
   });
 
   it("keeps the submit button out of reach until the password is strong and confirmed", async () => {
-    mockAuth.getUser.mockResolvedValue({ data: { user: { id: "u1" } } });
+    arriveThroughRecovery();
+    mockAuth.getUser.mockResolvedValue({ data: { user: { id: "u1", email: "user@maylaanai.com" } } });
     render(<ResetPasswordPage />);
 
     const submit = await screen.findByRole("button", { name: /update password/i });
@@ -305,9 +320,46 @@ describe("/reset-password", () => {
     expect(submit).toBeEnabled();
   });
 
+  it("refuses to change the password of a session that did not come from a recovery link", async () => {
+    // The defect this pins: the page used to ask only "is anyone signed in?".
+    // A browser with an unrelated session already in it — the operator's own
+    // account, say — would silently become the account whose password the
+    // form changed. Reproduced in production once; never again.
+    mockAuth.getUser.mockResolvedValue({ data: { user: { id: "someone-else", email: "ceo@example.com" } } });
+    render(<ResetPasswordPage />);
+
+    expect(await screen.findByText(/this link can/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/^new password$/i)).toBeNull();
+    expect(mockAuth.updateUser).not.toHaveBeenCalled();
+  });
+
+  it("accepts the fragment-token links, which authenticate in the browser", async () => {
+    // Supabase's non-PKCE recovery mail lands with the session in the URL
+    // fragment; the client announces it with this event instead of a cookie.
+    mockAuth.getUser.mockResolvedValue({ data: { user: null } });
+    mockAuth.onAuthStateChange.mockImplementation((cb: (event: string, session: unknown) => void) => {
+      setTimeout(() => cb("PASSWORD_RECOVERY", { user: { id: "u1", email: "user@maylaanai.com" } }), 0);
+      return { data: { subscription: { unsubscribe: jest.fn() } } };
+    });
+    render(<ResetPasswordPage />);
+
+    expect(await screen.findByLabelText(/^new password$/i)).toBeInTheDocument();
+  });
+
+  it("names the account whose password is about to change", async () => {
+    arriveThroughRecovery();
+    mockAuth.getUser.mockResolvedValue({ data: { user: { id: "u1", email: "user@maylaanai.com" } } });
+    render(<ResetPasswordPage />);
+
+    // Seeing the address is what makes a wrong-account reset obvious to the
+    // person doing it.
+    expect(await screen.findByText(/for user@maylaanai\.com/i)).toBeInTheDocument();
+  });
+
   it("never puts a token in the page, the URL bar or the form", async () => {
     window.history.replaceState({}, "", "/reset-password");
-    mockAuth.getUser.mockResolvedValue({ data: { user: { id: "u1" } } });
+    arriveThroughRecovery();
+    mockAuth.getUser.mockResolvedValue({ data: { user: { id: "u1", email: "user@maylaanai.com" } } });
     const { container } = render(<ResetPasswordPage />);
 
     await screen.findByLabelText(/^new password$/i);
