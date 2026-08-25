@@ -66,6 +66,38 @@ export default function ResetPasswordPage() {
       .split("; ")
       .some((c) => c.startsWith(`${RECOVERY_FLOW_COOKIE}=`));
 
+    // A recovery link of the older shape arrives with its session in the
+    // fragment, and the PASSWORD_RECOVERY event above never fires for it:
+    // this client runs the PKCE flow and its URL detection ignores implicit
+    // fragments entirely. So the tokens are handed to setSession here, and
+    // only when the fragment says `type=recovery` — a fragment carrying an
+    // ordinary session must not unlock a password change.
+    const fragment = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+    const accessToken = fragment.get("access_token");
+    const refreshToken = fragment.get("refresh_token");
+    if (fragment.get("type") === "recovery" && accessToken && refreshToken) {
+      void supabase.auth
+        .setSession({ access_token: accessToken, refresh_token: refreshToken })
+        .then(({ data, error: sessionError }) => {
+          if (cancelled) return;
+          // Do not leave the tokens sitting in the address bar or history.
+          window.history.replaceState({}, "", "/reset-password");
+          if (sessionError || !data.user) {
+            setSessionState("missing");
+            return;
+          }
+          setAccountEmail(data.user.email ?? null);
+          setSessionState("ready");
+        })
+        .catch(() => {
+          if (!cancelled) setSessionState("missing");
+        });
+      return () => {
+        cancelled = true;
+        authListener.subscription.unsubscribe();
+      };
+    }
+
     supabase.auth
       .getUser()
       .then(({ data }) => {

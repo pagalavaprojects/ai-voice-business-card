@@ -373,6 +373,43 @@ describe("/reset-password", () => {
     expect(mockAuth.updateUser).not.toHaveBeenCalled();
   });
 
+  it("adopts a recovery session carried in the fragment", async () => {
+    // The older link shape puts the session in the fragment, and the client
+    // (PKCE) never notices it, so the page must set it explicitly.
+    window.history.replaceState({}, "", "/reset-password#access_token=abc&refresh_token=def&type=recovery");
+    mockAuth.getUser.mockResolvedValue({ data: { user: null } });
+    mockAuth.setSession.mockResolvedValue({ data: { user: { id: "u1", email: "user@maylaanai.com" } }, error: null });
+
+    render(<ResetPasswordPage />);
+
+    expect(await screen.findByLabelText(/^new password$/i)).toBeInTheDocument();
+    expect(mockAuth.setSession).toHaveBeenCalledWith({ access_token: "abc", refresh_token: "def" });
+    expect(window.location.hash).toBe("");
+  });
+
+  it("will not let an ordinary fragment session unlock a password change", async () => {
+    // Same shape, but the link was a magic link rather than a recovery one.
+    window.history.replaceState({}, "", "/reset-password#access_token=abc&refresh_token=def&type=magiclink");
+    mockAuth.getUser.mockResolvedValue({ data: { user: { id: "u1", email: "user@maylaanai.com" } } });
+
+    render(<ResetPasswordPage />);
+
+    expect(await screen.findByText(/this link can/i)).toBeInTheDocument();
+    expect(mockAuth.setSession).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText(/^new password$/i)).toBeNull();
+  });
+
+  it("refuses when the fragment session itself is rejected", async () => {
+    window.history.replaceState({}, "", "/reset-password#access_token=stale&refresh_token=stale&type=recovery");
+    mockAuth.getUser.mockResolvedValue({ data: { user: null } });
+    mockAuth.setSession.mockResolvedValue({ data: { user: null }, error: { message: "invalid claim" } });
+
+    render(<ResetPasswordPage />);
+
+    expect(await screen.findByText(/this link can/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/^new password$/i)).toBeNull();
+  });
+
   it("accepts the fragment-token links, which authenticate in the browser", async () => {
     // Supabase's non-PKCE recovery mail lands with the session in the URL
     // fragment; the client announces it with this event instead of a cookie.
