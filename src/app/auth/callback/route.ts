@@ -20,6 +20,36 @@ export const dynamic = "force-dynamic";
  * that says the link is no longer usable rather than reporting why, which
  * would tell an attacker whether a given code was real.
  */
+/**
+ * The page served when no `code` is present, whose only job is to look at
+ * the fragment the server cannot see and route accordingly.
+ *
+ * `next` is already restricted to a same-origin path by the caller, and it
+ * is embedded through JSON.stringify so it cannot break out of the string
+ * literal. Nothing else on this page comes from the request.
+ */
+function fragmentHandoffPage(next: string): string {
+  return `<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Signing you in…</title><meta name="robots" content="noindex"></head>
+<body style="margin:0;background:#0c111d;color:#94a3b8;font:14px system-ui,sans-serif;display:grid;place-items:center;height:100vh">
+<p>Signing you in…</p>
+<noscript><p>This link needs JavaScript. <a href="/login" style="color:#38bdf8">Go to sign in</a>.</p></noscript>
+<script>
+(function () {
+  var hash = window.location.hash || "";
+  var next = ${JSON.stringify(next)};
+  if (hash.indexOf("access_token=") !== -1 || hash.indexOf("error=") !== -1) {
+    window.location.replace(next + hash);
+  } else {
+    window.location.replace("/login?error=link_invalid");
+  }
+})();
+</script>
+</body>
+</html>`;
+}
+
 export async function GET(req: NextRequest) {
   const code = req.nextUrl.searchParams.get("code");
   const requestedNext = req.nextUrl.searchParams.get("next") ?? "/dashboard";
@@ -28,7 +58,25 @@ export async function GET(req: NextRequest) {
   const next = requestedNext.startsWith("/") && !requestedNext.startsWith("//") ? requestedNext : "/dashboard";
 
   if (!code) {
-    return NextResponse.redirect(new URL("/login?error=link_invalid", req.url));
+    // No code in the query does NOT mean the link is broken. Supabase issues
+    // two shapes of auth link: the PKCE one this route exchanges, and an
+    // older one that carries the whole session in the URL FRAGMENT — which
+    // the browser never sends to a server, so from here the two are
+    // indistinguishable. The Supabase dashboard's own "send magic link" and
+    // "reset password" buttons produce the second shape, and treating it as
+    // invalid meant a perfectly good link dumped the operator on an error.
+    //
+    // Only the browser can tell them apart, so hand the decision to it: if a
+    // fragment session is present, carry it to the destination (whose client
+    // consumes it), otherwise fall through to the same error as before.
+    // Deliberately NO recovery marker is set here — the reset page learns
+    // about a fragment recovery from Supabase's PASSWORD_RECOVERY event, and
+    // setting the marker without a verified session would let an unrelated
+    // ambient session become the account whose password gets changed.
+    return new NextResponse(fragmentHandoffPage(next), {
+      status: 200,
+      headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+    });
   }
 
   const response = NextResponse.redirect(new URL(next, req.url));

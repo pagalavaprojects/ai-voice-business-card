@@ -38,13 +38,34 @@ describe("GET /auth/callback", () => {
     expect(new URL(res.headers.get("location") as string).pathname).toBe("/reset-password");
   });
 
-  it("sends a link with no code back to login as invalid", async () => {
+  it("hands a link with no code to the browser, which can see the fragment", async () => {
+    // Supabase issues two link shapes. The dashboard's own "send magic link"
+    // and "reset password" buttons put the whole session in the FRAGMENT,
+    // which never reaches a server — so a missing `code` is not proof the
+    // link is broken, and treating it as such dumped valid links on an
+    // error page. Only the browser can tell the two apart.
     const res = await GET(callbackRequest("?next=/reset-password"));
+    const html = await res.text();
 
     expect(exchangeCodeForSession).not.toHaveBeenCalled();
-    const location = new URL(res.headers.get("location") as string);
-    expect(location.pathname).toBe("/login");
-    expect(location.searchParams.get("error")).toBe("link_invalid");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/html");
+    // A fragment session is carried to the destination; anything else still
+    // ends up on the same error as before.
+    expect(html).toContain("access_token=");
+    expect(html).toContain('"/reset-password"');
+    expect(html).toContain("/login?error=link_invalid");
+    // No recovery marker on this path: without a verified session it would
+    // let an unrelated ambient session become the account being changed.
+    expect(res.cookies.get("maylaan-recovery-flow")).toBeUndefined();
+  });
+
+  it("cannot be talked into carrying a fragment off-origin", async () => {
+    const res = await GET(callbackRequest("?next=" + encodeURIComponent("https://evil.example.com/steal")));
+    const html = await res.text();
+
+    expect(html).toContain('"/dashboard"');
+    expect(html).not.toContain("evil.example.com");
   });
 
   it("treats an expired, reused or forged code as one indistinguishable failure", async () => {
