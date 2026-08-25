@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { formatApiResponse } from "@/shared/lib/security";
 import { handleApiError } from "@/shared/lib/apiHandler";
-import { requireCompanyAccess } from "@/shared/lib/tenant";
+import { requireCompanyDataScope } from "@/shared/lib/tenant";
 import { SupabaseCRMRepository } from "@/core/infrastructure/database/supabase/SupabaseCRMRepository";
 import { SupabaseStorageAdapter } from "@/core/infrastructure/storage/SupabaseStorageAdapter";
 
@@ -34,7 +34,13 @@ export async function GET(req: NextRequest) {
     const companyId = req.nextUrl.searchParams.get("companyId");
     if (!companyId) return formatApiResponse(null, 400, "companyId query parameter is required");
 
-    await requireCompanyAccess(req, companyId, "read:leads");
+    // Company-level access is not enough here. This route authorised the
+    // tenant and then queried by company_id alone, so a staff account with
+    // no leads of its own could export every lead in the company AND receive
+    // a signed download URL for the CSV — the same defect closed on the list
+    // endpoint, missed on this one. Verified in production before the fix:
+    // a staff login exported 27 leads belonging to a colleague.
+    const { employeeId } = await requireCompanyDataScope(req, companyId, "read:leads");
 
     const status = req.nextUrl.searchParams.get("status") || undefined;
 
@@ -44,7 +50,13 @@ export async function GET(req: NextRequest) {
     // Page through everything server-side; a dashboard export should never
     // be capped at the UI's page size.
     for (;;) {
-      const { leads, total } = await crmRepo.listLeads({ company_id: companyId, status, limit: pageSize, offset });
+      const { leads, total } = await crmRepo.listLeads({
+        company_id: companyId,
+        ...(employeeId ? { employee_id: employeeId } : {}),
+        status,
+        limit: pageSize,
+        offset,
+      });
       allRows.push(
         ...leads.map((l) => ({
           name: l.name,

@@ -24,7 +24,13 @@ export async function POST(req: NextRequest, { params }: { params: { leadId: str
     const { access, employeeId } = await requireCompanyDataScope(req, parsed.company_id, "write:leads");
 
     const lead = await crmRepo.getLeadById(params.leadId);
-    if (!lead || lead.company_id !== parsed.company_id) return formatApiResponse(null, 404, "Lead not found");
+    // employeeId was resolved above and then never consulted, so a staff
+    // account could write a note onto a colleague's lead — confirmed in
+    // production, which answered 201 and stored the row. A refused write
+    // returns the same 404 as a missing lead so it never confirms existence.
+    if (!lead || lead.company_id !== parsed.company_id || (employeeId && lead.employee_id !== employeeId)) {
+      return formatApiResponse(null, 404, "Lead not found");
+    }
 
     const note = await crmRepo.addActivity(params.leadId, parsed.company_id, "NOTE", parsed.content, access.userId);
     return formatApiResponse(note, 201, "Note added successfully");
