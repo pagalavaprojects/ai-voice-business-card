@@ -23,6 +23,7 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isCompletingLink, setIsCompletingLink] = useState(false);
 
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL || "https://placeholder.supabase.co",
@@ -33,8 +34,49 @@ export default function LoginPage() {
   // page is otherwise fully static, and the hook would force it behind a
   // Suspense boundary for no benefit.
   useEffect(() => {
-    const reason = new URLSearchParams(window.location.search).get("error");
+    const params = new URLSearchParams(window.location.search);
+    const reason = params.get("error");
     if (reason && LINK_ERRORS[reason]) setError(LINK_ERRORS[reason]);
+
+    // A fragment-form auth link (the shape the Supabase dashboard issues)
+    // cannot deliver its session to a protected page — the middleware turns
+    // the request away before any script runs. /auth/callback therefore
+    // routes those here, because this page renders for anyone, and the
+    // client below adopts the session from the fragment. All that is left is
+    // to carry the visitor on to where the link was actually pointing.
+    if (!window.location.hash.includes("access_token=")) return;
+    setIsCompletingLink(true);
+
+    const requested = params.get("next") ?? "/dashboard";
+    const destination = requested.startsWith("/") && !requested.startsWith("//") ? requested : "/dashboard";
+
+    let cancelled = false;
+    let attempts = 0;
+    const waitForSession = async () => {
+      while (!cancelled && attempts < 20) {
+        attempts += 1;
+        const { data } = await supabase.auth.getUser();
+        if (cancelled) return;
+        if (data.user) {
+          window.history.replaceState({}, "", "/login");
+          router.replace(destination);
+          router.refresh();
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+      if (!cancelled) {
+        setIsCompletingLink(false);
+        setError(LINK_ERRORS.link_expired);
+      }
+    };
+    void waitForSession();
+    return () => {
+      cancelled = true;
+    };
+    // The client is recreated per render but is stateless here; this runs
+    // once per mount by design.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleLogin = async (e: FormEvent) => {
@@ -74,6 +116,13 @@ export default function LoginPage() {
       footer={<>New here? <AuthLink href="/signup">Create an account</AuthLink></>}
     >
       {error && <AuthError message={error} />}
+
+      {isCompletingLink && (
+        <div className="flex items-center gap-2 text-xs text-slate-400">
+          <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+          Signing you in…
+        </div>
+      )}
 
       <form onSubmit={handleLogin} className="space-y-4" noValidate>
         <div>

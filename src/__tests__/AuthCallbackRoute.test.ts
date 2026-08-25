@@ -64,7 +64,10 @@ describe("GET /auth/callback", () => {
     const res = await GET(callbackRequest("?next=" + encodeURIComponent("https://evil.example.com/steal")));
     const html = await res.text();
 
-    expect(html).toContain('"/dashboard"');
+    // The hostile destination is replaced by the safe default, and a
+    // protected default is delivered through /login (the fragment cannot
+    // survive the middleware redirect a protected page would trigger).
+    expect(html).toContain("/login?next=%2Fdashboard");
     expect(html).not.toContain("evil.example.com");
   });
 

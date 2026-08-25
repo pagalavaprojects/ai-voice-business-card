@@ -5,21 +5,21 @@ import { RECOVERY_FLOW_COOKIE } from "@/features/auth/lib/recoveryFlow";
 export const dynamic = "force-dynamic";
 
 /**
- * The landing point for every emailed auth link — password recovery and
- * address confirmation both arrive here.
+ * Where a fragment session may safely be delivered.
  *
- * Supabase's PKCE links carry a one-time `code`, which is worthless until it
- * is exchanged for a session; without this handler those links land on a
- * page that cannot authenticate anyone, which is exactly why password reset
- * could not work before it existed. The exchange happens server-side so the
- * resulting session is written as the same cookie the middleware and every
- * server route already read.
- *
- * The code is never logged: it is a single-use credential, and an error path
- * that echoed it would put it in server logs. Failures redirect to a page
- * that says the link is no longer usable rather than reporting why, which
- * would tell an attacker whether a given code was real.
+ * The fragment only becomes a session once client-side JavaScript on the
+ * destination reads it — so the destination must actually render. Sending it
+ * to a protected page does not work: the middleware sees a request with no
+ * cookie yet and redirects to /login first, and the tokens are gone by the
+ * time anything can read them (observed against production). Public pages
+ * receive the fragment directly; everything else goes through /login, which
+ * renders for anyone, adopts the session and then continues to `next`.
  */
+function fragmentLandingFor(next: string): string {
+  const isPublic = next.startsWith("/reset-password") || next.startsWith("/login");
+  return isPublic ? next : `/login?next=${encodeURIComponent(next)}`;
+}
+
 /**
  * The page served when no `code` is present, whose only job is to look at
  * the fragment the server cannot see and route accordingly.
@@ -38,9 +38,9 @@ function fragmentHandoffPage(next: string): string {
 <script>
 (function () {
   var hash = window.location.hash || "";
-  var next = ${JSON.stringify(next)};
+  var landing = ${JSON.stringify(fragmentLandingFor(next))};
   if (hash.indexOf("access_token=") !== -1 || hash.indexOf("error=") !== -1) {
-    window.location.replace(next + hash);
+    window.location.replace(landing + hash);
   } else {
     window.location.replace("/login?error=link_invalid");
   }
@@ -50,6 +50,22 @@ function fragmentHandoffPage(next: string): string {
 </html>`;
 }
 
+/**
+ * The landing point for every emailed auth link — password recovery and
+ * address confirmation both arrive here.
+ *
+ * Supabase's PKCE links carry a one-time `code`, which is worthless until it
+ * is exchanged for a session; without this handler those links land on a
+ * page that cannot authenticate anyone, which is exactly why password reset
+ * could not work before it existed. The exchange happens server-side so the
+ * resulting session is written as the same cookie the middleware and every
+ * server route already read.
+ *
+ * The code is never logged: it is a single-use credential, and an error path
+ * that echoed it would put it in server logs. Failures redirect to a page
+ * that says the link is no longer usable rather than reporting why, which
+ * would tell an attacker whether a given code was real.
+ */
 export async function GET(req: NextRequest) {
   const code = req.nextUrl.searchParams.get("code");
   const requestedNext = req.nextUrl.searchParams.get("next") ?? "/dashboard";

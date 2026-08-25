@@ -28,13 +28,14 @@ const mockAuth = {
   onAuthStateChange: jest.fn((_cb: (event: string, session: unknown) => void) => ({ data: { subscription: { unsubscribe: jest.fn() } } })),
 };
 const mockPush = jest.fn();
+const mockReplace = jest.fn();
 
 jest.mock("@supabase/ssr", () => ({
   createBrowserClient: () => ({ auth: mockAuth }),
 }));
 
 jest.mock("next/navigation", () => ({
-  useRouter: () => ({ push: mockPush, refresh: jest.fn() }),
+  useRouter: () => ({ push: mockPush, replace: mockReplace, refresh: jest.fn() }),
 }));
 
 import LoginPage from "@/app/login/page";
@@ -134,6 +135,20 @@ describe("/login", () => {
 
     await screen.findByRole("alert");
     expect(screen.getByLabelText(/^password$/i)).toHaveValue("");
+  });
+
+  it("finishes a fragment-form link and carries the visitor to its destination", async () => {
+    // /auth/callback routes fragment sessions here because a protected page
+    // cannot receive one — the middleware turns the request away before any
+    // script can read the fragment.
+    // jsdom will not let window.location be redefined; navigating with
+    // replaceState sets the real search and hash.
+    window.history.replaceState({}, "", "/login?next=/dashboard#access_token=abc&refresh_token=def&type=magiclink");
+    mockAuth.getUser.mockResolvedValue({ data: { user: { id: "u1", email: "someone@maylaanai.com" } } });
+
+    render(<LoginPage />);
+
+    await waitFor(() => expect(mockReplace).toHaveBeenCalledWith("/dashboard"));
   });
 
   it("explains a spent email link when the callback redirects here", async () => {
