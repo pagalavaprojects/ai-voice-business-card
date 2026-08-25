@@ -576,7 +576,12 @@ export function PublicBusinessCard({
         initialLanguage={language}
         enabledLanguages={card.enabledLanguages}
         onContinue={(code) => {
-          if (code !== language) setLanguage(code);
+          // Persist unconditionally. Guarding this on "did the choice differ
+          // from what we detected?" meant a visitor whose browser already
+          // reads as, say, English confirmed English and had NOTHING stored —
+          // so the gate greeted them again on every single visit. Confirming
+          // a language IS the preference, whether or not it matches the guess.
+          setLanguage(code);
           setGateConfirmed(true);
         }}
         t={t}
