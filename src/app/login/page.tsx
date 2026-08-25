@@ -40,37 +40,41 @@ export default function LoginPage() {
 
     // A fragment-form auth link (the shape the Supabase dashboard issues)
     // cannot deliver its session to a protected page — the middleware turns
-    // the request away before any script runs. /auth/callback therefore
-    // routes those here, because this page renders for anyone, and the
-    // client below adopts the session from the fragment. All that is left is
-    // to carry the visitor on to where the link was actually pointing.
-    if (!window.location.hash.includes("access_token=")) return;
-    setIsCompletingLink(true);
+    // the request away before any script runs — so /auth/callback routes
+    // those here, to a page that renders for anyone.
+    //
+    // The client will not pick the session up by itself: it runs the PKCE
+    // flow, and its URL detection ignores an implicit fragment. So the
+    // tokens are handed to setSession explicitly. They are read from the URL,
+    // used once, and never stored or logged by this page; the fragment is
+    // wiped from history immediately afterwards so it cannot be read back
+    // out of the address bar.
+    const fragment = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+    const accessToken = fragment.get("access_token");
+    const refreshToken = fragment.get("refresh_token");
+    if (!accessToken || !refreshToken) return;
 
+    setIsCompletingLink(true);
     const requested = params.get("next") ?? "/dashboard";
     const destination = requested.startsWith("/") && !requested.startsWith("//") ? requested : "/dashboard";
 
     let cancelled = false;
-    let attempts = 0;
-    const waitForSession = async () => {
-      while (!cancelled && attempts < 20) {
-        attempts += 1;
-        const { data } = await supabase.auth.getUser();
-        if (cancelled) return;
-        if (data.user) {
-          window.history.replaceState({}, "", "/login");
-          router.replace(destination);
-          router.refresh();
-          return;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 250));
-      }
-      if (!cancelled) {
+    const adoptSession = async () => {
+      const { error: sessionError } = await supabase.auth.setSession({
+        access_token: accessToken,
+        refresh_token: refreshToken,
+      });
+      if (cancelled) return;
+      window.history.replaceState({}, "", "/login");
+      if (sessionError) {
         setIsCompletingLink(false);
         setError(LINK_ERRORS.link_expired);
+        return;
       }
+      router.replace(destination);
+      router.refresh();
     };
-    void waitForSession();
+    void adoptSession();
     return () => {
       cancelled = true;
     };

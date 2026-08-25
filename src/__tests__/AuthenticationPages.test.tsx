@@ -25,6 +25,7 @@ const mockAuth = {
   resetPasswordForEmail: jest.fn(),
   updateUser: jest.fn(),
   getUser: jest.fn(),
+  setSession: jest.fn(),
   onAuthStateChange: jest.fn((_cb: (event: string, session: unknown) => void) => ({ data: { subscription: { unsubscribe: jest.fn() } } })),
 };
 const mockPush = jest.fn();
@@ -144,11 +145,35 @@ describe("/login", () => {
     // jsdom will not let window.location be redefined; navigating with
     // replaceState sets the real search and hash.
     window.history.replaceState({}, "", "/login?next=/dashboard#access_token=abc&refresh_token=def&type=magiclink");
-    mockAuth.getUser.mockResolvedValue({ data: { user: { id: "u1", email: "someone@maylaanai.com" } } });
+    mockAuth.setSession.mockResolvedValue({ error: null });
 
     render(<LoginPage />);
 
-    await waitFor(() => expect(mockReplace).toHaveBeenCalledWith("/dashboard"));
+    // The client runs PKCE and ignores implicit fragments, so the tokens
+    // must be handed to setSession explicitly.
+    await waitFor(() => expect(mockAuth.setSession).toHaveBeenCalledWith({ access_token: "abc", refresh_token: "def" }));
+    expect(mockReplace).toHaveBeenCalledWith("/dashboard");
+    // The fragment must not be left in the address bar afterwards.
+    expect(window.location.hash).toBe("");
+  });
+
+  it("says the link is spent when its fragment session is refused", async () => {
+    window.history.replaceState({}, "", "/login?next=/dashboard#access_token=stale&refresh_token=stale");
+    mockAuth.setSession.mockResolvedValue({ error: { message: "invalid claim: missing sub" } });
+
+    render(<LoginPage />);
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(/expired or was already used/i);
+    expect(mockReplace).not.toHaveBeenCalled();
+  });
+
+  it("ignores a fragment that carries no session at all", async () => {
+    window.history.replaceState({}, "", "/login#some=other-fragment");
+    render(<LoginPage />);
+
+    await waitFor(() => expect(screen.getByRole("button", { name: /sign in/i })).toBeInTheDocument());
+    expect(mockAuth.setSession).not.toHaveBeenCalled();
   });
 
   it("explains a spent email link when the callback redirects here", async () => {
