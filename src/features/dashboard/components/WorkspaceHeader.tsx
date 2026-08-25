@@ -4,6 +4,7 @@ import React from "react";
 import { ChevronDown } from "lucide-react";
 import { useCompany } from "@/features/dashboard/context/CompanyContext";
 import { GlobalSearch } from "@/features/dashboard/components/GlobalSearch";
+import { SignOutButton } from "@/features/auth/components/SignOutButton";
 
 export function WorkspaceHeader() {
   const { loading, error, user, memberships, activeCompanyId, activeMembership, setActiveCompanyId } = useCompany();
@@ -56,6 +57,7 @@ export function WorkspaceHeader() {
         >
           ● {activeMembership ? "System Active" : "No Access"}
         </span>
+        <SignOutButton />
       </div>
     </header>
   );

@@ -1,0 +1,57 @@
+# Remote auth configuration for the linked project, applied with
+# `supabase config push`.
+#
+# This file exists for ONE reason: every auth email link (password recovery
+# and address confirmation alike) was redirecting to http://localhost:3000
+# because the project's Site URL still held the development default and
+# maylaanai.com was not in the redirect allow-list. GoTrue ignores the
+# `redirect_to` an application asks for unless it matches this list, so no
+# amount of application code could fix it — verified by generating recovery
+# links with three different redirect_to values, all of which landed on
+# localhost.
+#
+# READ THIS BEFORE EDITING. `config push` applies the EFFECTIVE local config,
+# not a patch: any auth setting left undeclared here is pushed as the CLI's
+# DEFAULT, silently overwriting whatever production had. That is not
+# hypothetical — the first push of this file changed four unrelated settings
+# that way (email confirmations off, TOTP enrolment off, send frequency 1m to
+# 1s, OTP length 8 to 6). Every value below that is not a URL is here to PIN
+# production's existing setting, not because anyone chose it today. Add a new
+# key only alongside its real remote value.
+project_id = "atiylleojxtjeruppyhq"
+
+[auth]
+# Where GoTrue sends anyone whose link carries no allowed destination.
+site_url = "https://maylaanai.com"
+
+# Destinations an auth link is permitted to reach. The app asks for
+# /auth/callback (which exchanges the one-time code for a session) with a
+# `next` of /reset-password; the explicit entries below are the pages that
+# flow actually lands on, and the `**` globs cover the rest of the site.
+# localhost stays listed so local development keeps working — dropping it
+# would trade one broken environment for another.
+additional_redirect_urls = [
+  "https://maylaanai.com/**",
+  "https://maylaanai.com/login",
+  "https://maylaanai.com/forgot-password",
+  "https://maylaanai.com/reset-password",
+  "https://www.maylaanai.com/**",
+  "http://localhost:3000/**",
+]
+
+# --- pinned to production's existing values; see the warning above ---
+
+[auth.mfa.totp]
+enroll_enabled = true
+verify_enabled = true
+
+[auth.email]
+enable_signup = true
+double_confirm_changes = true
+# A new sign-up must confirm its address before the account works.
+enable_confirmations = true
+secure_password_change = false
+# Per-address send throttle. The CLI default of 1s effectively removes it.
+max_frequency = "1m0s"
+otp_length = 8
+otp_expiry = 3600
