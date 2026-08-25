@@ -56,9 +56,17 @@ export interface LanguageDefinition {
   futureVoiceProvider?: string | null;
 }
 
+/**
+ * Display order matters: this array is what the visitor-facing selector,
+ * the language gate and the admin surfaces all render in, so Tamil leads —
+ * the audience is Tamil Nadu and DEFAULT_LANGUAGE has been "ta" all along.
+ * Order carries no behaviour beyond presentation; every lookup here is by
+ * code, and the only index used anywhere is the [0] fallback below, which
+ * now agrees with DEFAULT_LANGUAGE instead of contradicting it.
+ */
 export const SUPPORTED_LANGUAGES: readonly LanguageDefinition[] = [
-  { code: "en", name: "English", nativeName: "English", transcriber: { provider: "deepgram", language: "en" }, voiceModel: "nova", isRtl: false, flag: "🌐", futureVoiceProvider: null },
   { code: "ta", name: "Tamil", nativeName: "தமிழ்", transcriber: { provider: "openai", model: "gpt-4o-mini-transcribe", language: "ta" }, voiceModel: "nova", isRtl: false, flag: "🇮🇳", futureVoiceProvider: null },
+  { code: "en", name: "English", nativeName: "English", transcriber: { provider: "deepgram", language: "en" }, voiceModel: "nova", isRtl: false, flag: "🌐", futureVoiceProvider: null },
   { code: "hi", name: "Hindi", nativeName: "हिन्दी", transcriber: { provider: "deepgram", language: "hi" }, voiceModel: "nova", isRtl: false, flag: "🇮🇳", futureVoiceProvider: null },
   { code: "te", name: "Telugu", nativeName: "తెలుగు", transcriber: { provider: "azure", language: "te-IN" }, voiceModel: "nova", isRtl: false, flag: "🇮🇳", futureVoiceProvider: null },
   { code: "ml", name: "Malayalam", nativeName: "മലയാളം", transcriber: { provider: "azure", language: "ml-IN" }, voiceModel: "nova", isRtl: false, flag: "🇮🇳", futureVoiceProvider: null },

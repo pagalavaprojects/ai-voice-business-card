@@ -87,14 +87,15 @@ describe("LanguageGate", () => {
   });
 
   it("moves selection with ArrowRight and confirms with Enter (keyboard-only flow)", () => {
+    // Tamil is first in the catalog, so ArrowRight from it lands on English.
     const onContinue = jest.fn();
-    render(<LanguageGate initialLanguage="en" onContinue={onContinue} t={mockT} />);
-    const englishCard = screen.getByRole("radio", { name: /english/i });
-    fireEvent.keyDown(englishCard, { key: "ArrowRight" });
+    render(<LanguageGate initialLanguage="ta" onContinue={onContinue} t={mockT} />);
     const tamilCard = screen.getByText("தமிழ்").closest('[role="radio"]') as HTMLElement;
-    expect(tamilCard).toHaveAttribute("aria-checked", "true");
-    fireEvent.keyDown(tamilCard, { key: "Enter" });
-    expect(onContinue).toHaveBeenCalledWith("ta");
+    fireEvent.keyDown(tamilCard, { key: "ArrowRight" });
+    const englishCard = screen.getByRole("radio", { name: /english/i });
+    expect(englishCard).toHaveAttribute("aria-checked", "true");
+    fireEvent.keyDown(englishCard, { key: "Enter" });
+    expect(onContinue).toHaveBeenCalledWith("en");
   });
 
   it("restricts the offered languages to enabledLanguages when provided", () => {

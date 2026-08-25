@@ -11,8 +11,12 @@ describe("language config", () => {
     expect(DEFAULT_LANGUAGE).toBe("ta");
   });
 
-  it("ships all 6 supported languages", () => {
-    expect(SUPPORTED_LANGUAGES.map((l) => l.code)).toEqual(["en", "ta", "hi", "te", "ml", "kn"]);
+  it("ships all 6 supported languages, Tamil first", () => {
+    // The order is the display order every selector renders, so it is pinned
+    // deliberately rather than incidentally: Tamil leads, matching
+    // DEFAULT_LANGUAGE and the audience the cards are made for.
+    expect(SUPPORTED_LANGUAGES.map((l) => l.code)).toEqual(["ta", "en", "hi", "te", "ml", "kn"]);
+    expect(SUPPORTED_LANGUAGES[0].code).toBe(DEFAULT_LANGUAGE);
   });
 
   describe("detectLanguageFromBrowser", () => {

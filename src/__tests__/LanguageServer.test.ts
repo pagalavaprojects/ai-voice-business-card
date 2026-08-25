@@ -248,7 +248,7 @@ describe("clampToEnabledLanguages", () => {
 describe("resolveEnabledLanguageList", () => {
   it("returns every platform language when unrestricted", () => {
     const result = resolveEnabledLanguageList({ defaultLanguage: null, enabledLanguages: [] });
-    expect(result).toEqual(["en", "ta", "hi", "te", "ml", "kn"]);
+    expect(result).toEqual(["ta", "en", "hi", "te", "ml", "kn"]);
   });
 
   it("returns exactly the company's enabled subset when restricted", () => {
