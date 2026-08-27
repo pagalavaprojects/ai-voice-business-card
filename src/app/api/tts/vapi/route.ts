@@ -8,12 +8,14 @@ import {
   GEMINI_TTS_MODEL,
   GEMINI_TTS_VOICE,
   isConfiguredKey,
+  isProviderConfigured,
   PcmAudio,
   renderCustomPcm,
   renderGeminiPcm,
   renderOpenAiPcm,
   resamplePcm16,
   resolveProviderChain,
+  ttsCachePath,
   TtsProviderName,
 } from "@/shared/lib/tts/ttsBackends";
 
@@ -54,19 +56,6 @@ const MAX_TEXT_CHARS = 1000;
 const ALLOWED_SAMPLE_RATES = new Set([8000, 16000, 22050, 24000, 44100]);
 const BACKEND_TIMEOUT_MS = 20_000;
 
-/** Cache identity: provider + its model/voice + language + rate + text.
- * Provider and model are part of the key so a Gemini recording can never be
- * served as an Indic one (or vice versa) and a provider upgrade naturally
- * re-renders. */
-function cacheKey(provider: TtsProviderName, language: string, sampleRate: number, text: string): string {
-  const model =
-    provider === "gemini" ? `${GEMINI_TTS_MODEL}/${GEMINI_TTS_VOICE}` : provider === "openai" ? "tts-1/nova" : "indic-parler-tts";
-  return createHash("sha256").update([provider, model, language, String(sampleRate), text].join("|")).digest("hex");
-}
-
-function cachePath(provider: TtsProviderName, language: string, sampleRate: number, text: string): string {
-  return `tts-cache/${language}/${provider}/${cacheKey(provider, language, sampleRate, text)}.${sampleRate}.pcm`;
-}
 
 async function readCachedPcm(assetPath: string): Promise<Buffer | null> {
   try {
@@ -170,10 +159,16 @@ export async function POST(req: NextRequest) {
   const language = langParam || (/[஀-௿]/.test(text) ? "ta" : "en");
 
   const textHash = createHash("sha256").update(text).digest("hex").slice(0, 12);
-  const chain = resolveProviderChain(language);
+    // Providers that cannot possibly answer are dropped BEFORE the loop: each
+  // one otherwise costs a durable-cache read per utterance just to fail.
+  const chain = resolveProviderChain(language).filter(isProviderConfigured);
+  if (chain.length === 0) {
+    Logger.error("TTS: no provider is configured", { language, textHash });
+    return NextResponse.json({ message: "TTS unavailable" }, { status: 502 });
+  }
 
   for (const provider of chain) {
-    const assetPath = cachePath(provider, language, sampleRate, text);
+    const assetPath = ttsCachePath(provider, language, sampleRate, text);
     const cached = await readCachedPcm(assetPath);
     if (cached) {
       Logger.info("TTS cache hit", { provider, language, sampleRate, textHash, chars: text.length });

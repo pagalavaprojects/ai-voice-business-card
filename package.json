@@ -20,7 +20,8 @@
     "worker": "tsx --env-file-if-exists=.env.local scripts/worker.ts",
     "seed:pagalava": "tsx --env-file-if-exists=.env.local scripts/seed-pagalava.ts",
     "test:e2e": "playwright test",
-    "seed:products": "node --env-file-if-exists=.env.local scripts/seed-products.mjs"
+    "seed:products": "node --env-file-if-exists=.env.local scripts/seed-products.mjs",
+    "warm:qualification-audio": "tsx --env-file-if-exists=.env.local scripts/warm-qualification-audio.ts"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.1",

@@ -206,18 +206,22 @@ describe("POST /api/tts/vapi", () => {
       expect(res.headers.get("X-TTS-Provider")).toBe("gemini");
     });
 
-    it("English chain never consults Gemini: custom failure goes straight to OpenAI", async () => {
+    it("English now tries Gemini before falling through to OpenAI", async () => {
+      // The reverse of the old rule, and deliberately so: Gemini is the
+      // provider English audio can actually be produced with today.
       const urls: string[] = [];
       (global.fetch as jest.Mock).mockImplementation(async (url: string) => {
         urls.push(String(url));
         if (String(url).includes("tts.internal.example")) return { ok: false, status: 500 };
+        if (String(url).includes("generativelanguage")) return { ok: false, status: 429 };
         if (String(url).includes("api.openai.com")) return { ok: true, arrayBuffer: async () => BACKEND_PCM.buffer.slice(0) };
         throw new Error(`unexpected fetch ${url}`);
       });
       const res = await POST(req(signedQs("en"), voiceRequest("Is our service or product something you need immediately?")));
       expect(res.status).toBe(200);
+      expect(urls.some((u) => u.includes("generativelanguage"))).toBe(true);
+      // OpenAI still catches the call when Gemini cannot answer.
       expect(res.headers.get("X-TTS-Provider")).toBe("openai");
-      expect(urls.some((u) => u.includes("generativelanguage"))).toBe(false);
     });
 
     it("detects Tamil script when the lang param is missing", async () => {
@@ -264,13 +268,18 @@ describe("resolveProviderChain", () => {
     process.env = ORIGINAL_ENV;
   });
 
-  it("Tamil defaults to custom → gemini → openai; others to custom → openai", () => {
+  it("every language defaults to custom → gemini → openai", () => {
+    // English used to be custom → openai, which meant English audio existed
+    // only while that one key worked — and when it stopped, the English
+    // recorded pitches went to 503 while Tamil kept speaking, because Tamil
+    // already had Gemini behind it. Both languages now share the provider
+    // that actually works, with OpenAI kept as the trailing fallback.
     process.env = { ...ORIGINAL_ENV };
     delete process.env.TTS_TAMIL_PROVIDER;
     delete process.env.TTS_EN_PROVIDER;
     expect(resolveProviderChain("ta")).toEqual(["custom", "gemini", "openai"]);
-    expect(resolveProviderChain("en")).toEqual(["custom", "openai"]);
-    expect(resolveProviderChain("hi")).toEqual(["custom", "openai"]);
+    expect(resolveProviderChain("en")).toEqual(["custom", "gemini", "openai"]);
+    expect(resolveProviderChain("hi")).toEqual(["custom", "gemini", "openai"]);
   });
 
   it("TTS_TAMIL_PROVIDER promotes a provider to the front without dropping the rest", () => {

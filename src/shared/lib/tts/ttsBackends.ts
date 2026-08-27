@@ -1,3 +1,4 @@
+import { createHash } from "crypto";
 import { Logger } from "@/shared/lib/logger";
 
 /**
@@ -31,7 +32,13 @@ export type TtsProviderName = "custom" | "gemini" | "openai";
  * code. Lives here (not in the route file) because Next.js route modules
  * may only export handlers. */
 export function resolveProviderChain(language: string): TtsProviderName[] {
-  const chain: TtsProviderName[] = language === "ta" ? ["custom", "gemini", "openai"] : ["custom", "openai"];
+  // English now carries Gemini too. It was OpenAI-only, which made English
+  // audio impossible the moment that key stopped working — and it did: the
+  // English recorded pitches have been answering 503 in production while
+  // Tamil, which already had Gemini, kept serving real audio. One working
+  // provider behind both languages is what makes recorded English possible
+  // at all.
+  const chain: TtsProviderName[] = language === "ta" ? ["custom", "gemini", "openai"] : ["custom", "gemini", "openai"];
   const preferred = (language === "ta" ? process.env.TTS_TAMIL_PROVIDER : process.env.TTS_EN_PROVIDER)?.trim().toLowerCase();
   if (preferred && (chain as string[]).includes(preferred)) {
     return [preferred as TtsProviderName, ...chain.filter((p) => p !== preferred)];
@@ -45,6 +52,47 @@ export const GEMINI_TTS_VOICE = "Kore";
 
 export function isConfiguredKey(v: string | undefined): boolean {
   return Boolean(v && !/your-|placeholder|example/i.test(v));
+}
+
+/**
+ * Whether a provider could possibly answer, judged only on configuration.
+ *
+ * The realtime route walks the chain doing a durable-cache read before each
+ * attempt, so an unconfigured provider costs a pointless Supabase round trip
+ * on EVERY utterance before it can fail — dead air in the middle of a
+ * conversation, for a provider that was never going to speak. Skipping those
+ * up front is the cheapest latency win available on this path.
+ */
+export function isProviderConfigured(provider: TtsProviderName): boolean {
+  switch (provider) {
+    case "custom":
+      return Boolean(process.env.CUSTOM_TTS_URL?.trim() && process.env.CUSTOM_TTS_API_KEY?.trim());
+    case "gemini":
+      return isConfiguredKey(process.env.GEMINI_API_KEY);
+    case "openai":
+      return isConfiguredKey(process.env.OPENAI_API_KEY);
+  }
+}
+
+/**
+ * The durable-cache identity for one rendered utterance, and the object path
+ * it lives at.
+ *
+ * Exported rather than kept in the route because the pre-generation script
+ * has to write to EXACTLY the same key the live request reads, and two
+ * copies of a hashing rule drift the first time either is touched. Provider,
+ * model and voice are part of the identity so a Gemini rendering is never
+ * served where an OpenAI one was expected, and language is in the path so an
+ * English and a Tamil asset can never collide.
+ */
+export function ttsCacheKey(provider: TtsProviderName, language: string, sampleRate: number, text: string): string {
+  const model =
+    provider === "gemini" ? `${GEMINI_TTS_MODEL}/${GEMINI_TTS_VOICE}` : provider === "openai" ? "tts-1/nova" : "indic-parler-tts";
+  return createHash("sha256").update([provider, model, language, String(sampleRate), text].join("|")).digest("hex");
+}
+
+export function ttsCachePath(provider: TtsProviderName, language: string, sampleRate: number, text: string): string {
+  return `tts-cache/${language}/${provider}/${ttsCacheKey(provider, language, sampleRate, text)}.${sampleRate}.pcm`;
 }
 
 /** Wraps raw 16-bit mono PCM in a WAV container a browser <audio> element
