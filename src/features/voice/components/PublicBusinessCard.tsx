@@ -342,7 +342,17 @@ export function PublicBusinessCard({
       // three megabytes. Measured against production: 1 byte, ~145ms,
       // X-Vercel-Cache: HIT.
       for (const type of ["elevator", "product", "usp"] as const) {
-        fetch(url(type), { priority: "low", headers: { Range: "bytes=0-0" } } as RequestInit).catch(() => undefined);
+        // `cache: "no-store"` is load-bearing, not tidiness. The route answers
+        // a range request with status 200 and Content-Length 1 (not a 206),
+        // so without this the browser files that single byte as the complete
+        // response for the URL — and the audio element then "plays" a 1-byte
+        // file and errors instantly. Observed exactly that in production
+        // before this was added: error 26ms after the tap, no audio at all.
+        fetch(url(type), {
+          priority: "low",
+          cache: "no-store",
+          headers: { Range: "bytes=0-0" },
+        } as RequestInit).catch(() => undefined);
       }
     };
     const idle = (window as { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number }).requestIdleCallback;

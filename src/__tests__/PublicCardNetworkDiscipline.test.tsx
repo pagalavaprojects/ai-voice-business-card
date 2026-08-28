@@ -118,7 +118,13 @@ describe("PublicBusinessCard — exactly one card fetch, in the stored language"
     const intro = pitchRequests.find((r) => r.url.includes("type=intro"));
     expect(rangeOf(intro!)).toBeUndefined();
     for (const type of ["elevator", "product", "usp"]) {
-      expect(rangeOf(pitchRequests.find((r) => r.url.includes(`type=${type}`))!)).toBe("bytes=0-0");
+      const request = pitchRequests.find((r) => r.url.includes(`type=${type}`))!;
+      expect(rangeOf(request)).toBe("bytes=0-0");
+      // The route answers a range request with 200 + Content-Length 1, not a
+      // 206, so a cacheable warm response would be stored as the WHOLE file
+      // and the audio element would then play one byte and error. Observed
+      // in production before no-store was added.
+      expect(request.init?.cache).toBe("no-store");
     }
 
     // Idle time passing again must not re-warm — one prefetch per language.
