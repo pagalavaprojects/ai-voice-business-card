@@ -625,6 +625,42 @@ export function useVapiSession({
     stopTimer();
   }, [stopTimer, clearDemoTimeouts, clearSpeakingTimeout, clearReconnectTimeout]);
 
+  /**
+   * Delivers a typed answer into the live conversation as if the visitor had
+   * said it.
+   *
+   * This is what makes the tappable Yes/No/Maybe buttons reuse the voice
+   * path rather than becoming a second one: the text enters as a USER
+   * message, so the assistant calls the same sequencing tool, the SERVER
+   * does the same classification, the same record is written and the next
+   * question is spoken exactly as it would have been. Nothing is classified
+   * or stored client-side, and no assistant utterance is injected — the
+   * visitor never hears the question twice.
+   *
+   * Returns whether the message was actually handed to the SDK, so the
+   * caller can leave its buttons enabled when it was not.
+   */
+  const sendUserMessage = useCallback((content: string): boolean => {
+    const text = content.trim();
+    if (!text) return false;
+    // Demo mode has no conversation to speak into; the caller keeps its
+    // controls live rather than pretending the answer landed.
+    if (isDemoModeRef.current || !vapiRef.current) return false;
+    try {
+      vapiRef.current.send({
+        type: "add-message",
+        message: { role: "user", content: text },
+        // Newer SDKs need this to make the assistant actually take its turn;
+        // older ones ignore the unknown field.
+        triggerResponseEnabled: true,
+      } as Parameters<NonNullable<typeof vapiRef.current>["send"]>[0]);
+      return true;
+    } catch (err) {
+      console.warn("Vapi send exception:", err);
+      return false;
+    }
+  }, []);
+
   const toggleMute = useCallback(() => {
     // The mic is force-muted for the scripted opening (see call-start
     // above); a manual toggle during that window would fight it and leave
@@ -657,5 +693,6 @@ export function useVapiSession({
     startCall,
     endCall,
     toggleMute,
+    sendUserMessage,
   };
 }

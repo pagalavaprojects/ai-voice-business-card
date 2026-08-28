@@ -326,7 +326,7 @@ export function PublicBusinessCard({
     else setTimeout(warm, 2500);
   }, [card, languageConfirmed, language, companyId, employeeId]);
 
-  const { voiceState, isMuted, messages, durationSeconds, error, isPlayingIntro, callId, startCall, endCall, toggleMute } = useVapiSession({
+  const { voiceState, isMuted, messages, durationSeconds, error, isPlayingIntro, callId, startCall, endCall, toggleMute, sendUserMessage } = useVapiSession({
     companyId,
     employeeId,
     firstMessage: card?.firstMessage,
@@ -1147,6 +1147,12 @@ export function PublicBusinessCard({
           // inside the modal, since the card's own alert sits behind the
           // modal backdrop where a failed voice start would be invisible.
           error,
+          // Lets a tapped Yes/No/Maybe enter the conversation as a user
+          // message, so it travels the same server classification path a
+          // spoken answer does. Passed ONLY to the qualification modal — the
+          // plain mic button below runs a general conversation, which has no
+          // closed-ended answers to tap.
+          sendUserMessage,
         }}
       />
     </main>

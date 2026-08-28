@@ -127,6 +127,7 @@
     "stepQualify": "Conversation with AI",
     "qualifyStart": "Start AI Conversation",
     "qualifySkip": "Skip and choose a time",
+    "quickReplyLabel": "Answer with a tap",
     "qualifyInProgress": "Answer naturally — the AI is listening and will guide you.",
     "qualifyDone": "Thanks — that's everything we need. You can continue to pick your time.",
     "qualifyContinue": "Continue",

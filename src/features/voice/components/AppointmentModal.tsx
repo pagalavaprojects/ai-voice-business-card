@@ -13,6 +13,7 @@ import {
   getQualificationQuestions,
   matchAuthoredQuestion,
   toQualificationLanguage,
+  getQuickReplyOptions,
 } from "@/features/voice/lib/qualificationScript";
 import { speakPitchWithBrowserTts } from "@/features/voice/lib/pitchFallback";
 
@@ -55,6 +56,10 @@ interface AppointmentModalProps {
      * start (mic denied, connection error) left the modal showing Q1 with
      * no hint anything went wrong. */
     error?: string | null;
+    /** Delivers a tapped answer into the live conversation as a USER
+     * message, so a tap and a spoken reply travel the identical path.
+     * Returns false when there is no session to speak into. */
+    sendUserMessage?: (content: string) => boolean;
   };
 }
 
@@ -111,6 +116,18 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   // rendered. These come from what the sequencing tool actually persisted,
   // so nothing displayed was ever invented client-side.
   const [qualAnswers, setQualAnswers] = useState<Array<{ n: number; c: string; a: string }>>([]);
+  /**
+   * The question number a quick reply has already been tapped for, and the
+   * label that was tapped.
+   *
+   * Keyed by question number rather than a plain boolean because the answer
+   * takes a moment to come back through the server: without it a second tap
+   * — or an impatient double tap — would send the answer twice and could
+   * advance two questions. The record is compared against the question
+   * currently on screen, so the buttons come back by themselves for the next
+   * question and can never re-answer a question already recorded.
+   */
+  const [quickReply, setQuickReply] = useState<{ questionNumber: number; label: string } | null>(null);
   const qualStageRef = useRef(qualStage);
   qualStageRef.current = qualStage;
   // Which callId the qualification-status poll is CURRENTLY set up for —
@@ -539,6 +556,58 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                           <p className="text-sm text-slate-100 leading-relaxed" data-testid="current-question" lang={toQualificationLanguage(language)}>
                             {aiLine}
                           </p>
+                        </div>
+                      )}
+                      {/* Tap instead of speak. The label IS the word sent
+                          into the conversation, as a USER message, so the
+                          server classifies and records it exactly as it
+                          would a spoken reply — one answer path, not two.
+                          Offered only while a question is actually on screen
+                          and unanswered: never during the introduction,
+                          never in general Talk-with-AI, never after Q6. */}
+                      {qNum > 0 && !qualComplete && voice.sendUserMessage && (
+                        <div
+                          className="flex flex-wrap gap-2 pt-1"
+                          role="group"
+                          aria-label={t("appointment.quickReplyLabel")}
+                          data-testid="quick-replies"
+                        >
+                          {getQuickReplyOptions(qualLang).map((option) => {
+                            const answeredThis = quickReply?.questionNumber === qNum;
+                            const chosen = answeredThis && quickReply?.label === option.label;
+                            return (
+                              <button
+                                key={option.classification}
+                                type="button"
+                                lang={qualLang}
+                                disabled={answeredThis}
+                                aria-pressed={chosen}
+                                data-testid={`quick-reply-${option.classification.toLowerCase()}`}
+                                onClick={() => {
+                                  // A question already answered this way must
+                                  // never be answered again — the guard is
+                                  // here as well as in `disabled`, because a
+                                  // disabled attribute is a UI state, not a
+                                  // rule.
+                                  if (quickReply?.questionNumber === qNum) return;
+                                  const delivered = voice.sendUserMessage?.(option.label);
+                                  // Only lock the row if the answer actually
+                                  // reached the conversation; otherwise the
+                                  // visitor keeps their options.
+                                  if (delivered) setQuickReply({ questionNumber: qNum, label: option.label });
+                                }}
+                                className={`min-h-[44px] flex-1 min-w-[88px] px-3 rounded-xl border text-xs font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 disabled:cursor-not-allowed ${
+                                  chosen
+                                    ? "bg-sky-500/20 border-sky-400/50 text-sky-200"
+                                    : answeredThis
+                                      ? "bg-white/[0.02] border-white/[0.06] text-slate-500"
+                                      : "bg-white/[0.04] border-white/[0.10] text-slate-100 hover:bg-white/[0.08] hover:border-white/20"
+                                }`}
+                              >
+                                {option.label}
+                              </button>
+                            );
+                          })}
                         </div>
                       )}
                     </div>

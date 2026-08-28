@@ -127,6 +127,7 @@
     "stepQualify": "AI से बातचीत",
     "qualifyStart": "AI बातचीत शुरू करें",
     "qualifySkip": "छोड़ें और समय चुनें",
+    "quickReplyLabel": "टैप करके उत्तर दें",
     "qualifyInProgress": "सहज रूप से जवाब दें — AI सुन रहा है।",
     "qualifyDone": "धन्यवाद — बस इतना ही चाहिए था। अब आप अपना समय चुन सकते हैं।",
     "qualifyContinue": "समय चुनने के लिए आगे बढ़ें",

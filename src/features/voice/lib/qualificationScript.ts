@@ -136,6 +136,41 @@ const CLOSED_ANSWER_TOKENS_TA: Record<string, "YES" | "NO" | "MAYBE"> = {
   "இருந்தாலும்": "MAYBE",
 };
 
+/**
+ * The three answers a visitor may tap instead of speaking.
+ *
+ * The label IS the word sent into the conversation, so these are not display
+ * strings that happen to look right — each one is a token
+ * classifyClosedResponse already accepts, in that language. Anything else
+ * would classify as null and silently reprompt, which is exactly the failure
+ * a tappable button is supposed to remove.
+ *
+ * The classification is still decided SERVER-side from the sent text, the
+ * same as a spoken answer: `classification` here is only what the UI shows
+ * back to the visitor, never what gets stored.
+ */
+export interface QuickReplyOption {
+  /** What the button reads, and what is sent as the answer. */
+  label: string;
+  classification: "YES" | "NO" | "MAYBE";
+}
+
+const QUICK_REPLIES_EN: readonly QuickReplyOption[] = [
+  { label: "Yes", classification: "YES" },
+  { label: "No", classification: "NO" },
+  { label: "Maybe", classification: "MAYBE" },
+] as const;
+
+const QUICK_REPLIES_TA: readonly QuickReplyOption[] = [
+  { label: "ஆம்", classification: "YES" },
+  { label: "இல்லை", classification: "NO" },
+  { label: "இருந்தாலும்", classification: "MAYBE" },
+] as const;
+
+export function getQuickReplyOptions(language: QualificationLanguage = "en"): readonly QuickReplyOption[] {
+  return language === "ta" ? QUICK_REPLIES_TA : QUICK_REPLIES_EN;
+}
+
 export function classifyClosedResponse(raw: string, language: QualificationLanguage = "en"): "YES" | "NO" | "MAYBE" | null {
   const tokenMap = language === "ta" ? CLOSED_ANSWER_TOKENS_TA : CLOSED_ANSWER_TOKENS;
   const tokens = raw
