@@ -121,6 +121,18 @@ function toTelHref(phone: string): string {
  * a plain (companyId, employeeId) pair and renders this — so the two URLs
  * can never drift into two different card experiences.
  */
+/**
+ * How long a pitch tap waits for the server to START streaming before the
+ * browser voice takes over.
+ *
+ * A rendered asset answers well inside this (metadata at 153ms in
+ * production); an unrendered one means the route is generating, which takes
+ * tens of seconds. The gap between those two cases is wide enough that a
+ * single deadline separates them without cutting off a slow download of a
+ * real recording.
+ */
+const PITCH_STREAM_DEADLINE_MS = 2000;
+
 export function PublicBusinessCard({
   companyId,
   employeeId,
@@ -500,7 +512,35 @@ export function PublicBusinessCard({
     const audio = new Audio(pitchUrl);
     pitchAudioRef.current = audio;
     setPitchLoading(type);
+
+    // A click must never sit through TTS generation. When the asset is
+    // already rendered the server answers with a real audio stream almost
+    // at once — metadata arrived 153ms after the click in production — but
+    // when it is NOT rendered yet, the route generates it synchronously,
+    // which was measured at 21-80s. Nobody waits that long for a button.
+    //
+    // So the click waits only for evidence that a stream is coming. If no
+    // metadata has arrived by the deadline, the browser voice takes over
+    // immediately and speaks the same script. The request is deliberately
+    // NOT aborted: it goes on to finish generating and the route persists
+    // the result, so the next visitor — or this one's next tap — gets the
+    // real recording. The deadline is generous enough that a slow
+    // connection downloading a genuine asset is not cut off.
+    let metadataArrived = false;
+    audio.onloadedmetadata = () => {
+      metadataArrived = true;
+    };
+    const generationDeadline = window.setTimeout(() => {
+      if (pitchSessionRef.current !== session || metadataArrived) return;
+      // Let go of the element so its own late error/play rejection cannot
+      // fire the fallback a second time.
+      pitchAudioRef.current = null;
+      fallbackToBrowserTts();
+    }, PITCH_STREAM_DEADLINE_MS);
+    const clearDeadline = () => window.clearTimeout(generationDeadline);
+
     audio.onplaying = () => {
+      clearDeadline();
       if (pitchSessionRef.current !== session) return;
       pitchSourceRef.current = "audio";
       setPitchLoading(null);
@@ -508,6 +548,7 @@ export function PublicBusinessCard({
       setPitchPaused(false);
     };
     audio.onended = () => {
+      clearDeadline();
       if (pitchSessionRef.current !== session) return;
       // Completion — not cancellation — is what unlocks Tap to Speak: this
       // handler only fires when the element actually reached the end.
@@ -515,11 +556,13 @@ export function PublicBusinessCard({
       stopPitch();
     };
     audio.onerror = () => {
+      clearDeadline();
       if (pitchSessionRef.current !== session) return;
       pitchAudioRef.current = null;
       fallbackToBrowserTts();
     };
     audio.play().catch(() => {
+      clearDeadline();
       if (pitchSessionRef.current !== session) return;
       pitchAudioRef.current = null;
       fallbackToBrowserTts();
