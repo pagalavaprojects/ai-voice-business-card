@@ -128,6 +128,16 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
    * question and can never re-answer a question already recorded.
    */
   const [quickReply, setQuickReply] = useState<{ questionNumber: number; label: string } | null>(null);
+  /**
+   * The same claim, held in a ref so it is true IMMEDIATELY.
+   *
+   * The state above cannot stop a fast double tap: two clicks dispatched
+   * before React re-renders both read the same stale `quickReply` from their
+   * render's closure, so both pass the guard and the answer goes twice —
+   * which can advance two questions. A ref is written synchronously, so the
+   * second click in the same batch sees the first one's claim.
+   */
+  const quickReplyLockRef = useRef<number | null>(null);
   const qualStageRef = useRef(qualStage);
   qualStageRef.current = qualStage;
   // Which callId the qualification-status poll is CURRENTLY set up for —
@@ -585,16 +595,23 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                                 data-testid={`quick-reply-${option.classification.toLowerCase()}`}
                                 onClick={() => {
                                   // A question already answered this way must
-                                  // never be answered again — the guard is
-                                  // here as well as in `disabled`, because a
-                                  // disabled attribute is a UI state, not a
-                                  // rule.
-                                  if (quickReply?.questionNumber === qNum) return;
+                                  // never be answered again. The ref is what
+                                  // makes this hold for a double tap: it is
+                                  // set before the send, so a second click in
+                                  // the same batch — before React has had a
+                                  // chance to re-render or disable anything —
+                                  // is already too late.
+                                  if (quickReplyLockRef.current === qNum || quickReply?.questionNumber === qNum) return;
+                                  quickReplyLockRef.current = qNum;
                                   const delivered = voice.sendUserMessage?.(option.label);
-                                  // Only lock the row if the answer actually
-                                  // reached the conversation; otherwise the
-                                  // visitor keeps their options.
-                                  if (delivered) setQuickReply({ questionNumber: qNum, label: option.label });
+                                  if (delivered) {
+                                    setQuickReply({ questionNumber: qNum, label: option.label });
+                                  } else {
+                                    // Undelivered means unanswered: release
+                                    // the claim so the visitor can try again
+                                    // rather than facing a dead row.
+                                    quickReplyLockRef.current = null;
+                                  }
                                 }}
                                 className={`min-h-[44px] flex-1 min-w-[88px] px-3 rounded-xl border text-xs font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 disabled:cursor-not-allowed ${
                                   chosen

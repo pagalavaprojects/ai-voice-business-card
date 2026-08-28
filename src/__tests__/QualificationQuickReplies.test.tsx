@@ -124,12 +124,21 @@ describe("tapping an answer", () => {
   it("cannot answer the same question twice, however many times it is tapped", () => {
     renderQualification("en");
     const yes = screen.getByTestId("quick-reply-yes");
-    fireEvent.click(yes);
-    fireEvent.click(yes);
-    fireEvent.click(screen.getByTestId("quick-reply-no"));
+    const no = screen.getByTestId("quick-reply-no");
+
+    // Batched deliberately: a real double tap fires both clicks before React
+    // re-renders, so neither sees the other's state. An earlier version of
+    // this test clicked with a render in between and passed while the code
+    // was sending twice.
+    act(() => {
+      fireEvent.click(yes);
+      fireEvent.click(yes);
+      fireEvent.click(no);
+    });
 
     // One answer per question — a double tap must not advance two questions.
     expect(sendUserMessage).toHaveBeenCalledTimes(1);
+    expect(sendUserMessage).toHaveBeenCalledWith("Yes");
   });
 
   it("disables the row and marks the choice once an answer is sent", () => {
