@@ -90,8 +90,8 @@ async function letThePollCatchUp() {
 }
 
 describe.each([
-  ["en" as const, ["Yes", "No", "Maybe", "Yes", "No", "Yes"]],
-  ["ta" as const, ["ஆம்", "இல்லை", "இருந்தாலும்", "ஆம்", "இல்லை", "ஆம்"]],
+  ["en" as const, ["Yes", "No", "Maybe", "Yes", "No", "Maybe"]],
+  ["ta" as const, ["ஆம்", "இல்லை", "இருந்தாலும்", "ஆம்", "இல்லை", "இருந்தாலும்"]],
 ])("tapping through all six questions in %s", (language, answers) => {
   it("offers a fresh set of options for every question, then stops after the sixth", async () => {
     const questions = getQualificationQuestions(language);
@@ -107,12 +107,20 @@ describe.each([
       const chosen = answers[index];
       const option = options.find((o) => o.label === chosen)!;
 
-      // The question on screen is the authored one, in this language.
+      // The question on screen is the authored one, in this language, and
+      // the progress label agrees with it.
       expect(screen.getByTestId("current-question")).toHaveTextContent(question.question);
+      expect(screen.getByTestId("qual-progress")).toHaveTextContent(String(question.number));
+      expect(screen.getByTestId("qual-progress")).toHaveTextContent("6");
+      expect(screen.getByTestId("current-question")).toHaveAttribute("lang", language);
 
-      // Its options are present and untouched.
+      // Exactly three options, all offered fresh for this question — never
+      // the previous question's row left attached.
       const group = screen.getByTestId("quick-replies");
       expect(group).toBeInTheDocument();
+      const buttons = [...group.querySelectorAll("button")];
+      expect(buttons).toHaveLength(3);
+      expect(buttons.map((b) => b.textContent?.trim())).toEqual(options.map((o) => o.label));
       for (const o of options) {
         const button = screen.getByTestId(`quick-reply-${o.classification.toLowerCase()}`);
         expect(button).not.toBeDisabled();
@@ -176,6 +184,17 @@ describe.each([
     await waitFor(() => expect(screen.getByTestId("qualification-continue")).toBeInTheDocument());
     expect(screen.queryByTestId("quick-replies")).toBeNull();
     expect(screen.queryByTestId("quick-reply-yes")).toBeNull();
+
+    // And nothing moved on by itself: the calendar appears only because the
+    // visitor asked for it.
+    expect(screen.queryByTestId("slot-picker")).toBeNull();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("qualification-continue"));
+      await Promise.resolve();
+    });
+    expect(screen.queryByTestId("qualification-continue")).toBeNull();
+    // The slot step is now the one on screen — it asks for a time.
+    await waitFor(() => expect(screen.getByRole("heading", { name: /chooseSlotTitle/i })).toBeInTheDocument());
   });
 });
 
