@@ -95,7 +95,10 @@ describe("PublicBusinessCard — exactly one card fetch, in the stored language"
     await act(async () => {
       await jest.advanceTimersByTimeAsync(3000);
     });
-    const pitchCalls = fetchSpy.mock.calls.map((c) => String(c[0])).filter((u) => u.includes("/pitch?"));
+    const pitchRequests = fetchSpy.mock.calls
+      .map((c) => ({ url: String(c[0]), init: c[1] as RequestInit | undefined }))
+      .filter((r) => r.url.includes("/pitch?"));
+    const pitchCalls = pitchRequests.map((r) => r.url);
     // Four assets: the recorded introduction (2026-08-19 spec — its first
     // render must happen here in the background, never on the Play tap)
     // plus the three Listen pitches.
@@ -104,6 +107,19 @@ describe("PublicBusinessCard — exactly one card fetch, in the stored language"
       expect(pitchCalls).toContainEqual(expect.stringContaining(`type=${type}`));
     }
     expect(pitchCalls.every((u) => u.includes("lang=en"))).toBe(true);
+
+    // Only the introduction's BODY is downloaded. Pulling all four made a
+    // card load cost 10.7MB before the visitor tapped anything (measured in
+    // production); the pitches are warmed with a one-byte range request
+    // instead, which still reaches the route so a never-rendered asset is
+    // generated and persisted rather than making someone wait on the click.
+    const rangeOf = (r: { init?: RequestInit }) =>
+      (r.init?.headers as Record<string, string> | undefined)?.Range;
+    const intro = pitchRequests.find((r) => r.url.includes("type=intro"));
+    expect(rangeOf(intro!)).toBeUndefined();
+    for (const type of ["elevator", "product", "usp"]) {
+      expect(rangeOf(pitchRequests.find((r) => r.url.includes(`type=${type}`))!)).toBe("bytes=0-0");
+    }
 
     // Idle time passing again must not re-warm — one prefetch per language.
     await act(async () => {

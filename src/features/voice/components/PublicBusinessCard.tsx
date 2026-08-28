@@ -296,13 +296,13 @@ export function PublicBusinessCard({
     };
   }, [companyId, employeeId, language, setLanguage, hasStoredPreference, card]);
 
-  // Warms the three fixed pitches for the confirmed language in the
-  // background, off the critical path (idle callback, low priority, one
-  // attempt, failures ignored). The pitch route persists renders durably,
-  // so the FIRST play of freshly-changed content — measured at 21–80s of
-  // synchronous Gemini generation when triggered by the visitor's click —
-  // happens here instead, invisibly; every later click (any visitor, any
-  // device) streams the stored asset via the CDN. Gated on
+  // Warms the fixed audio for the confirmed language in the background, off
+  // the critical path (idle callback, low priority, one attempt, failures
+  // ignored). The pitch route persists renders durably, so the FIRST play of
+  // freshly-changed content — measured at 21–80s of synchronous Gemini
+  // generation when triggered by the visitor's click — happens here instead,
+  // invisibly; every later click (any visitor, any device) streams the
+  // stored asset via the CDN. Gated on
   // languageConfirmed so a first-time visitor still at the language gate
   // can't trigger generation for a language they're about to switch away
   // from. One prefetch per language per mount (ref), and never while the
@@ -311,14 +311,26 @@ export function PublicBusinessCard({
   useEffect(() => {
     if (!card || !languageConfirmed || prefetchedPitchLangsRef.current.has(language)) return;
     prefetchedPitchLangsRef.current.add(language);
+    const url = (type: string) =>
+      `/api/public/${companyId}/${employeeId}/pitch?type=${type}&lang=${encodeURIComponent(language)}`;
+
     const warm = () => {
-      // "intro" first: it is the asset the visitor is invited to play
-      // before anything else, so its first render must happen here in the
-      // background — never synchronously on the Play tap.
-      for (const type of ["intro", "elevator", "product", "usp"] as const) {
-        fetch(`/api/public/${companyId}/${employeeId}/pitch?type=${type}&lang=${encodeURIComponent(language)}`, {
-          priority: "low",
-        } as RequestInit).catch(() => undefined);
+      // The introduction is downloaded in full: it is the one asset the
+      // visitor is invited to play before anything else, so it should be
+      // sitting in the browser cache when they tap.
+      fetch(url("intro"), { priority: "low" } as RequestInit).catch(() => undefined);
+
+      // The three pitches are only WARMED, not downloaded. Pulling their
+      // bodies made a card load cost 10.7MB before the visitor had tapped
+      // anything — on a phone, on mobile data, for audio most visitors
+      // never play. A one-byte range request still reaches the route (so a
+      // never-rendered asset is generated and persisted exactly as before,
+      // rather than making someone wait on the click) and still leaves the
+      // asset hot in the CDN, while transferring a single byte instead of
+      // three megabytes. Measured against production: 1 byte, ~145ms,
+      // X-Vercel-Cache: HIT.
+      for (const type of ["elevator", "product", "usp"] as const) {
+        fetch(url(type), { priority: "low", headers: { Range: "bytes=0-0" } } as RequestInit).catch(() => undefined);
       }
     };
     const idle = (window as { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number }).requestIdleCallback;
