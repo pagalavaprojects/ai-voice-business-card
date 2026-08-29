@@ -568,14 +568,29 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                           </p>
                         </div>
                       )}
+                      {/* Once THIS question's answer has been sent, its
+                          options give way to a processing indicator that
+                          belongs to the same question — so the screen never
+                          shows a question beside a locked, greyed row that
+                          reads as inconsistent. When the server advances,
+                          qNum changes, the pending claim no longer matches,
+                          and the next question renders with a fresh row: the
+                          swap is atomic, question and options always agree. */}
+                      {qNum > 0 && !qualComplete && voice.sendUserMessage && quickReply?.questionNumber === qNum && (
+                        <div className="flex items-center gap-2 pt-1" data-testid="quick-reply-processing" aria-live="polite">
+                          <Loader2 className="h-3.5 w-3.5 animate-spin text-sky-400" aria-hidden="true" />
+                          <span className="text-xs font-medium text-slate-300">{t("appointment.stateProcessing")}</span>
+                        </div>
+                      )}
                       {/* Tap instead of speak. The label IS the word sent
                           into the conversation, as a USER message, so the
                           server classifies and records it exactly as it
                           would a spoken reply — one answer path, not two.
                           Offered only while a question is actually on screen
                           and unanswered: never during the introduction,
-                          never in general Talk-with-AI, never after Q6. */}
-                      {qNum > 0 && !qualComplete && voice.sendUserMessage && (
+                          never in general Talk-with-AI, never after Q6, and
+                          never once this question's answer is in flight. */}
+                      {qNum > 0 && !qualComplete && voice.sendUserMessage && quickReply?.questionNumber !== qNum && (
                         <div
                           className="flex flex-wrap gap-2 pt-1"
                           role="group"

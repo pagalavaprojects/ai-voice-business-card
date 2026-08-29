@@ -1,17 +1,31 @@
 "use client";
 
 import React from "react";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, Menu } from "lucide-react";
 import { useCompany } from "@/features/dashboard/context/CompanyContext";
 import { GlobalSearch } from "@/features/dashboard/components/GlobalSearch";
 import { SignOutButton } from "@/features/auth/components/SignOutButton";
+import { useSidebarDrawer } from "@/features/dashboard/components/SidebarDrawerContext";
 
 export function WorkspaceHeader() {
   const { loading, error, user, memberships, activeCompanyId, activeMembership, setActiveCompanyId } = useCompany();
+  const { openDrawer } = useSidebarDrawer();
 
   return (
-    <header className="h-16 border-b border-white/[0.08] bg-[#0c111d]/50 backdrop-blur-md px-6 flex items-center justify-between sticky top-0 z-20">
+    <header className="h-16 border-b border-white/[0.08] bg-[#0c111d]/50 backdrop-blur-md px-4 sm:px-6 flex items-center justify-between sticky top-0 z-20">
       <div className="flex items-center gap-2 min-w-0">
+        {/* Opens the navigation drawer — mobile only; the sidebar is always
+            visible from md up. */}
+        <button
+          type="button"
+          onClick={openDrawer}
+          aria-label="Open menu"
+          aria-controls="dashboard-sidebar"
+          data-testid="sidebar-open"
+          className="md:hidden -ml-1 mr-1 h-9 w-9 shrink-0 flex items-center justify-center rounded-lg text-slate-300 hover:text-slate-100 hover:bg-white/[0.06] focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500"
+        >
+          <Menu className="h-5 w-5" aria-hidden="true" />
+        </button>
         {loading ? (
           <span className="text-sm text-slate-500">Loading workspace…</span>
         ) : error ? (

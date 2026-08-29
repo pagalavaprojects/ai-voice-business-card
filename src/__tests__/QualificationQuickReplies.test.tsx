@@ -141,14 +141,14 @@ describe("tapping an answer", () => {
     expect(sendUserMessage).toHaveBeenCalledWith("Yes");
   });
 
-  it("disables the row and marks the choice once an answer is sent", () => {
+  it("replaces the row with a processing indicator once an answer is sent", () => {
     renderQualification("en");
     fireEvent.click(screen.getByTestId("quick-reply-yes"));
 
-    expect(screen.getByTestId("quick-reply-yes")).toBeDisabled();
-    expect(screen.getByTestId("quick-reply-no")).toBeDisabled();
-    expect(screen.getByTestId("quick-reply-yes")).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByTestId("quick-reply-maybe")).toHaveAttribute("aria-pressed", "false");
+    // The options give way to a processing state that belongs to the same
+    // question — no locked, greyed row left sitting beside it.
+    expect(screen.queryByTestId("quick-replies")).toBeNull();
+    expect(screen.getByTestId("quick-reply-processing")).toBeInTheDocument();
   });
 
   it("keeps the options live when the answer could not be delivered", () => {
@@ -163,7 +163,8 @@ describe("tapping an answer", () => {
   it("offers a fresh row for the next question", () => {
     const { rerender } = renderQualification("en");
     fireEvent.click(screen.getByTestId("quick-reply-yes"));
-    expect(screen.getByTestId("quick-reply-yes")).toBeDisabled();
+    // The answered question now shows processing, not options.
+    expect(screen.queryByTestId("quick-replies")).toBeNull();
 
     // The assistant moves on to Q2; the row belongs to the new question now.
     const questions = getQualificationQuestions("en");

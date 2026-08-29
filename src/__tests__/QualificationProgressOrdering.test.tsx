@@ -233,7 +233,9 @@ describe("the tap lock follows the same progression", () => {
       fireEvent.click(screen.getByTestId("quick-reply-yes"));
     });
     expect(sendUserMessage).toHaveBeenCalledTimes(1);
-    expect(screen.getByTestId("quick-reply-yes")).toBeDisabled();
+    // The answered question shows processing, not options.
+    expect(screen.queryByTestId("quick-replies")).toBeNull();
+    expect(screen.getByTestId("quick-reply-processing")).toBeInTheDocument();
 
     served = { qualified: false, answers: recorded(1) };
     await poll();
@@ -241,6 +243,7 @@ describe("the tap lock follows the same progression", () => {
     await poll();
 
     expect(shown()).toContain(QUESTIONS[1].question);
+    // The next question gets a fresh, enabled row.
     expect(screen.getByTestId("quick-reply-yes")).not.toBeDisabled();
 
     act(() => {
@@ -258,13 +261,11 @@ describe("the tap lock follows the same progression", () => {
       fireEvent.click(screen.getByTestId("quick-reply-yes"));
     });
 
-    // Nothing has advanced yet — the answer is still in flight. A second tap
-    // must not send again just because time passed.
+    // Nothing has advanced yet — the answer is still in flight. The options
+    // are gone (processing shown), so there is nothing to double-send.
     await poll();
-    expect(screen.getByTestId("quick-reply-yes")).toBeDisabled();
-    act(() => {
-      fireEvent.click(screen.getByTestId("quick-reply-maybe"));
-    });
+    expect(screen.queryByTestId("quick-replies")).toBeNull();
+    expect(screen.getByTestId("quick-reply-processing")).toBeInTheDocument();
     expect(sendUserMessage).toHaveBeenCalledTimes(1);
   });
 });

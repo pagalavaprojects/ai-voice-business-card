@@ -137,9 +137,10 @@ describe.each([
       expect(sendUserMessage).toHaveBeenCalledTimes(index + 1);
       expect(sendUserMessage).toHaveBeenLastCalledWith(chosen);
 
-      // The row it answered is locked and shows the choice.
-      expect(screen.getByTestId(`quick-reply-${option.classification.toLowerCase()}`)).toBeDisabled();
-      expect(screen.getByTestId(`quick-reply-${option.classification.toLowerCase()}`)).toHaveAttribute("aria-pressed", "true");
+      // The answered question's options give way to a processing indicator —
+      // no options remain for it, so nothing stale can be tapped again.
+      expect(screen.queryByTestId("quick-replies")).toBeNull();
+      expect(screen.getByTestId("quick-reply-processing")).toBeInTheDocument();
 
       // The server records the answer, and the assistant asks the next one
       // (after the sixth it completes instead).
