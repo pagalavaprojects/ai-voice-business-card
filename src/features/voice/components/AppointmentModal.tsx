@@ -493,6 +493,15 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                   const active = getActiveQualificationQuestion({ language: qualLang, answeredCount, complete: qualComplete });
                   const qNum = active.number;
                   const aiLine = active.text;
+                  // A tapped answer only reaches the server while the voice
+                  // session is live. On a connection error or ejection the
+                  // hook sets `error` and drops the session (see
+                  // useVapiSession's error handler), after which every tap
+                  // would be a silent no-op — the SDK's send() does not throw
+                  // on a dead meeting, so the tap's own return value cannot
+                  // catch it. Gate the tappable options on the absence of an
+                  // error instead, and offer a reconnect when one is present.
+                  const voiceLive = !voice.error;
                   return (
                     <div className="space-y-2.5" data-testid="qualification-conversation">
                       {qNum > 0 && (
@@ -559,7 +568,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                           qNum changes, the pending claim no longer matches,
                           and the next question renders with a fresh row: the
                           swap is atomic, question and options always agree. */}
-                      {qNum > 0 && !qualComplete && voice.sendUserMessage && quickReply?.questionNumber === qNum && (
+                      {qNum > 0 && !qualComplete && voice.sendUserMessage && voiceLive && quickReply?.questionNumber === qNum && (
                         <div className="flex items-center gap-2 pt-1" data-testid="quick-reply-processing" aria-live="polite">
                           <Loader2 className="h-3.5 w-3.5 animate-spin text-sky-400" aria-hidden="true" />
                           <span className="text-xs font-medium text-slate-300">{t("appointment.stateProcessing")}</span>
@@ -573,7 +582,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                           and unanswered: never during the introduction,
                           never in general Talk-with-AI, never after Q6, and
                           never once this question's answer is in flight. */}
-                      {qNum > 0 && !qualComplete && voice.sendUserMessage && quickReply?.questionNumber !== qNum && (
+                      {qNum > 0 && !qualComplete && voice.sendUserMessage && voiceLive && quickReply?.questionNumber !== qNum && (
                         <div
                           className="flex flex-wrap gap-2 pt-1"
                           role="group"
@@ -627,6 +636,34 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                               </button>
                             );
                           })}
+                        </div>
+                      )}
+                      {/* Voice dropped mid-questionnaire: the tappable options
+                          can no longer deliver an answer (the send silently
+                          no-ops once the session is gone), so they give way to
+                          a clear state and a way back — reconnect to restart
+                          the voice conversation, or use the Skip escape below.
+                          The current question stays on screen; nothing is lost
+                          visually. */}
+                      {qNum > 0 && !qualComplete && voice.sendUserMessage && !voiceLive && (
+                        <div className="space-y-2 pt-1" data-testid="quick-reply-disconnected" role="group" aria-label={t("appointment.voiceDisconnected")}>
+                          <p className="text-xs text-slate-300">{t("appointment.voiceDisconnected")}</p>
+                          <button
+                            type="button"
+                            data-testid="quick-reply-reconnect"
+                            onClick={() => {
+                              // Clear any in-flight claim from the dead session
+                              // so the restarted call's fresh question is
+                              // immediately answerable.
+                              quickReplyLockRef.current = null;
+                              setQuickReply(null);
+                              voice.startCall();
+                            }}
+                            className="min-h-[44px] w-full px-3 rounded-xl border border-sky-400/40 bg-sky-500/10 text-xs font-semibold text-sky-200 hover:bg-sky-500/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 flex items-center justify-center gap-2"
+                          >
+                            <Mic className="h-4 w-4" aria-hidden="true" />
+                            {t("appointment.reconnect")}
+                          </button>
                         </div>
                       )}
                     </div>

@@ -135,7 +135,9 @@
     "qualComplete": "Qualification complete",
     "stateAsking": "AI is asking…",
     "stateAnswer": "Say your answer…",
-    "stateProcessing": "Understanding your answer…"
+    "stateProcessing": "Understanding your answer…",
+    "voiceDisconnected": "The voice connection dropped. Reconnect to continue, or skip to choose a time.",
+    "reconnect": "Reconnect"
   },
   "gate": {
     "title": "Choose your preferred language",
