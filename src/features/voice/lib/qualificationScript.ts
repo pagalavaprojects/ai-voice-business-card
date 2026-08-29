@@ -171,6 +171,66 @@ export function getQuickReplyOptions(language: QualificationLanguage = "en"): re
   return language === "ta" ? QUICK_REPLIES_TA : QUICK_REPLIES_EN;
 }
 
+/** The one authoritative "which question are we on" answer, and everything
+ * that must agree with it. */
+export interface ActiveQualificationQuestion {
+  /** True once all six are answered — the caller shows Continue, not a
+   * question. `number` is 0 and `text` is null in this state. */
+  complete: boolean;
+  /** 1..6 while a question is active, 0 when complete. */
+  number: number;
+  /** How many questions there are in total (6) — the "of 6" in the label. */
+  total: number;
+  /** The exact authored question text, or null when complete. */
+  text: string | null;
+  language: QualificationLanguage;
+  options: readonly QuickReplyOption[];
+}
+
+/**
+ * The SINGLE source of truth for the active qualification question.
+ *
+ * Everything the visitor sees — the question text, the "Question N of 6"
+ * label, the three answer buttons, the processing indicator and the Continue
+ * gate — is derived from this one function, so they can never disagree with
+ * each other.
+ *
+ * The number is decided by the SERVER's recorded-answer count, never by the
+ * assistant's transcript: the next question is simply the one after the last
+ * answer the server accepted. That count only ever grows (a stale poll
+ * response is dropped upstream by the sequence guard), so the displayed
+ * question moves strictly forward — it cannot jump ahead of what was actually
+ * answered, skip a question, or fall back. The processing gap between "answer
+ * sent" and "server confirmed" is shown by the caller, not bridged by
+ * guessing the next question early.
+ */
+export function getActiveQualificationQuestion(input: {
+  language: QualificationLanguage;
+  /** How many questions the SERVER has recorded an accepted answer for. */
+  answeredCount: number;
+  /** The server reported qualification complete. */
+  complete: boolean;
+}): ActiveQualificationQuestion {
+  const questions = getQualificationQuestions(input.language);
+  const options = getQuickReplyOptions(input.language);
+
+  if (input.complete || input.answeredCount >= questions.length) {
+    return { complete: true, number: 0, total: questions.length, text: null, language: input.language, options };
+  }
+
+  // The next unanswered question. answeredCount is clamped defensively so a
+  // malformed value can never index out of range or point backwards.
+  const number = Math.min(Math.max(input.answeredCount, 0) + 1, questions.length);
+  return {
+    complete: false,
+    number,
+    total: questions.length,
+    text: questions[number - 1].question,
+    language: input.language,
+    options,
+  };
+}
+
 export function classifyClosedResponse(raw: string, language: QualificationLanguage = "en"): "YES" | "NO" | "MAYBE" | null {
   const tokenMap = language === "ta" ? CLOSED_ANSWER_TOKENS_TA : CLOSED_ANSWER_TOKENS;
   const tokens = raw

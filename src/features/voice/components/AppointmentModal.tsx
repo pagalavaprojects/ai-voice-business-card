@@ -8,12 +8,9 @@ import { Skeleton } from "@/shared/ui/skeleton";
 import type { LanguageCode } from "@/features/language/config";
 import {
   buildAppointmentConfirmedSpeech,
-  getAllQuestions,
+  getActiveQualificationQuestion,
   getAuthoredQuestion,
-  getQualificationQuestions,
-  matchAuthoredQuestion,
   toQualificationLanguage,
-  getQuickReplyOptions,
 } from "@/features/voice/lib/qualificationScript";
 import { speakPitchWithBrowserTts } from "@/features/voice/lib/pitchFallback";
 
@@ -128,6 +125,10 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
    * question and can never re-answer a question already recorded.
    */
   const [quickReply, setQuickReply] = useState<{ questionNumber: number; label: string } | null>(null);
+  /** Bumped after a tapped answer is sent, so the status poll re-runs at once
+   * instead of waiting out the 3s interval — the display advances as soon as
+   * the server has recorded the answer, not a poll-cycle later. */
+  const [pollNonce, setPollNonce] = useState(0);
   /**
    * The same claim, held in a ref so it is true IMMEDIATELY.
    *
@@ -369,7 +370,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
       clearInterval(timer);
       controller.abort();
     };
-  }, [open, step, qualStage, qualComplete, voice?.callId, companyId, employeeId]);
+  }, [open, step, qualStage, qualComplete, voice?.callId, companyId, employeeId, pollNonce]);
 
   const advanceToSlots = () => {
     // The visitor is done talking (or never wanted to) — the mic must not
@@ -477,44 +478,26 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                     what renders, never an ASR paraphrase. The visitor line
                     is their REAL transcript only; nothing is ever invented. */}
                 {(() => {
-                  const msgs = voice.messages ?? [];
                   // The qualification language follows the selected card
                   // language (en/ta authored sets; anything else English) —
-                  // the SAME mapping the call's firstMessage/systemPrompt
-                  // and the server's sequencing tool use, so the rendered
-                  // question always matches what is actually being spoken.
+                  // the SAME mapping the call's firstMessage/systemPrompt and
+                  // the server's sequencing tool use.
                   const qualLang = toQualificationLanguage(language);
-                  const questions = getQualificationQuestions(qualLang);
-                  const allQuestionTexts = getAllQuestions(qualLang);
-                  // CURRENT question: the last assistant utterance that
-                  // matches an authored question — displayed in the exact
-                  // AUTHORED wording, never an ASR paraphrase. Seeded with
-                  // Q1 (it IS the call's opening line). Falls forward to the
-                  // next expected question when the server's answer records
-                  // are ahead of the transcript events.
-                  let currentQuestion: string | null = questions[0].question;
-                  for (let i = msgs.length - 1; i >= 0; i--) {
-                    if (msgs[i].role !== "assistant") continue;
-                    const matched = matchAuthoredQuestion(msgs[i].content, qualLang);
-                    if (matched) {
-                      currentQuestion = matched;
-                      break;
-                    }
-                  }
-                  const maxAnswered = qualAnswers.reduce((m, a) => Math.max(m, a.n), 0);
-                  const currentNum = currentQuestion ? allQuestionTexts.indexOf(currentQuestion) + 1 : 0;
-                  if (maxAnswered > 0 && currentNum > 0 && currentNum <= maxAnswered) {
-                    const next = questions.find((q) => q.number > maxAnswered);
-                    if (next) currentQuestion = next.question;
-                  }
-                  const qNum = currentQuestion ? questions.find((q) => q.question === currentQuestion)?.number ?? 0 : 0;
-                  const latestAssistant = [...msgs].reverse().find((m) => m.role === "assistant");
-                  const aiLine = currentQuestion ?? latestAssistant?.content ?? null;
+                  // ONE source of truth: the active question is decided by the
+                  // SERVER's recorded-answer count, never by the assistant's
+                  // transcript, so the number can never jump ahead of what was
+                  // actually answered, skip, or fall back. The count only
+                  // grows (stale poll responses are dropped by the sequence
+                  // guard above), so this moves strictly forward.
+                  const answeredCount = qualAnswers.reduce((m, a) => Math.max(m, a.n), 0);
+                  const active = getActiveQualificationQuestion({ language: qualLang, answeredCount, complete: qualComplete });
+                  const qNum = active.number;
+                  const aiLine = active.text;
                   return (
                     <div className="space-y-2.5" data-testid="qualification-conversation">
                       {qNum > 0 && (
                         <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold" data-testid="qual-progress">
-                          {t("appointment.qualifyProgress", { n: String(qNum), total: String(questions.length) })}
+                          {t("appointment.qualifyProgress", { n: String(qNum), total: String(active.total) })}
                         </p>
                       )}
                       {/* Answered questions: the authored question + the
@@ -597,7 +580,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                           aria-label={t("appointment.quickReplyLabel")}
                           data-testid="quick-replies"
                         >
-                          {getQuickReplyOptions(qualLang).map((option) => {
+                          {active.options.map((option) => {
                             const answeredThis = quickReply?.questionNumber === qNum;
                             const chosen = answeredThis && quickReply?.label === option.label;
                             return (
@@ -621,6 +604,10 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                                   const delivered = voice.sendUserMessage?.(option.label);
                                   if (delivered) {
                                     setQuickReply({ questionNumber: qNum, label: option.label });
+                                    // Poll now, not in up to 3s — the server
+                                    // will have the answer imminently and the
+                                    // next question should follow promptly.
+                                    setPollNonce((n) => n + 1);
                                   } else {
                                     // Undelivered means unanswered: release
                                     // the claim so the visitor can try again

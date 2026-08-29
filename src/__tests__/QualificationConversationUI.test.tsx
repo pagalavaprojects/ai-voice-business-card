@@ -84,19 +84,30 @@ describe("qualification conversation UI", () => {
     expect(screen.getByTestId("qual-status").textContent).toBe("appointment.stateProcessing");
   });
 
-  it("advances the displayed question when the assistant transcript matches the next authored question", () => {
+  it("advances the displayed question when the SERVER records the answer, not on the transcript", async () => {
+    // Server-authoritative: the question number follows the server's
+    // recorded-answer count, never the assistant's transcript. Even with Q2
+    // already spoken in the transcript, the display advances only once the
+    // server has actually recorded the Q1 answer.
+    jest.useFakeTimers();
+    mockStatus({ qualified: false, answers: [{ n: 1, c: "YES", a: "Yes" }] });
     render(
       <AppointmentModal
         {...baseProps}
         voice={voiceWith([
           { role: "assistant", content: QUALIFICATION_QUESTIONS[0].question },
           { role: "user", content: "Yeah, we need it now" },
-          // punctuation/whitespace drift, as real transcripts have:
           { role: "assistant", content: "  Have you set aside a specific budget for this already  " },
         ])}
       />
     );
     startQualification();
+    // Let the modal's own immediate poll apply the recorded answer.
+    await act(async () => {
+      await Promise.resolve();
+      jest.advanceTimersByTime(50);
+      await Promise.resolve();
+    });
     expect(screen.getByTestId("current-question").textContent).toContain(QUALIFICATION_QUESTIONS[1].question);
     expect(screen.getByTestId("qual-progress").textContent).toBe("appointment.qualifyProgress:2/6");
   });

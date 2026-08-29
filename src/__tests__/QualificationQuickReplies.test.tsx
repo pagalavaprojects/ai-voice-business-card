@@ -160,14 +160,19 @@ describe("tapping an answer", () => {
     expect(screen.getByTestId("quick-reply-yes")).not.toBeDisabled();
   });
 
-  it("offers a fresh row for the next question", () => {
+  it("does not advance on the transcript alone — the server decides the next question", () => {
     const { rerender } = renderQualification("en");
+    const questions = getQualificationQuestions("en");
+    // Q1 is on screen with its options.
+    expect(screen.getByTestId("current-question")).toHaveTextContent(questions[0].question);
     fireEvent.click(screen.getByTestId("quick-reply-yes"));
-    // The answered question now shows processing, not options.
     expect(screen.queryByTestId("quick-replies")).toBeNull();
 
-    // The assistant moves on to Q2; the row belongs to the new question now.
-    const questions = getQualificationQuestions("en");
+    // The assistant SPEAKS Q2 in the transcript, but the server has not
+    // recorded the Q1 answer yet. The display must stay on Q1 (still
+    // processing) — the transcript can never push the question ahead of what
+    // the server has actually accepted. (The fresh Q2 row once the server
+    // advances is proven end-to-end in QualificationQuickReplySequence.)
     rerender(
       <AppointmentModal
         open
@@ -186,8 +191,9 @@ describe("tapping an answer", () => {
       />
     );
 
-    expect(screen.getByTestId("current-question")).toHaveTextContent(questions[1].question);
-    expect(screen.getByTestId("quick-reply-yes")).not.toBeDisabled();
+    expect(screen.getByTestId("current-question")).toHaveTextContent(questions[0].question);
+    expect(screen.queryByTestId("quick-replies")).toBeNull();
+    expect(screen.getByTestId("quick-reply-processing")).toBeInTheDocument();
   });
 });
 

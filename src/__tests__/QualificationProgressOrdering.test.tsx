@@ -117,14 +117,18 @@ describe("transcript and status arriving in either order", () => {
     expect(shown()).toContain(QUESTIONS[1].question);
   });
 
-  it("CASE B — transcript first, then the status catches up", async () => {
+  it("CASE B — the transcript alone never advances the question", async () => {
     const { rerender } = render(view([]));
     start();
 
+    // The assistant SPEAKS Q2, but the server has recorded no answer yet.
+    // The display stays on Q1: the number comes from the server's answer
+    // count, not from what was spoken, so it can never jump ahead.
     rerender(view([spoke(2)]));
     await poll();
-    expect(shown()).toContain(QUESTIONS[1].question);
+    expect(shown()).toContain(QUESTIONS[0].question);
 
+    // Only when the server records the first answer does it become Q2.
     served = { qualified: false, answers: recorded(1) };
     await poll();
     expect(shown()).toContain(QUESTIONS[1].question);
@@ -147,20 +151,22 @@ describe("transcript and status arriving in either order", () => {
     expect(shown()).toContain(QUESTIONS[2].question);
   });
 
-  it("CASE D — a late status response must not drag the question backwards", async () => {
+  it("CASE D — the transcript running several questions ahead cannot skip", async () => {
     const { rerender } = render(view([]));
     start();
 
-    // The assistant is already on Q3.
+    // The assistant has raced ahead in the transcript to Q3, but the server
+    // has recorded nothing. The display holds at Q1 — it never skips to the
+    // spoken question.
     rerender(view([spoke(2), spoke(3)]));
     await poll();
-    expect(shown()).toContain(QUESTIONS[2].question);
+    expect(shown()).toContain(QUESTIONS[0].question);
 
-    // A slow response from earlier in the call finally lands, reporting only
-    // one answer. The display must stay on Q3.
+    // The server records exactly one answer: the display advances to Q2, one
+    // step, not to the Q3 the transcript was already claiming.
     served = { qualified: false, answers: recorded(1) };
     await poll();
-    expect(shown()).toContain(QUESTIONS[2].question);
+    expect(shown()).toContain(QUESTIONS[1].question);
   });
 
   it("never regresses across a full run, whichever source leads", async () => {
