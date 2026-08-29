@@ -287,6 +287,15 @@ export function getQualificationDirective(language: QualificationLanguage = "en"
     `if the visitor's first message is only "Hi" or similarly open-ended, proceed directly with the qualification ` +
     `question sequence, never with an open-ended offer to help.
 ` +
+    `SAY NOTHING WHILE THE TOOL IS RUNNING. Between the visitor's reply and the tool's answer you are SILENT — ` +
+    `you do not acknowledge, stall, narrate or think out loud. Never say "one moment", "just a moment", "give me ` +
+    `a moment", "please wait", "hold on", "let me check", "let me see", "bear with me", "processing", "okay", ` +
+    `"got it", "thank you", "alright" or ANY equivalent filler, in ANY language, at ANY point in this ` +
+    `questionnaire. If the tool takes a few seconds, the correct behaviour is silence, not conversation. ` +
+    `The ONLY words you may ever speak during qualification are: an authored question with its guidance line, the ` +
+    `guidance line alone on a reprompt, and the completion line. Nothing else — no preamble before a question, no ` +
+    `comment after an answer, no transition phrase between them.
+` +
     `AFTER EVERY VISITOR REPLY you MUST:
 ` +
     `1. Call get_next_qualification_question with: last_answered_question (the number of the question they just ` +
