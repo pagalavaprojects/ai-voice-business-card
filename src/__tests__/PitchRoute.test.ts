@@ -288,6 +288,53 @@ describe("GET /api/public/{companyId}/{employeeId}/pitch", () => {
       expect((body as Buffer).length).toBe(44 + FAKE_PCM.length);
     });
 
+    it("Tamil NEVER serves — or even looks up — a cached OpenAI MP3 (which would shadow Gemini permanently)", async () => {
+      // A stale OpenAI MP3 (written during a past Gemini outage) must never be
+      // served for Tamil: OpenAI reads Tamil as English gibberish, and once an
+      // mp3 is served the Gemini render below is never reached, freezing Tamil
+      // on gibberish forever. The route must not even consult the mp3 path.
+      const downloadedPaths: string[] = [];
+      download.mockImplementation(async (path: string) => {
+        downloadedPaths.push(path);
+        return { data: null, error: { message: "not found" } };
+      });
+      const fetchSpy = jest.fn().mockImplementation(async (url: string) => {
+        if (String(url).includes("generativelanguage.googleapis.com")) return geminiSuccess;
+        throw new Error("unexpected fetch: " + url);
+      });
+      global.fetch = fetchSpy as unknown as typeof fetch;
+
+      const res = await GET(req("type=elevator&lang=ta"), { params: { companyId: COMPANY_ID, employeeId: EMPLOYEE_ID } });
+
+      // Gemini rendered fresh (audio/wav), never the mp3.
+      expect(res.status).toBe(200);
+      expect(res.headers.get("Content-Type")).toBe("audio/wav");
+      // The OpenAI mp3 path was never even looked up for Tamil.
+      expect(downloadedPaths.some((p) => p.includes(".openai.") || p.endsWith(".mp3"))).toBe(false);
+      expect(downloadedPaths.some((p) => p.includes(".gemini."))).toBe(true);
+    });
+
+    it("Tamil does NOT persist an OpenAI MP3 even when it falls back to OpenAI after a Gemini failure", async () => {
+      // If Gemini is transiently down, Tamil may serve a one-off OpenAI render,
+      // but it must NOT be cached — caching gibberish is exactly what would
+      // shadow Gemini on every later request.
+      const fetchSpy = jest.fn().mockImplementation(async (url: string) => {
+        if (String(url).includes("generativelanguage.googleapis.com")) return { ok: false, status: 500, text: async () => "gemini down" };
+        if (String(url).includes("api.openai.com")) return { ok: true, arrayBuffer: async () => new Uint8Array([7, 7, 7]).buffer };
+        throw new Error("unexpected fetch: " + url);
+      });
+      global.fetch = fetchSpy as unknown as typeof fetch;
+
+      const res = await GET(req("type=elevator&lang=ta"), { params: { companyId: COMPANY_ID, employeeId: EMPLOYEE_ID } });
+
+      // The visitor still hears the transient OpenAI render...
+      expect(res.status).toBe(200);
+      expect(res.headers.get("Content-Type")).toBe("audio/mpeg");
+      // ...but nothing OpenAI was persisted for Tamil.
+      const persistedOpenAiMp3 = upload.mock.calls.some(([, path]) => String(path).includes(".openai.") || String(path).endsWith(".mp3"));
+      expect(persistedOpenAiMp3).toBe(false);
+    });
+
     it("ENGLISH never touches Gemini even when the key is configured — OpenAI remains its provider", async () => {
       const fetchSpy = jest.fn().mockImplementation(async (url: string) => {
         if (String(url).includes("api.openai.com")) return { ok: true, arrayBuffer: async () => new Uint8Array([9, 9, 9]).buffer };

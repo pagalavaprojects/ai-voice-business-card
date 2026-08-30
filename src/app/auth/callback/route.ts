@@ -1,6 +1,7 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { RECOVERY_FLOW_COOKIE } from "@/features/auth/lib/recoveryFlow";
+import { sameOriginPath } from "@/shared/lib/safeRedirect";
 
 export const dynamic = "force-dynamic";
 
@@ -69,9 +70,10 @@ function fragmentHandoffPage(next: string): string {
 export async function GET(req: NextRequest) {
   const code = req.nextUrl.searchParams.get("code");
   const requestedNext = req.nextUrl.searchParams.get("next") ?? "/dashboard";
-  // Only same-origin relative paths may be followed — an absolute URL here
-  // would turn every emailed link into an open redirect.
-  const next = requestedNext.startsWith("/") && !requestedNext.startsWith("//") ? requestedNext : "/dashboard";
+  // Only a same-origin destination may be followed — otherwise every emailed
+  // link is an open redirect. See sameOriginPath: a "starts with / but not //"
+  // prefix test is bypassable with a backslash or tab.
+  const next = sameOriginPath(requestedNext, req.nextUrl.origin);
 
   if (!code) {
     // No code in the query does NOT mean the link is broken. Supabase issues

@@ -129,9 +129,14 @@ export function useLanguage(initialLanguage?: LanguageCode, initialBundle?: Loca
     };
   }, [language]);
 
-  const setLanguage = useCallback((code: LanguageCode) => {
+  // `persist` defaults to true: an explicit language choice is a durable
+  // preference. A caller passes persist=false when it is only reflecting a
+  // per-card DISPLAY language (e.g. the server clamped this card down to its
+  // company's enabled set) that must NOT overwrite the visitor's real
+  // cross-card preference in storage.
+  const setLanguage = useCallback((code: LanguageCode, persist = true) => {
     setLanguageState(code);
-    persistLanguage(code);
+    if (persist) persistLanguage(code);
   }, []);
 
   // A nested-key path like "mic.tapToSpeak" resolves against the loaded

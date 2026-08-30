@@ -69,6 +69,33 @@ function start() {
   });
 }
 
+describe("reopening the modal after an answer was in flight", () => {
+  it("clears the leftover quick-reply claim so the next session's Q1 is answerable", () => {
+    // The modal is reused, never unmounted. A visitor who answered Q1 and then
+    // closed the modal must not reopen to a Q1 whose options are gone,
+    // replaced by a processing spinner that can never resolve (its claim
+    // belonged to the closed session).
+    render(view(voiceProp()));
+    start();
+    act(() => {
+      fireEvent.click(screen.getByTestId("quick-reply-yes"));
+    });
+    // Q1 is now showing the processing state, with a live claim on question 1.
+    expect(screen.getByTestId("quick-reply-processing")).toBeInTheDocument();
+
+    // Close (handleReset) then reopen the questionnaire.
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: "buttons.close" }));
+    });
+    start();
+
+    // A fresh Q1 with tappable options — no stale processing spinner.
+    expect(screen.getByTestId("quick-replies")).toBeInTheDocument();
+    expect(screen.queryByTestId("quick-reply-processing")).toBeNull();
+    expect(screen.getByTestId("quick-reply-yes")).not.toBeDisabled();
+  });
+});
+
 describe("a healthy session still shows tappable answers", () => {
   it("renders the options and no disconnected state while error is null", () => {
     render(view(voiceProp()));
@@ -133,6 +160,27 @@ describe("the voice session dropping mid-questionnaire", () => {
     // Reconnect starts a fresh call; it must never be mistaken for an answer.
     expect(startCall).toHaveBeenCalledTimes(1);
     expect(sendUserMessage).not.toHaveBeenCalled();
+  });
+
+  it("replaces the in-flight processing state with reconnect when the drop lands after a tap", () => {
+    // The visitor taps an answer (processing shown), then the session drops
+    // before the server records it. The processing spinner must not sit there
+    // forever — it gives way to the same reconnect affordance, so a dropped
+    // answer is recoverable rather than a permanent dead wait.
+    const { rerender } = render(view(voiceProp()));
+    start();
+    act(() => {
+      fireEvent.click(screen.getByTestId("quick-reply-yes"));
+    });
+    expect(screen.getByTestId("quick-reply-processing")).toBeInTheDocument();
+
+    // The session errors out while the answer is still in flight.
+    rerender(view(voiceProp({ error: "Voice connection error", voiceState: "idle" })));
+
+    expect(screen.queryByTestId("quick-reply-processing")).toBeNull();
+    expect(screen.getByTestId("quick-reply-disconnected")).toBeInTheDocument();
+    expect(screen.getByTestId("current-question")).toHaveTextContent(QUESTIONS[0].question);
+    expect(screen.getByTestId("skip-qualification")).toBeInTheDocument();
   });
 
   it("restores the tappable options once the error clears (reconnected)", () => {

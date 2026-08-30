@@ -15,10 +15,12 @@ import { APPOINTMENT_CONFIRMED_CLOSING, buildAppointmentConfirmedSpeech } from "
  */
 const LEAD = { id: "lead-1", name: "Test Visitor", email: "visitor@example.com" };
 
-function makeRegistry(calcom?: CalcomAdapter, eventTypeId?: number) {
+function makeRegistry(calcom?: CalcomAdapter, eventTypeId?: number, priorForLead: Record<string, unknown>[] = []) {
   const created: Record<string, unknown>[] = [];
   const crmRepo = { getLeadById: jest.fn().mockResolvedValue(LEAD) } as never;
   const bookingRepo = {
+    // Idempotency lookup: empty by default (no prior booking for this lead).
+    getAppointmentsByLead: jest.fn(async () => priorForLead),
     createAppointment: jest.fn(async (data: Record<string, unknown>) => {
       created.push(data);
       return { id: "appt-1", start_time: "2026-09-01T10:00:00.000Z", status: data.status ?? "BOOKED", meeting_url: data.meeting_url };
@@ -26,7 +28,7 @@ function makeRegistry(calcom?: CalcomAdapter, eventTypeId?: number) {
   } as never;
   const knowledgeRepo = {} as never;
   const registry = new ToolRegistry(crmRepo, bookingRepo, knowledgeRepo, undefined, calcom, eventTypeId);
-  return { registry, created };
+  return { registry, created, bookingRepo };
 }
 
 const ARGS = { lead_id: "lead-1", start_time: "2026-09-01T10:00:00.000Z", end_time: "2026-09-01T10:30:00.000Z" };
@@ -150,6 +152,68 @@ describe("book_appointment", () => {
     expect(calcom.createBooking).not.toHaveBeenCalled();
     expect(created[0].status).toBe(AppointmentStatus.REQUESTED);
   });
+
+  it("does NOT claim confirmation when Cal.com returns the booking as pending", async () => {
+    // A "requires confirmation" event type returns a real booking that is not
+    // yet accepted. Reporting it as confirmed would tell the visitor a meeting
+    // is set when the host has not accepted it — it must be captured REQUESTED.
+    const calcom = {
+      createBooking: jest.fn().mockResolvedValue({ id: 7, uid: "cal_pending", title: "Meeting", meetingUrl: "https://meet.example/p", status: "pending" }),
+    } as unknown as CalcomAdapter;
+
+    const { registry, created } = makeRegistry(calcom, 12345);
+    const result = await registry.getTool("book_appointment")!.execute(ARGS, CTX);
+
+    expect(created[0].status).toBe(AppointmentStatus.REQUESTED);
+    expect(result.confirmed).toBe(false);
+    expect(String(result.message)).not.toMatch(/confirmed/i);
+  });
+
+  it("is idempotent: a duplicate call for the same lead+slot books once", async () => {
+    // A retried/duplicated tool invocation must not create a second real
+    // Cal.com event, row, or confirmation. The lead already holds a booked
+    // appointment at this exact start time.
+    const calcom = {
+      createBooking: jest.fn().mockResolvedValue({ id: 8, uid: "cal_new", title: "Meeting", meetingUrl: "https://meet.example/new", status: "ACCEPTED" }),
+    } as unknown as CalcomAdapter;
+    const existing = [
+      {
+        id: "appt-existing",
+        status: AppointmentStatus.BOOKED,
+        start_time: ARGS.start_time,
+        calcom_booking_id: "cal_existing",
+        meeting_url: "https://meet.example/existing",
+      },
+    ];
+
+    const { registry, created } = makeRegistry(calcom, 12345, existing);
+    const result = await registry.getTool("book_appointment")!.execute(ARGS, CTX);
+
+    // No second Cal.com booking, no second appointment row.
+    expect(calcom.createBooking).not.toHaveBeenCalled();
+    expect(created).toHaveLength(0);
+    // The existing booking's confirmed state is reported honestly.
+    expect(result.confirmed).toBe(true);
+  });
+
+  it("forwards the visitor's timezone to Cal.com when supplied", async () => {
+    const calcom = {
+      createBooking: jest.fn().mockResolvedValue({ id: 9, uid: "cal_tz", title: "Meeting", meetingUrl: "https://meet.example/tz", status: "ACCEPTED" }),
+    } as unknown as CalcomAdapter;
+
+    const { registry } = makeRegistry(calcom, 12345);
+    await registry
+      .getTool("book_appointment")!
+      .execute({ ...ARGS, timezone: "Asia/Kolkata" }, CTX);
+
+    expect(calcom.createBooking).toHaveBeenCalledWith(expect.objectContaining({ timeZone: "Asia/Kolkata" }));
+  });
+
+  it("exposes a timezone parameter on the tool schema so the voice model can supply it", () => {
+    const { registry } = makeRegistry(undefined, undefined);
+    const schema = registry.getTool("book_appointment")!.parameters as { properties: Record<string, unknown> };
+    expect(schema.properties).toHaveProperty("timezone");
+  });
 });
 
 describe("company Settings actually drive the booking", () => {
@@ -171,6 +235,7 @@ describe("company Settings actually drive the booking", () => {
     const settingsRepo = { getSettings: jest.fn().mockResolvedValue(settings) } as never;
     const crmRepo = { getLeadById: jest.fn().mockResolvedValue(LEAD) } as never;
     const bookingRepo = {
+      getAppointmentsByLead: jest.fn(async () => []),
       createAppointment: jest.fn(async (data: Record<string, unknown>) => ({
         id: "appt-1",
         start_time: "2026-09-01T10:00:00.000Z",
@@ -217,6 +282,7 @@ describe("company Settings actually drive the booking", () => {
     const settingsRepo = { getSettings: jest.fn().mockRejectedValue(new Error("settings unreachable")) } as never;
     const crmRepo = { getLeadById: jest.fn().mockResolvedValue(LEAD) } as never;
     const bookingRepo = {
+      getAppointmentsByLead: jest.fn(async () => []),
       createAppointment: jest.fn(async (data: Record<string, unknown>) => ({ id: "a1", start_time: "x", status: data.status })),
     } as never;
 

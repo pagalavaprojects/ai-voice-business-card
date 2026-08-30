@@ -157,8 +157,17 @@ export async function GET(req: NextRequest, { params }: { params: { companyId: s
       const storedWav = await downloadStoredPitch(geminiPath);
       if (storedWav) return audioResponse(storedWav, "audio/wav", etag);
     }
-    const stored = await downloadStoredPitch(mp3Path);
-    if (stored) return audioResponse(stored, "audio/mpeg", etag);
+    // For Tamil (useGemini) a cached OpenAI MP3 must NEVER be served: OpenAI
+    // voices read Tamil as English phonetics (gibberish), and one written
+    // during a transient Gemini outage would otherwise shadow Gemini
+    // permanently — geminiPath is checked above, so once an mp3 exists the
+    // Gemini render below is never reached again. Skipping it for Tamil means
+    // a Gemini miss always re-attempts Gemini (recovering natural audio once
+    // the outage/quota clears).
+    if (!useGemini) {
+      const stored = await downloadStoredPitch(mp3Path);
+      if (stored) return audioResponse(stored, "audio/mpeg", etag);
+    }
 
     // Layer 3a: Tamil renders through Gemini TTS (POC-proven natural
     // Tamil). Persist-then-serve, same as the OpenAI path below; ANY
@@ -203,14 +212,20 @@ export async function GET(req: NextRequest, { params }: { params: { companyId: s
 
     // Persist before serving; a storage failure must not fail the play —
     // the visitor still gets their audio, the next render just pays again.
-    try {
-      await storage.ensureBucket("voice-assets", true);
-      await storage.upload("voice-assets", mp3Path, audio, "audio/mpeg");
-    } catch (err) {
-      Logger.warn("Pitch audio persistence failed — serving unpersisted render", {
-        assetPath: mp3Path,
-        error: err instanceof Error ? err.message : String(err),
-      });
+    // NEVER persist an OpenAI MP3 for Tamil (useGemini): caching gibberish
+    // Tamil is exactly what would shadow Gemini on every later request. A
+    // Tamil visitor still hears this transient OpenAI render once, but it is
+    // not stored, so the next request re-attempts Gemini.
+    if (!useGemini) {
+      try {
+        await storage.ensureBucket("voice-assets", true);
+        await storage.upload("voice-assets", mp3Path, audio, "audio/mpeg");
+      } catch (err) {
+        Logger.warn("Pitch audio persistence failed — serving unpersisted render", {
+          assetPath: mp3Path,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
 
     return audioResponse(audio, "audio/mpeg", etag);

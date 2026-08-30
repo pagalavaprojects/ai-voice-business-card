@@ -398,6 +398,12 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
     setQualStage("intro");
     setQualComplete(false);
     setQualAnswers([]);
+    // The modal is reused, never unmounted — a leftover pending-answer claim
+    // from the session just closed must not survive into the next one, or the
+    // first question of a fresh qualification could render already "answered"
+    // (its options swapped for a processing spinner that never resolves).
+    setQuickReply(null);
+    quickReplyLockRef.current = null;
     setFormData({ name: "", email: "", phone: "" });
     setOutcome(null);
     setSubmitErrorKey(null);

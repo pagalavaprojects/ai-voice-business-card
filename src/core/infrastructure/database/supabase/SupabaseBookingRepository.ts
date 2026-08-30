@@ -79,9 +79,17 @@ export class SupabaseBookingRepository implements IBookingRepository {
     const existing = await this.getAppointmentById(id);
     if (!existing) throw new Error("rescheduleAppointment failed: appointment not found");
 
+    // Rescheduling changes the TIME, not the confirmation state. An
+    // appointment that was only REQUESTED (no Cal.com booking) is still not
+    // on any calendar after a reschedule, so it must stay REQUESTED — forcing
+    // it to BOOKED would make the reschedule email tell the lead a meeting is
+    // confirmed at the new time when it never was. Only an appointment that
+    // actually holds a Cal.com booking is BOOKED.
+    const status = existing.calcom_booking_id ? "BOOKED" : existing.status;
+
     const { data, error } = await supabaseAdmin
       .from("appointments")
-      .update({ start_time: startTime, end_time: endTime, status: "BOOKED" })
+      .update({ start_time: startTime, end_time: endTime, status })
       .eq("id", id)
       .select()
       .single();

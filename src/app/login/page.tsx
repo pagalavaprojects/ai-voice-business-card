@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/shared/ui/button";
 import { AuthShell, AuthError, AuthLink, authInputClass } from "@/features/auth/components/AuthShell";
 import { GENERIC_SIGN_IN_ERROR } from "@/features/auth/lib/passwordPolicy";
+import { sameOriginPath } from "@/shared/lib/safeRedirect";
 
 /** Messages for the failures that redirect here from /auth/callback. Both
  * cases mean the same thing to the visitor — the link is spent — so neither
@@ -56,7 +57,9 @@ export default function LoginPage() {
 
     setIsCompletingLink(true);
     const requested = params.get("next") ?? "/dashboard";
-    const destination = requested.startsWith("/") && !requested.startsWith("//") ? requested : "/dashboard";
+    // Same-origin only — a prefix test is bypassable with a backslash or tab
+    // that normalises to a protocol-relative "//evil.com". See sameOriginPath.
+    const destination = sameOriginPath(requested, window.location.origin);
 
     let cancelled = false;
     const adoptSession = async () => {

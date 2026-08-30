@@ -86,7 +86,17 @@ describe("GET /auth/callback", () => {
   });
 
   it("refuses to redirect off-origin, however `next` is dressed up", async () => {
-    for (const hostile of ["https://evil.example.com/steal", "//evil.example.com/steal", "javascript:alert(1)"]) {
+    const BS = String.fromCharCode(92); // backslash
+    const TAB = String.fromCharCode(9);
+    for (const hostile of [
+      "https://evil.example.com/steal",
+      "//evil.example.com/steal",
+      "javascript:alert(1)",
+      // The bypasses the old "starts with / but not //" prefix test let
+      // through — normalised by the URL parser to a protocol-relative host.
+      "/" + BS + "evil.example.com",
+      "/" + TAB + "/evil.example.com",
+    ]) {
       const res = await GET(callbackRequest(`?code=c&next=${encodeURIComponent(hostile)}`));
       const location = new URL(res.headers.get("location") as string);
 

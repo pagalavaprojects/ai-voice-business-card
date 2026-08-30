@@ -517,4 +517,46 @@ describe("useVapiSession — scripted intro tracking", () => {
     act(() => vapi.emit("message", assistantMessage("வணக்கம்.")));
     expect(result.current.isPlayingIntro).toBe(true);
   });
+
+  it("clears the transcript on a fresh user-initiated call so a second call never shows the first's conversation", async () => {
+    const { result } = renderHook(() => useVapiSession({ companyId: "c1", employeeId: "e1", vapiPublicKey: REAL_KEY }));
+    await act(async () => {
+      await result.current.startCall();
+    });
+    const vapi = fakeVapiInstances[0];
+    act(() => vapi.emit("call-start"));
+    act(() => vapi.emit("message", assistantMessage("Hello there.")));
+    act(() => vapi.emit("message", { type: "transcript", transcriptType: "final", role: "user", transcript: "Hi" }));
+    expect(result.current.messages).toHaveLength(2);
+
+    // The visitor ends the call and taps Talk again — a brand-new conversation.
+    act(() => result.current.endCall());
+    await act(async () => {
+      await result.current.startCall();
+    });
+
+    expect(result.current.messages).toEqual([]);
+  });
+
+  it("resets mute state on end-call so the next call never shows 'muted' while the mic is actually live", async () => {
+    const { result } = renderHook(() => useVapiSession({ companyId: "c1", employeeId: "e1", vapiPublicKey: REAL_KEY }));
+    await act(async () => {
+      await result.current.startCall();
+    });
+    const vapi = fakeVapiInstances[0];
+    act(() => vapi.emit("call-start"));
+    act(() => vapi.emit("message", assistantMessage("வணக்கம்.")));
+    // Intro ends: the SDK opens the mic and the React mute state syncs to false.
+    act(() => jest.advanceTimersByTime(3000));
+    expect(result.current.isMuted).toBe(false);
+
+    // The visitor mutes themselves mid-call (now outside the intro gate).
+    act(() => result.current.toggleMute());
+    expect(result.current.isMuted).toBe(true);
+
+    // Ending the call must clear the mute so it cannot carry into the next
+    // call as a phantom "muted" label over a live microphone.
+    act(() => result.current.endCall());
+    expect(result.current.isMuted).toBe(false);
+  });
 });

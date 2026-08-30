@@ -172,6 +172,10 @@ export function useVapiSession({
   // fresh call is (auto- or manually) started. Without a cap, a genuinely
   // dead connection would retry forever.
   const reconnectAttemptedRef = useRef(false);
+  // True for exactly the one startCall that an automatic reconnect issues, so
+  // that reconnect preserves the transcript while a user-initiated call clears
+  // it. Distinct from reconnectAttemptedRef, which endCall also sets.
+  const isReconnectRef = useRef(false);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   // startCall is redeclared every render (it closes over the card's fields),
   // so the error handler registered once inside the init effect below reads
@@ -375,6 +379,13 @@ export function useVapiSession({
                 } catch (err) {
                   console.warn("Vapi setMuted(false) exception at intro-end:", err);
                 }
+                // Keep the React mute state in lockstep with the SDK. Without
+                // this, a visitor who muted themselves in an EARLIER call
+                // carries isMuted=true into this one; the SDK is now live and
+                // transmitting, yet the button would still read "Resume
+                // Voice" — they believe they are muted while actually being
+                // heard.
+                setIsMuted(false);
               }
             }, 3000);
           }
@@ -400,6 +411,9 @@ export function useVapiSession({
           clearReconnectTimeout();
           reconnectTimeoutRef.current = setTimeout(() => {
             reconnectTimeoutRef.current = null;
+            // Mark this as a reconnect so the transcript is preserved, not
+            // wiped, when startCall runs.
+            isReconnectRef.current = true;
             if (mountedRef.current && !userEndedCallRef.current) startCallRef.current();
           }, 1500);
         }
@@ -458,6 +472,16 @@ export function useVapiSession({
     const effectiveSystemPrompt = overrides?.systemPrompt ?? systemPrompt;
 
     setError(null);
+    // A fresh, user-initiated call starts with a clean transcript. An
+    // automatic reconnect also routes through startCall (startCallRef in the
+    // call-end handler) but must KEEP the conversation so far rather than wipe
+    // it — so it flags isReconnectRef first, and only a non-reconnect start
+    // clears messages. (reconnectAttemptedRef can't gate this: endCall sets it
+    // too, which would wrongly suppress the clear on a normal end-then-restart.)
+    // Without this, tapping "Talk" a second time shows the previous call's
+    // transcript prepended to the new one.
+    if (!isReconnectRef.current) setMessages([]);
+    isReconnectRef.current = false;
 
     // If the SDK chunk is still in flight (dynamic import above), wait for
     // it instead of misclassifying a real-keyed session as demo mode.
@@ -622,6 +646,9 @@ export function useVapiSession({
     }
     setVoiceState("idle");
     setIsPlayingIntro(false);
+    // A hung-up call leaves no mute state to carry into the next one — reset
+    // so a fresh call never starts out claiming to be muted.
+    setIsMuted(false);
     stopTimer();
   }, [stopTimer, clearDemoTimeouts, clearSpeakingTimeout, clearReconnectTimeout]);
 

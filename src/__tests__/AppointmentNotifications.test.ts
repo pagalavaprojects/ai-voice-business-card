@@ -33,6 +33,7 @@ function makeRegistry(opts: { confirmed?: boolean; emailService?: boolean } = {}
     }),
   } as never;
   const bookingRepo = {
+    getAppointmentsByLead: jest.fn(async () => []),
     createAppointment: jest.fn(async (data: Record<string, unknown>) => ({
       id: "appt-1",
       start_time: "2026-09-01T10:00:00.000Z",
@@ -215,6 +216,7 @@ describe("book_appointment — idempotency and confirmation gating", () => {
       void r2;
       const crmRepo = { getLeadById: jest.fn().mockResolvedValue(LEAD), addActivity: jest.fn().mockResolvedValue({}) } as never;
       const bookingRepo = {
+        getAppointmentsByLead: jest.fn(async () => []),
         createAppointment: jest.fn(async (data: Record<string, unknown>) => ({
           id: "appt-2",
           start_time: "2026-09-01T10:00:00.000Z",

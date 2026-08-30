@@ -18,7 +18,7 @@ import {
   toQualificationLanguage,
   withAnswerGuidance,
 } from "@/features/voice/lib/qualificationScript";
-import { AppointmentStatus, LeadTemperature, NurtureStatus, LeadQualificationSignalsSchema } from "../../domain/models/types";
+import { AppointmentStatus, LeadTemperature, NurtureStatus, LeadQualificationSignalsSchema, type Appointment } from "../../domain/models/types";
 import { Logger } from "@/shared/lib/logger";
 
 export const KNOWN_TOOL_NAMES = [
@@ -482,6 +482,11 @@ export class ToolRegistry {
           lead_id: { type: "string", description: "UUID of the saved lead" },
           start_time: { type: "string", description: "ISO 8601 string for appointment start time" },
           end_time: { type: "string", description: "ISO 8601 string for appointment end time" },
+          timezone: {
+            type: "string",
+            description:
+              "IANA timezone of the visitor's requested time (e.g. 'Asia/Kolkata'). Without it the booking is treated as UTC, so always supply the visitor's own timezone when known.",
+          },
         },
         required: ["lead_id", "start_time", "end_time"],
       },
@@ -502,37 +507,69 @@ export class ToolRegistry {
         let meetingUrl: string | undefined;
         let confirmed = false;
 
-        if (this.calcom && companyDefaults.eventTypeId) {
-          try {
-            const booking = await this.calcom.createBooking({
-              eventTypeId: companyDefaults.eventTypeId,
-              start: String(args.start_time),
-              end: String(args.end_time),
-              responses: { name: lead?.name ?? "Website visitor", email: lead?.email ?? "" },
-              timeZone: String(args.timezone || "UTC"),
-            });
-            calcomBookingId = booking.uid;
-            meetingUrl = booking.meetingUrl;
-            confirmed = true;
-          } catch (err) {
-            // A calendar outage must not lose the lead's stated preference —
-            // it downgrades to REQUESTED so a human can follow up.
-            Logger.warn("Cal.com booking failed during voice call; capturing as REQUESTED", {
-              error: err instanceof Error ? err.message : String(err),
-            });
-          }
-        }
+        // Idempotency across invocations: a retried or duplicated tool call
+        // (the model calling book_appointment twice for the same slot) must
+        // NOT create a second real Cal.com event, a second appointment row,
+        // and a second set of notifications. If this lead already holds a
+        // non-cancelled appointment at the same start time, reuse it. (The
+        // notification sends are separately idempotent per appointment id, so
+        // reusing the row makes the whole operation a no-op on a repeat.)
+        const startMs = Date.parse(String(args.start_time));
+        const priorForLead = await this.bookingRepo
+          .getAppointmentsByLead(String(args.lead_id))
+          .catch(() => [] as Appointment[]);
+        const duplicate = priorForLead.find(
+          (a) => a.status !== AppointmentStatus.CANCELLED && Number.isFinite(startMs) && Date.parse(a.start_time) === startMs
+        );
 
-        const appointment = await this.bookingRepo.createAppointment({
-          company_id: context.companyId,
-          employee_id: context.employeeId,
-          lead_id: String(args.lead_id),
-          start_time: String(args.start_time),
-          end_time: String(args.end_time),
-          calcom_booking_id: calcomBookingId,
-          meeting_url: meetingUrl,
-          status: confirmed ? AppointmentStatus.BOOKED : AppointmentStatus.REQUESTED,
-        });
+        let appointment: Appointment;
+        if (duplicate) {
+          appointment = duplicate;
+          confirmed = duplicate.status === AppointmentStatus.BOOKED;
+          calcomBookingId = duplicate.calcom_booking_id ?? undefined;
+          meetingUrl = duplicate.meeting_url ?? undefined;
+          Logger.warn("book_appointment: reusing existing appointment for this lead+slot (idempotent)", {
+            appointmentId: duplicate.id,
+          });
+        } else {
+          if (this.calcom && companyDefaults.eventTypeId) {
+            try {
+              const booking = await this.calcom.createBooking({
+                eventTypeId: companyDefaults.eventTypeId,
+                start: String(args.start_time),
+                end: String(args.end_time),
+                responses: { name: lead?.name ?? "Website visitor", email: lead?.email ?? "" },
+                timeZone: String(args.timezone || "UTC"),
+              });
+              calcomBookingId = booking.uid;
+              meetingUrl = booking.meetingUrl;
+              // Trust Cal.com's own verdict, not merely "the call did not
+              // throw". A "requires confirmation" event type returns the
+              // booking as pending/awaiting_host — reporting that to the
+              // visitor as an already-confirmed meeting would be a lie. Only a
+              // non-pending status is treated as confirmed; anything else is
+              // captured as REQUESTED.
+              confirmed = !["pending", "awaiting_host"].includes(String(booking.status).toLowerCase());
+            } catch (err) {
+              // A calendar outage must not lose the lead's stated preference —
+              // it downgrades to REQUESTED so a human can follow up.
+              Logger.warn("Cal.com booking failed during voice call; capturing as REQUESTED", {
+                error: err instanceof Error ? err.message : String(err),
+              });
+            }
+          }
+
+          appointment = await this.bookingRepo.createAppointment({
+            company_id: context.companyId,
+            employee_id: context.employeeId,
+            lead_id: String(args.lead_id),
+            start_time: String(args.start_time),
+            end_time: String(args.end_time),
+            calcom_booking_id: calcomBookingId,
+            meeting_url: meetingUrl,
+            status: confirmed ? AppointmentStatus.BOOKED : AppointmentStatus.REQUESTED,
+          });
+        }
 
         // Both parties are notified from the SAME confirmed appointment, and
         // the sends are AWAITED (Promise.allSettled) rather than

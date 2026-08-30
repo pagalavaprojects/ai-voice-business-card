@@ -94,6 +94,25 @@ describe("PublicBusinessCard — multilingual fetch race condition", () => {
     }) as unknown as typeof fetch;
   });
 
+  it("a per-card language clamp is displayed but does NOT overwrite the visitor's stored cross-card preference", async () => {
+    // Stored preference is Tamil (beforeEach). This company has Tamil
+    // disabled, so the server clamps ta -> en. The card must SHOW English,
+    // but the visitor's durable Tamil preference must survive untouched — the
+    // clamp is a per-card display decision, not a choice they made.
+    render(<PublicBusinessCard companyId="comp-1" employeeId="emp-1" />);
+
+    await waitFor(() => expect(pending.has("/api/public/comp-1/emp-1?lang=ta")).toBe(true));
+    await act(async () => {
+      // Requested ta, server returns en (clamped to this company's enabled set).
+      pending.get("/api/public/comp-1/emp-1?lang=ta")!.resolve(cardResponseFor("en", "Srinivasan Kandasamy"));
+    });
+
+    // The card now DISPLAYS English (the clamped, available language)...
+    await waitFor(() => expect(screen.getByRole("combobox")).toHaveValue("en"));
+    // ...but the visitor's durable cross-card preference was NOT overwritten.
+    expect(window.localStorage.getItem("pagalava.language")).toBe("ta");
+  });
+
   it("a single language switch does not get silently reverted while its fetch is still in flight", async () => {
     render(<PublicBusinessCard companyId="comp-1" employeeId="emp-1" />);
 

@@ -232,10 +232,20 @@ export function PublicBusinessCard({
   };
 
   // Unmount must not leave a detached audio element (or a browser-TTS
-  // utterance) narrating to nobody.
+  // utterance) narrating to nobody. Bumping the pitch session is the
+  // load-bearing part: a pitch tapped just before unmount may still have a
+  // pending play() promise (or an armed generation-deadline timeout) whose
+  // rejection/fire lands in a later microtask, AFTER this cleanup ran. Those
+  // late paths re-check pitchSessionRef and would otherwise still match,
+  // driving fallbackToBrowserTts() — global speechSynthesis that survives
+  // unmount and SPA navigation, narrating a pitch on whatever page the
+  // visitor moved to, plus setState on a dead tree. Invalidating the session
+  // makes every one of those guards fail. No setState here — the tree is gone.
   useEffect(
     () => () => {
+      pitchSessionRef.current++;
       pitchAudioRef.current?.pause();
+      pitchAudioRef.current = null;
       stopBrowserTts();
     },
     []
@@ -291,7 +301,11 @@ export function PublicBusinessCard({
         // `requestedLanguage` (this fetch's own request), never the live
         // `language` state — see the comment above.
         if (data.language && data.language !== requestedLanguage && isSupportedLanguage(data.language)) {
-          setLanguage(data.language);
+          // A per-card DISPLAY adjustment, not a choice the visitor made:
+          // persist=false so their genuine cross-card preference is not
+          // silently overwritten with a language this one company happens
+          // to have disabled.
+          setLanguage(data.language, false);
         }
       })
       .catch((err: Error) => {
