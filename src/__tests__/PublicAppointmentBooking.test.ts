@@ -52,6 +52,30 @@ jest.mock("@/core/infrastructure/database/supabase/SupabaseCRMRepository", () =>
   })),
 }));
 
+const getAppointmentsByLead = jest.fn(async (..._a: unknown[]) => [] as unknown[]);
+jest.mock("@/core/infrastructure/database/supabase/SupabaseBookingRepository", () => ({
+  SupabaseBookingRepository: jest.fn().mockImplementation(() => ({
+    getAppointmentsByLead: (...a: unknown[]) => getAppointmentsByLead(...a),
+  })),
+}));
+
+// An in-memory ATOMIC claim store — the whole point of the concurrency test.
+// acquire is synchronous-atomic (JS is single-threaded), so exactly one of N
+// racing callers wins the key.
+const claims = new Set<string>();
+const acquireClaim = jest.fn(async (key: string) => {
+  if (claims.has(key)) return false;
+  claims.add(key);
+  return true;
+});
+const releaseClaim = jest.fn(async (key: string) => {
+  claims.delete(key);
+});
+jest.mock("@/core/infrastructure/concurrency/ProcessingLock", () => ({
+  acquireClaim: (key: string) => acquireClaim(key),
+  releaseClaim: (key: string) => releaseClaim(key),
+}));
+
 const PARAMS = { params: { companyId: "company-1", employeeId: "employee-1" } };
 
 function postRequest(body: unknown, ip = "10.0.0.1") {
@@ -161,6 +185,9 @@ describe("POST /api/public/[companyId]/[employeeId]/appointments", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     __resetInMemoryRateLimit();
+    claims.clear();
+    getLeadByEmail.mockResolvedValue(null);
+    getAppointmentsByLead.mockResolvedValue([]);
     getCompanyById.mockResolvedValue({ id: "company-1", name: "Test Co" });
     getEmployeeById.mockResolvedValue({ id: "employee-1", company_id: "company-1", name: "Test Employee" });
   });
@@ -258,6 +285,35 @@ describe("POST /api/public/[companyId]/[employeeId]/appointments", () => {
     expect(bookAppointment).toHaveBeenCalledWith(expect.objectContaining({ lead_id: "lead-fresh" }), expect.anything());
     expect(res.status).toBe(200);
   });
+
+  it.each([2, 5, 10])("%i truly-parallel bookings for the same visitor+slot create exactly ONE booking", async (N) => {
+    // Stateful "winner creates, losers read" world. The lock must let exactly
+    // one caller mint the lead + book; the rest resolve to that same booking.
+    const createdLeads: Array<{ id: string; email: string }> = [];
+    const createdAppointments: Array<{ id: string; lead_id: string; start_time: string; status: string }> = [];
+    getLeadByEmail.mockImplementation(async (...a: unknown[]) => createdLeads.find((l) => l.email === a[1]) ?? null);
+    getAppointmentsByLead.mockImplementation(async (...a: unknown[]) => createdAppointments.filter((ap) => ap.lead_id === a[0]));
+    const saveLead = jest.fn(async (args: { email: string }) => {
+      const lead = { id: `lead-${createdLeads.length + 1}`, email: args.email };
+      createdLeads.push(lead);
+      return { success: true, lead_id: lead.id };
+    });
+    const bookAppointment = jest.fn(async (args: { lead_id: string; start_time: string }) => {
+      createdAppointments.push({ id: `appt-${createdAppointments.length + 1}`, lead_id: args.lead_id, start_time: args.start_time, status: "BOOKED" });
+      return { success: true, confirmed: true, status: "BOOKED", message: "confirmed" };
+    });
+    getTool.mockImplementation((name: string) => (name === "save_lead" ? { execute: saveLead } : name === "book_appointment" ? { execute: bookAppointment } : undefined));
+
+    // Distinct IPs so the per-visitor write rate limit doesn't mask the lock.
+    const results = await Promise.all(Array.from({ length: N }, (_v, i) => POST(postRequest(VALID_BODY, `10.9.0.${100 + i}`), PARAMS)));
+
+    // The invariant: one lead, one Cal.com booking, one appointment — for any N.
+    expect(saveLead).toHaveBeenCalledTimes(1);
+    expect(bookAppointment).toHaveBeenCalledTimes(1);
+    expect(createdAppointments).toHaveLength(1);
+    // And every concurrent caller still got a successful outcome.
+    for (const res of results) expect(res.status).toBe(200);
+  }, 20000);
 
   it("reports REQUESTED honestly — never rewrites it into a false 'confirmed' — when book_appointment could not reach Cal.com", async () => {
     const saveLead = jest.fn().mockResolvedValue({ success: true, lead_id: "lead-42" });

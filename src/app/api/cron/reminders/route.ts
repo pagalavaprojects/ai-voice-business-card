@@ -4,6 +4,7 @@ import { Logger } from "@/shared/lib/logger";
 import { getWhatsAppNotifier } from "@/core/infrastructure/notifications/WhatsAppNotifier";
 import { SupabaseCRMRepository } from "@/core/infrastructure/database/supabase/SupabaseCRMRepository";
 import { SupabaseKnowledgeRepository } from "@/core/infrastructure/database/supabase/SupabaseKnowledgeRepository";
+import { acquireClaim, releaseClaim } from "@/core/infrastructure/concurrency/ProcessingLock";
 
 export const dynamic = "force-dynamic";
 
@@ -87,12 +88,31 @@ export async function GET(req: NextRequest) {
         continue;
       }
 
+      // Atomically claim this reminder BEFORE sending. The marker check above
+      // is a read-then-write race: two overlapping cron runs (Vercel's
+      // at-least-once delivery, or a manual re-trigger) can both pass it and
+      // both send. The PK-atomic claim lets only one proceed. It also covers
+      // the secondary hazard — a marker write that fails AFTER a successful
+      // send — because the claim itself persists on success. Crucially it is
+      // RELEASED on a failed send, so mark-on-success / retry-on-failure is
+      // preserved. Fail-closed (skip) on a claim-store error: safe, retried.
+      const reminderClaim = `reminder:${appt.id}`;
+      if (!(await acquireClaim(reminderClaim).catch(() => false))) {
+        alreadyReminded++;
+        continue;
+      }
+
       const when = new Date(appt.start_time).toLocaleString("en-US", { dateStyle: "full", timeStyle: "short", timeZone: "UTC" });
       const clientResult = await whatsapp.send(
         lead.phone,
         `Hi ${lead.name ?? "there"} — a quick follow-up on your meeting with ${employee?.name ?? "our team"} (${when} UTC). Reply here if you'd like to reschedule or have any questions.`
       );
-      if (!clientResult.sent) continue; // unmarked -> retried tomorrow while in window
+      if (!clientResult.sent) {
+        // Failed send stays retryable: release the claim so a later run can
+        // try again while still in the window.
+        await releaseClaim(reminderClaim).catch(() => {});
+        continue;
+      }
 
       if (employee?.phone) {
         // Owner copy is best-effort; the client send is what gates the marker.

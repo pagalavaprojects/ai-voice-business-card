@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { toolRegistry } from "@/core/infrastructure/bootstrap/assistantRuntime";
 import { SupabaseCRMRepository } from "@/core/infrastructure/database/supabase/SupabaseCRMRepository";
+import { SupabaseBookingRepository } from "@/core/infrastructure/database/supabase/SupabaseBookingRepository";
+import { acquireClaim, releaseClaim } from "@/core/infrastructure/concurrency/ProcessingLock";
 import { CalcomAdapter } from "@/core/infrastructure/booking/calcom/CalcomAdapter";
 import { checkRateLimitDistributed } from "@/shared/lib/rateLimit";
 import { Logger } from "@/shared/lib/logger";
@@ -15,6 +17,29 @@ export const dynamic = "force-dynamic";
 const calcom = new CalcomAdapter();
 const knowledgeRepo = new SupabaseKnowledgeRepository();
 const crmRepo = new SupabaseCRMRepository();
+const bookingRepo = new SupabaseBookingRepository();
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * The loser of a concurrent same-visitor+slot booking waits briefly for the
+ * winner's appointment to land, then returns it (rather than creating a
+ * duplicate). Bounded: gives up after ~6s and the caller acknowledges without
+ * duplicating. Read-only.
+ */
+async function waitForConcurrentAppointment(companyId: string, email: string, startTime: string) {
+  const startMs = new Date(startTime).getTime();
+  for (let attempt = 0; attempt < 12; attempt++) {
+    const lead = await crmRepo.getLeadByEmail(companyId, email).catch(() => null);
+    if (lead) {
+      const appts = await bookingRepo.getAppointmentsByLead(lead.id).catch(() => []);
+      const match = appts.find((a) => a.status !== "CANCELLED" && new Date(a.start_time).getTime() === startMs);
+      if (match) return match;
+    }
+    await sleep(500);
+  }
+  return null;
+}
 
 /** Neither slot lookup nor booking checked before this fix that the company/
  * employee in the URL actually exist — an invalid id fell through to
@@ -183,6 +208,39 @@ export async function POST(req: NextRequest, { params }: { params: { companyId: 
     language: isSupportedLanguage(parsed.data.language) ? parsed.data.language : undefined,
   };
 
+  // Serialize concurrent bookings for the SAME visitor + slot. Reuse-by-email
+  // closes the SEQUENTIAL resubmit window, but N truly-parallel POSTs (a
+  // scripted double-submit, a proxy/browser retry) each read "no lead", each
+  // mint a lead, and each book — one visitor, N Cal.com events + N notification
+  // sets. This PK-atomic claim lets exactly ONE proceed; the losers resolve to
+  // that same booking instead of creating their own. A claim-store error fails
+  // OPEN — it degrades to the prior (unlocked) behaviour rather than blocking a
+  // legitimate booking.
+  const lockKey = `formbook:${params.companyId}:${params.employeeId}:${email}:${start.toISOString()}`;
+  const gotLock = await acquireClaim(lockKey).catch(() => true);
+  if (!gotLock) {
+    const existing = await waitForConcurrentAppointment(params.companyId, email, start.toISOString());
+    if (existing) {
+      return NextResponse.json({
+        success: true,
+        confirmed: existing.status === "BOOKED",
+        status: existing.status,
+        message:
+          existing.status === "BOOKED"
+            ? "Your appointment is confirmed."
+            : "Your request has been received — a confirmation will follow shortly.",
+      });
+    }
+    // The in-flight booking has not landed yet — acknowledge without booking a
+    // duplicate.
+    return NextResponse.json({
+      success: true,
+      confirmed: false,
+      status: "REQUESTED",
+      message: "Your request has been received — a confirmation will follow shortly.",
+    });
+  }
+
   try {
     // Reuse an existing lead for this email before creating a new one. The
     // client disables the submit button while a booking is in flight, but a
@@ -231,5 +289,9 @@ export async function POST(req: NextRequest, { params }: { params: { companyId: 
       { success: false, message: "We couldn't process your request — please try again or contact us directly." },
       { status: 500 }
     );
+  } finally {
+    // The lock is a short-lived mutex, not a durable marker: release it so a
+    // genuinely later booking (e.g. after a cancellation) is never blocked.
+    await releaseClaim(lockKey).catch(() => {});
   }
 }

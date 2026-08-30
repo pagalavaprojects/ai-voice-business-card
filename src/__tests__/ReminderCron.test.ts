@@ -39,6 +39,21 @@ jest.mock("@/shared/lib/supabase", () => ({
   },
 }));
 
+// Atomic in-memory claim store (JS single-thread => acquire is atomic).
+const reminderClaims = new Set<string>();
+const acquireClaim = jest.fn(async (key: string) => {
+  if (reminderClaims.has(key)) return false;
+  reminderClaims.add(key);
+  return true;
+});
+const releaseClaim = jest.fn(async (key: string) => {
+  reminderClaims.delete(key);
+});
+jest.mock("@/core/infrastructure/concurrency/ProcessingLock", () => ({
+  acquireClaim: (key: string) => acquireClaim(key),
+  releaseClaim: (key: string) => releaseClaim(key),
+}));
+
 import { GET } from "@/app/api/cron/reminders/route";
 
 const APPT = {
@@ -61,6 +76,7 @@ describe("reminder cron", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     appointmentRows.length = 0;
+    reminderClaims.clear();
     process.env.CRON_SECRET = "test-secret";
     isConfigured.mockReturnValue(true);
     send.mockResolvedValue({ sent: true });
@@ -132,5 +148,32 @@ describe("reminder cron", () => {
 
     expect(json.sent).toBe(0);
     expect(addActivity).not.toHaveBeenCalled();
+  });
+
+  it.each([2, 5])("with %i concurrent cron workers, the client reminder is sent exactly ONCE", async (N) => {
+    // Two overlapping cron deliveries would both pass the marker check; the
+    // atomic claim must let only one actually send.
+    appointmentRows.push({ ...APPT });
+    const results = await Promise.all(Array.from({ length: N }, () => GET(request("Bearer test-secret"))));
+
+    const clientSends = send.mock.calls.filter((c) => c[0] === "+91 94431 25639");
+    expect(clientSends).toHaveLength(1);
+    for (const r of results) expect(r.status).toBe(200);
+  });
+
+  it("releases the claim on a failed send so a later run retries (mark-on-success / retry-on-failure preserved)", async () => {
+    appointmentRows.push({ ...APPT });
+    // First run: the client send fails -> claim must be released, no marker.
+    send.mockResolvedValueOnce({ sent: false, reason: "http_500" });
+    await GET(request("Bearer test-secret"));
+    expect(releaseClaim).toHaveBeenCalledWith("reminder:appt-1");
+    expect(addActivity).not.toHaveBeenCalled();
+
+    // Second run: the claim is free again, the send now succeeds and is marked.
+    send.mockResolvedValue({ sent: true });
+    await GET(request("Bearer test-secret"));
+    const clientSends = send.mock.calls.filter((c) => c[0] === "+91 94431 25639");
+    expect(clientSends).toHaveLength(2); // attempted (failed) then retried (sent)
+    expect(addActivity).toHaveBeenCalledTimes(1); // marked only on the successful run
   });
 });
