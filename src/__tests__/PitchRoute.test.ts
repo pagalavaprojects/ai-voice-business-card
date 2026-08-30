@@ -335,6 +335,31 @@ describe("GET /api/public/{companyId}/{employeeId}/pitch", () => {
       expect(persistedOpenAiMp3).toBe(false);
     });
 
+    it("serves the Tamil OpenAI fallback with no-store + a distinct ETag so gibberish is never CDN/304 shadowed", async () => {
+      // Gemini transiently fails; OpenAI produces a (gibberish) Tamil render.
+      // That transient fallback must NOT be durably/edge cached, and must NOT
+      // share the Gemini render's ETag — otherwise the CDN serves it for a day
+      // and a browser 304-revalidates against the Gemini ETag and replays it
+      // even after Gemini recovers.
+      const fetchSpy = jest.fn().mockImplementation(async (url: string) => {
+        if (String(url).includes("generativelanguage.googleapis.com")) return { ok: false, status: 500, text: async () => "gemini down" };
+        if (String(url).includes("api.openai.com")) return { ok: true, arrayBuffer: async () => new Uint8Array([7, 7, 7]).buffer };
+        throw new Error("unexpected fetch: " + url);
+      });
+      global.fetch = fetchSpy as unknown as typeof fetch;
+
+      const res = await GET(req("type=elevator&lang=ta"), { params: { companyId: COMPANY_ID, employeeId: EMPLOYEE_ID } });
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get("Content-Type")).toBe("audio/mpeg");
+      // Not durably cacheable.
+      expect(res.headers.get("Cache-Control")).toMatch(/no-store/);
+      expect(res.headers.get("Cache-Control")).not.toMatch(/s-maxage/);
+      // Distinct ETag so a Gemini-token revalidation cannot 304 onto it.
+      expect(res.headers.get("ETag")).toMatch(/openai-fallback/);
+      expect(res.headers.get("ETag")).not.toMatch(/-gemini"?$/);
+    });
+
     it("ENGLISH never touches Gemini even when the key is configured — OpenAI remains its provider", async () => {
       const fetchSpy = jest.fn().mockImplementation(async (url: string) => {
         if (String(url).includes("api.openai.com")) return { ok: true, arrayBuffer: async () => new Uint8Array([9, 9, 9]).buffer };

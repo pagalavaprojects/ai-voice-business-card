@@ -132,8 +132,21 @@ export class SupabaseCRMRepository implements ICRMRepository {
   }
 
   async getLeadByEmail(companyId: string, email: string): Promise<Lead | null> {
+    // Return the most-recent match, tolerant of duplicate (company_id,email)
+    // rows. `.single()` treats >1 rows as an error (PGRST116) and yields null,
+    // which would silently defeat the caller's reuse-by-email idempotency for
+    // any email that already has duplicates — so mirror getLeadByConversationId:
+    // order newest-first, limit 1, maybeSingle (never errors on multiple).
     const { data: lead, error } = await this.demoSafe(() =>
-      supabaseAdmin.from("leads").select().eq("company_id", companyId).eq("email", email).is("deleted_at", null).single()
+      supabaseAdmin
+        .from("leads")
+        .select()
+        .eq("company_id", companyId)
+        .eq("email", email)
+        .is("deleted_at", null)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle()
     );
     if (error && error.code !== "PGRST116") {
       throw new Error(`SupabaseCRMRepository.getLeadByEmail failed: ${error.message}`);

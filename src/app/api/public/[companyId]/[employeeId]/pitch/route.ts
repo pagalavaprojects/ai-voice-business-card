@@ -228,6 +228,18 @@ export async function GET(req: NextRequest, { params }: { params: { companyId: s
       }
     }
 
+    // For Tamil (useGemini) this OpenAI render is a TRANSIENT fallback for a
+    // momentary Gemini failure, and OpenAI reads Tamil as English gibberish.
+    // It must be neither durably/edge cached nor share the Gemini render's
+    // ETag: otherwise the CDN would serve the gibberish for up to a day, and a
+    // browser would 304-revalidate against the Gemini ETag and keep replaying
+    // it even after Gemini recovers. Serve it private/no-store with a distinct
+    // ETag so the next request re-attempts Gemini. (The storage-layer guard
+    // above already prevents PERSISTING it; this closes the same shadowing at
+    // the HTTP cache layer.)
+    if (useGemini) {
+      return audioResponse(audio, "audio/mpeg", `${etag}-openai-fallback`, "private, no-store, max-age=0");
+    }
     return audioResponse(audio, "audio/mpeg", etag);
   } catch (err) {
     Logger.warn("Pitch generation failed", { companyId, employeeId, type, error: err instanceof Error ? err.message : String(err) });
@@ -248,7 +260,12 @@ async function downloadStoredPitch(assetPath: string): Promise<Buffer | null> {
 
 const AUDIO_CACHE_CONTROL = "public, max-age=3600, s-maxage=86400, stale-while-revalidate=86400";
 
-function audioResponse(audio: Buffer, contentType: "audio/mpeg" | "audio/wav", etag: string): NextResponse {
+function audioResponse(
+  audio: Buffer,
+  contentType: "audio/mpeg" | "audio/wav",
+  etag: string,
+  cacheControl: string = AUDIO_CACHE_CONTROL
+): NextResponse {
   return new NextResponse(new Uint8Array(audio), {
     status: 200,
     headers: {
@@ -259,7 +276,7 @@ function audioResponse(audio: Buffer, contentType: "audio/mpeg" | "audio/wav", e
       // long enough that repeat plays are CDN hits, short enough that a
       // company edit propagates within a day even at the edge. The ETag
       // lets browser caches revalidate for free past max-age.
-      "Cache-Control": AUDIO_CACHE_CONTROL,
+      "Cache-Control": cacheControl,
       ETag: etag,
       "Accept-Ranges": "bytes",
     },

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { toolRegistry } from "@/core/infrastructure/bootstrap/assistantRuntime";
+import { SupabaseCRMRepository } from "@/core/infrastructure/database/supabase/SupabaseCRMRepository";
 import { CalcomAdapter } from "@/core/infrastructure/booking/calcom/CalcomAdapter";
 import { checkRateLimitDistributed } from "@/shared/lib/rateLimit";
 import { Logger } from "@/shared/lib/logger";
@@ -13,6 +14,7 @@ export const dynamic = "force-dynamic";
 
 const calcom = new CalcomAdapter();
 const knowledgeRepo = new SupabaseKnowledgeRepository();
+const crmRepo = new SupabaseCRMRepository();
 
 /** Neither slot lookup nor booking checked before this fix that the company/
  * employee in the URL actually exist — an invalid id fell through to
@@ -182,11 +184,26 @@ export async function POST(req: NextRequest, { params }: { params: { companyId: 
   };
 
   try {
-    const leadResult = await saveLeadTool.execute(
-      { name, email, phone, ...(notes ? { problem_statement: notes } : {}) },
-      context
-    );
-    const leadId = leadResult.lead_id as string | undefined;
+    // Reuse an existing lead for this email before creating a new one. The
+    // client disables the submit button while a booking is in flight, but a
+    // network retry (or a manual resubmit after a slow response) would
+    // otherwise call save_lead again, mint a FRESH lead, and slip past
+    // book_appointment's lead-keyed idempotency — producing a duplicate lead,
+    // a duplicate Cal.com event, and duplicate notifications for one visitor.
+    // Reusing the same lead means a same-slot resubmit lands on the existing
+    // appointment (idempotent) instead. Any lookup failure (e.g. pre-existing
+    // duplicate rows) degrades safely to the create path.
+    const existingLead = await crmRepo.getLeadByEmail(params.companyId, email).catch(() => null);
+    let leadId: string | undefined;
+    if (existingLead) {
+      leadId = existingLead.id;
+    } else {
+      const leadResult = await saveLeadTool.execute(
+        { name, email, phone, ...(notes ? { problem_statement: notes } : {}) },
+        context
+      );
+      leadId = leadResult.lead_id as string | undefined;
+    }
     if (!leadId) throw new Error("save_lead did not return a lead_id");
 
     const bookingResult = await bookAppointmentTool.execute(

@@ -4,6 +4,7 @@ import { formatApiResponse } from "@/shared/lib/security";
 import { handleApiError } from "@/shared/lib/apiHandler";
 import { requireCompanyDataScope } from "@/shared/lib/tenant";
 import { SupabaseBookingRepository } from "@/core/infrastructure/database/supabase/SupabaseBookingRepository";
+import { AppointmentStatus } from "@/core/domain/models/types";
 import { SupabaseCRMRepository } from "@/core/infrastructure/database/supabase/SupabaseCRMRepository";
 import { CalcomAdapter } from "@/core/infrastructure/booking/calcom/CalcomAdapter";
 import { NotificationService } from "@/core/application/services/NotificationService";
@@ -39,6 +40,15 @@ export async function PUT(req: NextRequest, { params }: { params: { appointmentI
     if (!existing || existing.company_id !== parsed.company_id || (employeeId && existing.employee_id !== employeeId)) {
       // Same 404 as a missing row: the refusal must not confirm it exists.
       return formatApiResponse(null, 404, "Appointment not found");
+    }
+
+    // Cancelling an already-cancelled appointment is a no-op: re-running the
+    // Cal.com cancellation and re-emailing the visitor would be duplicate
+    // side effects (a second "your meeting has been cancelled" email, a
+    // second Cal.com call that may itself error) for a state change that has
+    // already happened. Return the existing row idempotently.
+    if (existing.status === AppointmentStatus.CANCELLED) {
+      return formatApiResponse(existing, 200, "Appointment already cancelled");
     }
 
     if (existing.calcom_booking_id) {

@@ -326,7 +326,7 @@ export class ToolRegistry {
         required: ["name", "email", "phone"],
       },
       execute: async (args, context) => {
-        const lead = await this.crmRepo.createLead({
+        const leadFields = {
           company_id: context.companyId,
           employee_id: context.employeeId,
           conversation_id: context.conversationId,
@@ -338,7 +338,30 @@ export class ToolRegistry {
           problem_statement: args.problem_statement ? String(args.problem_statement) : undefined,
           budget: args.budget ? Number(args.budget) : undefined,
           timeline: args.timeline ? String(args.timeline) : undefined,
-        });
+        };
+
+        // Reuse the conversation's existing lead instead of inserting a second
+        // row. get_next_qualification_question already creates a placeholder
+        // lead for this conversation_id and appends the six recorded answers to
+        // its qualification_notes; a fresh createLead here would orphan those
+        // answers on the placeholder (leaving the reviewed, real-contact lead
+        // showing none, and scoring/alerting the wrong row). Promote the
+        // placeholder in place when it exists; otherwise create the lead.
+        const existingLead = context.conversationId
+          ? await this.crmRepo.getLeadByConversationId(context.conversationId).catch(() => null)
+          : null;
+        const lead = existingLead
+          ? await this.crmRepo.updateLeadQualification(existingLead.id, {
+              name: leadFields.name,
+              email: leadFields.email,
+              phone: leadFields.phone,
+              business_name: leadFields.business_name,
+              industry: leadFields.industry,
+              problem_statement: leadFields.problem_statement,
+              budget: leadFields.budget,
+              timeline: leadFields.timeline,
+            })
+          : await this.crmRepo.createLead(leadFields);
 
         const signals = this.parseQualificationSignals(args);
         const scored = await this.qualificationService.calculateAndSaveLeadScore(lead.id, {

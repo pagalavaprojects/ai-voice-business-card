@@ -43,6 +43,15 @@ jest.mock("@/core/infrastructure/database/supabase/SupabaseKnowledgeRepository",
   })),
 }));
 
+// getLeadByEmail defaults to null (no existing lead) so the standard flow
+// still goes through save_lead; a test overrides it to prove lead reuse.
+const getLeadByEmail = jest.fn(async (..._args: unknown[]) => null as unknown);
+jest.mock("@/core/infrastructure/database/supabase/SupabaseCRMRepository", () => ({
+  SupabaseCRMRepository: jest.fn().mockImplementation(() => ({
+    getLeadByEmail: (...args: unknown[]) => getLeadByEmail(...args),
+  })),
+}));
+
 const PARAMS = { params: { companyId: "company-1", employeeId: "employee-1" } };
 
 function postRequest(body: unknown, ip = "10.0.0.1") {
@@ -213,6 +222,41 @@ describe("POST /api/public/[companyId]/[employeeId]/appointments", () => {
     expect(json.success).toBe(true);
     expect(json.confirmed).toBe(true);
     expect(json.message).toMatch(/confirmed/i);
+  });
+
+  it("reuses an existing lead for the same email instead of minting a new one (dedupe so a resubmit can't slip past booking idempotency)", async () => {
+    // A resubmit (network retry / slow-response retry) must NOT create a
+    // second lead — a fresh lead_id would bypass book_appointment's
+    // lead-keyed idempotency and double-book. When a lead already exists for
+    // this email+company, reuse it and skip save_lead entirely.
+    getLeadByEmail.mockResolvedValueOnce({ id: "lead-existing", company_id: "company-1", email: VALID_BODY.email });
+    const saveLead = jest.fn().mockResolvedValue({ success: true, lead_id: "lead-new" });
+    const bookAppointment = jest.fn().mockResolvedValue({ success: true, confirmed: true, status: "BOOKED", message: "Appointment confirmed." });
+    getTool.mockImplementation((name: string) => (name === "save_lead" ? { execute: saveLead } : name === "book_appointment" ? { execute: bookAppointment } : undefined));
+
+    const res = await POST(postRequest(VALID_BODY), PARAMS);
+
+    // No new lead created; the booking runs against the EXISTING lead, so its
+    // own same-slot idempotency governs whether a duplicate is created.
+    expect(saveLead).not.toHaveBeenCalled();
+    expect(bookAppointment).toHaveBeenCalledWith(
+      expect.objectContaining({ lead_id: "lead-existing" }),
+      { companyId: "company-1", employeeId: "employee-1" }
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it("still creates a lead via save_lead for a genuinely new visitor (no existing lead)", async () => {
+    // getLeadByEmail default is null — the normal first-time path.
+    const saveLead = jest.fn().mockResolvedValue({ success: true, lead_id: "lead-fresh" });
+    const bookAppointment = jest.fn().mockResolvedValue({ success: true, confirmed: true, status: "BOOKED", message: "Appointment confirmed." });
+    getTool.mockImplementation((name: string) => (name === "save_lead" ? { execute: saveLead } : name === "book_appointment" ? { execute: bookAppointment } : undefined));
+
+    const res = await POST(postRequest(VALID_BODY), PARAMS);
+
+    expect(saveLead).toHaveBeenCalledTimes(1);
+    expect(bookAppointment).toHaveBeenCalledWith(expect.objectContaining({ lead_id: "lead-fresh" }), expect.anything());
+    expect(res.status).toBe(200);
   });
 
   it("reports REQUESTED honestly — never rewrites it into a false 'confirmed' — when book_appointment could not reach Cal.com", async () => {

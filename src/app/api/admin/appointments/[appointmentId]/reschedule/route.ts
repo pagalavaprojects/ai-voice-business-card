@@ -4,6 +4,7 @@ import { formatApiResponse } from "@/shared/lib/security";
 import { handleApiError } from "@/shared/lib/apiHandler";
 import { requireCompanyDataScope } from "@/shared/lib/tenant";
 import { SupabaseBookingRepository } from "@/core/infrastructure/database/supabase/SupabaseBookingRepository";
+import { AppointmentStatus } from "@/core/domain/models/types";
 import { SupabaseCRMRepository } from "@/core/infrastructure/database/supabase/SupabaseCRMRepository";
 import { CalcomAdapter } from "@/core/infrastructure/booking/calcom/CalcomAdapter";
 import { NotificationService } from "@/core/application/services/NotificationService";
@@ -43,6 +44,14 @@ export async function PUT(req: NextRequest, { params }: { params: { appointmentI
     if (!existing || existing.company_id !== parsed.company_id || (employeeId && existing.employee_id !== employeeId)) {
       // Same 404 as a missing row: the refusal must not confirm it exists.
       return formatApiResponse(null, 404, "Appointment not found");
+    }
+
+    // A cancelled appointment must not be rescheduled: cancelling leaves the
+    // calcom_booking_id in place, so rescheduleAppointment would recompute its
+    // status to BOOKED and silently RESURRECT a booking the owner deliberately
+    // cancelled (plus re-book the Cal.com slot and email the visitor). Refuse.
+    if (existing.status === AppointmentStatus.CANCELLED) {
+      return formatApiResponse(null, 409, "Cannot reschedule a cancelled appointment");
     }
 
     if (existing.calcom_booking_id) {
