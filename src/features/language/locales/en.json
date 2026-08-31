@@ -94,6 +94,7 @@
     "loadingSlots": "Loading available times…",
     "errorRateLimited": "Too many attempts — please wait a moment and reopen this.",
     "errorSlotsGeneric": "We couldn't load available times right now.",
+    "noSlots": "No available times in the next few days.",
     "errorSlotsHintWithLink": "You can still use the calendar link below.",
     "errorSlotsHintNoLink": "Please try again shortly, or reach out directly.",
     "unconfiguredNotice": "No online booking is configured yet for {employeeName}.",

@@ -153,7 +153,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   // visitor than "error" (a transient Cal.com outage, try again shortly).
   // Conflating the two previously meant a real outage got misreported as
   // "this company doesn't support online booking," which isn't true.
-  const [slotsReason, setSlotsReason] = useState<"unconfigured" | "error" | "rate_limited" | null>(null);
+  const [slotsReason, setSlotsReason] = useState<"unconfigured" | "error" | "rate_limited" | "empty" | null>(null);
   const [selectedSlot, setSelectedSlot] = useState<string | null>(null);
   const [formData, setFormData] = useState({ name: "", email: "", phone: "" });
   const [submitting, setSubmitting] = useState(false);
@@ -217,7 +217,12 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
         const list = data.slots ?? [];
         setSlots(list);
         setSelectedSlot(list[0]?.time ?? null);
-        setSlotsReason(list.length === 0 ? data.reason ?? "error" : null);
+        // Distinguish a genuine provider/config failure (the route sends an
+        // explicit `reason`) from a SUCCESSFUL response that simply has no
+        // availability (no `reason`). Defaulting an empty-but-successful
+        // response to "error" would tell the visitor "we couldn't load times"
+        // when Cal.com actually answered with zero open slots.
+        setSlotsReason(list.length === 0 ? data.reason ?? "empty" : null);
         setSlotsLoading(false);
       })
       // Only an abort (close) or a genuine network-level failure (offline,
@@ -763,6 +768,15 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                 {t("appointment.unconfiguredNotice", { employeeName })}{" "}
                 {externalBookingUrl ? t("appointment.unconfiguredHintWithLink") : ""}
                 {t("appointment.unconfiguredHintNoLink")}
+              </div>
+            )}
+
+            {/* Cal.com answered successfully but has no open slots — an honest
+                "no availability" state, distinct from the provider-error one. */}
+            {!slotsLoading && slotsReason === "empty" && (
+              <div className="p-3 rounded-xl bg-white/[0.04] border border-white/[0.08] text-xs text-slate-400">
+                {t("appointment.noSlots")}{" "}
+                {externalBookingUrl ? t("appointment.errorSlotsHintWithLink") : t("appointment.errorSlotsHintNoLink")}
               </div>
             )}
 

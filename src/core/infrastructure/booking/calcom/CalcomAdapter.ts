@@ -72,11 +72,20 @@ export class CalcomAdapter {
     // 10s bound — the public booking widget awaits this on modal open; a
     // stalled Cal.com must surface as the widget's existing "error" state,
     // not an indefinite spinner (2026-08-19 perf round).
-    const response = await fetchWithTimeout(
-      `https://api.cal.com/v2/slots?${params.toString()}`,
-      { headers: { Authorization: `Bearer ${this.apiKey}`, "cal-api-version": "2024-09-04" } },
-      10_000
-    );
+    const url = `https://api.cal.com/v2/slots?${params.toString()}`;
+    const headers = { Authorization: `Bearer ${this.apiKey}`, "cal-api-version": "2024-09-04" };
+    let response = await fetchWithTimeout(url, { headers }, 10_000);
+    // ONE bounded retry on a transient 5xx. Cal.com's /v2/slots intermittently
+    // returns 500 INTERNAL_SERVER_ERROR (verified live: it 500'd for a stretch
+    // then recovered to 200 within the hour), which otherwise surfaces to the
+    // visitor as "we couldn't load available times". This GET is idempotent and
+    // a 5xx comes back fast, so a single immediate retry recovers the common
+    // blip well within the modal's latency budget — WITHOUT fabricating slots.
+    // A timeout is NOT retried: its 10s is already the whole budget, and 4xx is
+    // a real client/config error that a retry can't fix.
+    if (response.status >= 500) {
+      response = await fetchWithTimeout(url, { headers }, 10_000);
+    }
     if (!response.ok) throw new Error(`CalcomAdapter.getAvailableSlots failed: ${response.status} ${await response.text()}`);
 
     // Shape (verified against the live API): { data: { "YYYY-MM-DD":
