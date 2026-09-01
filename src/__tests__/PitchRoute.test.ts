@@ -57,6 +57,7 @@ jest.mock("@/core/infrastructure/bootstrap/assistantRuntime", () => ({
 
 import { NextRequest } from "next/server";
 import { GET } from "@/app/api/public/[companyId]/[employeeId]/pitch/route";
+import { SMART_AI_LEAD_BUSINESS_CARD_TA } from "@/features/voice/lib/pitchScripts";
 
 const COMPANY_ID = "company-1";
 const EMPLOYEE_ID = "employee-1";
@@ -511,6 +512,68 @@ describe("GET /api/public/{companyId}/{employeeId}/pitch", () => {
     it("a genuinely unknown type is still rejected with 400", async () => {
       const res = await GET(req("type=banana&lang=en"), { params: { companyId: COMPANY_ID, employeeId: EMPLOYEE_ID } });
       expect(res.status).toBe(400);
+    });
+  });
+
+  // ---- Smart AI Lead Business Card (type=smart_ai_lead_business_card) -----
+  // A fixed, approved TAMIL-ONLY recorded item. Like the intro it rides the
+  // whole cache/fallback stack, but its content is Tamil regardless of the
+  // ?lang= param, so it always renders through Gemini and caches under a
+  // single ta-scoped, type-scoped key that can never collide with the pitches
+  // or the intro.
+  describe("type=smart_ai_lead_business_card — the fixed Tamil-only recorded item", () => {
+    beforeEach(() => {
+      process.env = { ...ORIGINAL_ENV, OPENAI_API_KEY: "sk-real-test-key-1234567890", GEMINI_API_KEY: "AQ.real-looking-gemini-test-key" };
+    });
+
+    const introGeminiSuccess = {
+      ok: true,
+      json: async () => ({
+        candidates: [
+          { content: { parts: [{ inlineData: { mimeType: "audio/l16; rate=24000; channels=1", data: Buffer.from([1, 2, 3, 4]).toString("base64") } }] } },
+        ],
+      }),
+    };
+
+    it("format=script returns the approved Tamil script EXACTLY — and reports Tamil even when the request asked for English", async () => {
+      const res = await GET(req("type=smart_ai_lead_business_card&lang=en&format=script"), { params: { companyId: COMPANY_ID, employeeId: EMPLOYEE_ID } });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.script).toBe(SMART_AI_LEAD_BUSINESS_CARD_TA);
+      // Tamil-only content: the route pins it to Tamil regardless of the param.
+      expect(body.language).toBe("ta");
+    });
+
+    it("renders through Gemini (the Tamil voice) and caches under a smart-card + ta scoped key, even with lang=en", async () => {
+      const fetchSpy = jest.fn().mockImplementation(async (url: string) => {
+        if (String(url).includes("generativelanguage.googleapis.com")) return introGeminiSuccess;
+        throw new Error("unexpected fetch: " + url);
+      });
+      global.fetch = fetchSpy as unknown as typeof fetch;
+
+      const res = await GET(req("type=smart_ai_lead_business_card&lang=en"), { params: { companyId: COMPANY_ID, employeeId: EMPLOYEE_ID } });
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get("Content-Type")).toBe("audio/wav");
+      expect(String(fetchSpy.mock.calls[0][0])).toContain("generativelanguage");
+      expect(String(upload.mock.calls[0][1])).toMatch(/\/smart_ai_lead_business_card\.ta\.[0-9a-f]{8}\.gemini\./);
+    });
+
+    it("resolves to a storage key distinct from the intro and the composed pitches", async () => {
+      const fetchSpy = jest.fn().mockImplementation(async (url: string) => {
+        if (String(url).includes("generativelanguage.googleapis.com")) return introGeminiSuccess;
+        throw new Error("unexpected fetch: " + url);
+      });
+      global.fetch = fetchSpy as unknown as typeof fetch;
+
+      await GET(req("type=smart_ai_lead_business_card&lang=ta"), { params: { companyId: COMPANY_ID, employeeId: EMPLOYEE_ID } });
+      const smartPath = download.mock.calls[0][0];
+      download.mockClear();
+      await GET(req("type=usp&lang=ta"), { params: { companyId: COMPANY_ID, employeeId: EMPLOYEE_ID } });
+      const uspPath = download.mock.calls[0][0];
+
+      expect(smartPath).toContain("smart_ai_lead_business_card.ta.");
+      expect(smartPath).not.toBe(uspPath);
     });
   });
 });

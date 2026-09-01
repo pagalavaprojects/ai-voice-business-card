@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
-import { Mail, Phone, Globe, Calendar, Download, QrCode, MessageCircle, Linkedin, Link2, FileText, X, Loader2, CheckCircle2, Play, Pause as PauseIcon, Volume2 } from "lucide-react";
+import { Mail, Phone, Globe, Calendar, Download, QrCode, MessageCircle, Linkedin, Link2, FileText, X, Loader2, CheckCircle2, Play, Pause as PauseIcon, Volume2, RotateCcw } from "lucide-react";
 import { useVapiSession } from "@/features/voice/hooks/useVapiSession";
 import { VoiceMicButton } from "@/features/voice/components/VoiceMicButton";
 import { Card } from "@/shared/ui/card";
@@ -186,8 +186,8 @@ export function PublicBusinessCard({
   // from the pitch route — no microphone, no Vapi session, no permissions.
   // "loading" covers the fetch+decode window so the tapped button shows a
   // spinner instead of appearing dead while TTS renders on a cold cache.
-  const [pitchPlaying, setPitchPlaying] = useState<"elevator" | "product" | "usp" | "intro" | null>(null);
-  const [pitchLoading, setPitchLoading] = useState<"elevator" | "product" | "usp" | "intro" | null>(null);
+  const [pitchPlaying, setPitchPlaying] = useState<"elevator" | "product" | "usp" | "intro" | "smart_ai_lead_business_card" | null>(null);
+  const [pitchLoading, setPitchLoading] = useState<"elevator" | "product" | "usp" | "intro" | "smart_ai_lead_business_card" | null>(null);
   const [pitchPaused, setPitchPaused] = useState(false);
   const [pitchError, setPitchError] = useState(false);
   const pitchAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -334,6 +334,10 @@ export function PublicBusinessCard({
   // from. One prefetch per language per mount (ref), and never while the
   // demo fallback card is showing (card === null).
   const prefetchedPitchLangsRef = useRef<Set<string>>(new Set());
+  // The Smart AI Lead Business Card is Tamil-only, so unlike the per-language
+  // pitches its single asset is warmed exactly ONCE per mount — never again on
+  // a language switch (which would be a redundant fetch for the same ta asset).
+  const prefetchedSmartCardRef = useRef(false);
   useEffect(() => {
     if (!card || !languageConfirmed || prefetchedPitchLangsRef.current.has(language)) return;
     prefetchedPitchLangsRef.current.add(language);
@@ -363,6 +367,20 @@ export function PublicBusinessCard({
         // file and errors instantly. Observed exactly that in production
         // before this was added: error 26ms after the tap, no audio at all.
         fetch(url(type), {
+          priority: "low",
+          cache: "no-store",
+          headers: { Range: "bytes=0-0" },
+        } as RequestInit).catch(() => undefined);
+      }
+
+      // The Smart AI Lead Business Card is Tamil-only content — warm its single
+      // Tamil asset (a 1-byte range, exactly like the pitches above) regardless
+      // of the visitor's UI language, so a first tap is a CDN hit too. Warmed
+      // ONCE per mount (its content never varies by UI language), so a language
+      // switch does not re-fetch the same ta asset.
+      if (!prefetchedSmartCardRef.current) {
+        prefetchedSmartCardRef.current = true;
+        fetch(`/api/public/${companyId}/${employeeId}/pitch?type=smart_ai_lead_business_card&lang=ta`, {
           priority: "low",
           cache: "no-store",
           headers: { Range: "bytes=0-0" },
@@ -454,7 +472,7 @@ export function PublicBusinessCard({
   // "intro" is the recorded introduction — same player, same fallback
   // chain, same session-token guards; the ONLY difference is that finishing
   // it unlocks Tap to Speak (see the onended/onEnd hooks below).
-  const playPitch = (type: "elevator" | "product" | "usp" | "intro") => {
+  const playPitch = (type: "elevator" | "product" | "usp" | "intro" | "smart_ai_lead_business_card") => {
     // Tapping the pitch that's already voicing toggles Pause/Resume; a
     // still-loading tap cancels. Tapping a different pitch switches to it.
     if (pitchPlaying === type) {
@@ -474,7 +492,12 @@ export function PublicBusinessCard({
     // a mismatch means the visitor has since switched pitches, cancelled,
     // or changed language, and this pitch's late callbacks must do nothing.
     const session = pitchSessionRef.current;
-    const pitchUrl = `/api/public/${companyId}/${employeeId}/pitch?type=${type}&lang=${encodeURIComponent(language)}`;
+    // The Smart AI Lead Business Card is Tamil-only content — always request
+    // it (and voice its browser-TTS fallback) in Tamil, regardless of the
+    // visitor's UI language, so it plays through the Tamil voice and resolves
+    // to the single Tamil cache asset the route stores it under.
+    const pitchLang = type === "smart_ai_lead_business_card" ? "ta" : language;
+    const pitchUrl = `/api/public/${companyId}/${employeeId}/pitch?type=${type}&lang=${encodeURIComponent(pitchLang)}`;
 
     // When the server can't produce the rendered MP3 (e.g. TTS credits
     // exhausted upstream), the pitch still speaks: fetch the composed
@@ -499,7 +522,7 @@ export function PublicBusinessCard({
         .then((res) => (res.ok ? res.json() : Promise.reject(new Error(String(res.status)))))
         .then(({ script }: { script: string }) => {
           if (pitchSessionRef.current !== session) return;
-          const started = speakPitchWithBrowserTts(script, language, {
+          const started = speakPitchWithBrowserTts(script, pitchLang, {
             onStart: () => {
               if (pitchSessionRef.current !== session) return;
               pitchSourceRef.current = "tts";
@@ -881,6 +904,29 @@ export function PublicBusinessCard({
                 </Button>
               </div>
             )}
+            {/* Replay: once the introduction has FINISHED, this sits beside
+                "Tap to Speak" and plays the SAME recorded introduction again.
+                playPitch("intro") reuses the already-cached ?type=intro asset
+                (no new TTS render) and NEVER starts Vapi or the microphone —
+                it only plays the recorded audio (ending any live call first),
+                and is idempotent (a second tap while it is loading cancels,
+                and while it is playing toggles pause — never an overlapping
+                session). Hidden while the intro is playing/paused (Pause/Resume
+                owns that state) and during a live AI call. */}
+            {introDone && !introActive && !isCallActive && (
+              <div className="flex gap-2 mt-4">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => playPitch("intro")}
+                  data-testid="intro-replay"
+                  className="text-xs flex items-center gap-1.5"
+                >
+                  <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+                  {t("buttons.replay")}
+                </Button>
+              </div>
+            )}
             {isCallActive && (
               <p className="text-sm text-slate-200 text-center font-semibold mt-4">
                 {voiceState === "connecting" ? t("status.preparingVoice") : t("mic.tapToSpeak")}
@@ -949,7 +995,7 @@ export function PublicBusinessCard({
               <Volume2 className="h-3 w-3" aria-hidden="true" />
               {t("pitch.sectionTitle")}
             </h2>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 gap-2">
               {(
                 [
                   // MaylaanAI's authored pitches (see MAYLAANAI_PITCHES in
@@ -972,6 +1018,16 @@ export function PublicBusinessCard({
                     type: "usp" as const,
                     label: t("pitch.usp"),
                     duration: companyId === DEMO_COMPANY_ID ? "60s" : "5s",
+                  },
+                  // The Smart AI Lead Business Card (2026-09-01): a fixed,
+                  // Tamil-only approved audio item served through the same
+                  // pitch pipeline under its own type key. Sits beside Why Us
+                  // (usp) in this grid. Duration is a rough spoken-length
+                  // estimate of the approved Tamil script, like the others.
+                  {
+                    type: "smart_ai_lead_business_card" as const,
+                    label: t("pitch.smartCard"),
+                    duration: "90s",
                   },
                 ]
               ).map(({ type, label, duration }) => {

@@ -99,14 +99,20 @@ describe("PublicBusinessCard — exactly one card fetch, in the stored language"
       .map((c) => ({ url: String(c[0]), init: c[1] as RequestInit | undefined }))
       .filter((r) => r.url.includes("/pitch?"));
     const pitchCalls = pitchRequests.map((r) => r.url);
-    // Four assets: the recorded introduction (2026-08-19 spec — its first
-    // render must happen here in the background, never on the Play tap)
-    // plus the three Listen pitches.
-    expect(pitchCalls).toHaveLength(4);
-    for (const type of ["intro", "elevator", "product", "usp"]) {
+    // Five assets: the recorded introduction (2026-08-19 spec — its first
+    // render must happen here in the background, never on the Play tap), the
+    // three Listen pitches, and the Tamil-only Smart AI Lead Business Card
+    // (2026-09-01).
+    expect(pitchCalls).toHaveLength(5);
+    for (const type of ["intro", "elevator", "product", "usp", "smart_ai_lead_business_card"]) {
       expect(pitchCalls).toContainEqual(expect.stringContaining(`type=${type}`));
     }
-    expect(pitchCalls.every((u) => u.includes("lang=en"))).toBe(true);
+    // The confirmed-language assets warm in en; the Smart AI Lead Business Card
+    // is Tamil-only content, so it warms in ta regardless of the UI language.
+    for (const type of ["intro", "elevator", "product", "usp"]) {
+      expect(pitchRequests.find((r) => r.url.includes(`type=${type}`))!.url).toContain("lang=en");
+    }
+    expect(pitchRequests.find((r) => r.url.includes("type=smart_ai_lead_business_card"))!.url).toContain("lang=ta");
 
     // Only the introduction's BODY is downloaded. Pulling all four made a
     // card load cost 10.7MB before the visitor tapped anything (measured in
@@ -117,7 +123,7 @@ describe("PublicBusinessCard — exactly one card fetch, in the stored language"
       (r.init?.headers as Record<string, string> | undefined)?.Range;
     const intro = pitchRequests.find((r) => r.url.includes("type=intro"));
     expect(rangeOf(intro!)).toBeUndefined();
-    for (const type of ["elevator", "product", "usp"]) {
+    for (const type of ["elevator", "product", "usp", "smart_ai_lead_business_card"]) {
       const request = pitchRequests.find((r) => r.url.includes(`type=${type}`))!;
       expect(rangeOf(request)).toBe("bytes=0-0");
       // The route answers a range request with 200 + Content-Length 1, not a
@@ -131,7 +137,7 @@ describe("PublicBusinessCard — exactly one card fetch, in the stored language"
     await act(async () => {
       await jest.advanceTimersByTimeAsync(10_000);
     });
-    expect(fetchSpy.mock.calls.map((c) => String(c[0])).filter((u) => u.includes("/pitch?"))).toHaveLength(4);
+    expect(fetchSpy.mock.calls.map((c) => String(c[0])).filter((u) => u.includes("/pitch?"))).toHaveLength(5);
   });
 });
 

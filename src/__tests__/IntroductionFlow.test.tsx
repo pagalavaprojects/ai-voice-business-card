@@ -236,6 +236,111 @@ describe("Tamil introduction flow — identical machine, Tamil asset", () => {
   });
 });
 
+describe("Replay — replays the recorded introduction, never Vapi/mic", () => {
+  it("is hidden before completion (idle AND while playing) and appears only after the intro finishes", async () => {
+    const mic = await mountCard("en");
+    await screen.findByText("Play Introduction");
+    // Idle: offered Play, no Replay yet.
+    expect(screen.queryByTestId("intro-replay")).toBeNull();
+
+    fireEvent.click(mic);
+    await act(async () => {
+      FakeAudio.instances[0].onplaying?.();
+    });
+    // Playing: Pause/Resume owns the controls, still no Replay.
+    expect(screen.queryByTestId("intro-replay")).toBeNull();
+
+    await act(async () => {
+      FakeAudio.instances[0].onended?.();
+    });
+    // Complete: Tap to Speak + Replay, side by side.
+    expect(screen.getByTestId("intro-state-label")).toHaveTextContent("Tap to Speak");
+    expect(screen.getByTestId("intro-replay")).toHaveTextContent("Replay");
+  });
+
+  it("Replay re-plays the SAME cached intro asset (?type=intro), starts NO Vapi call, and shows the playing state again", async () => {
+    const mic = await mountCard("en");
+    await screen.findByText("Play Introduction");
+    fireEvent.click(mic);
+    await act(async () => {
+      FakeAudio.instances[0].onplaying?.();
+      FakeAudio.instances[0].onended?.();
+    });
+    const countAfterFirstPlay = FakeAudio.instances.length; // 1
+
+    fireEvent.click(screen.getByTestId("intro-replay"));
+    // Exactly one NEW audio element, for the same cached intro URL — not a new
+    // type, and no TTS regeneration is implied (same asset the route caches).
+    expect(FakeAudio.instances.length).toBe(countAfterFirstPlay + 1);
+    const replayAudio = FakeAudio.instances[FakeAudio.instances.length - 1];
+    expect(replayAudio.src).toContain("/pitch?type=intro&lang=en");
+    expect(startCall).not.toHaveBeenCalled();
+
+    await act(async () => {
+      replayAudio.onplaying?.();
+    });
+    expect(screen.getByTestId("intro-state-label")).toHaveTextContent("Playing Introduction");
+  });
+
+  it("while a Replay is in progress there is no Replay control to tap again — no overlapping playback can start", async () => {
+    const mic = await mountCard("en");
+    await screen.findByText("Play Introduction");
+    fireEvent.click(mic);
+    await act(async () => {
+      FakeAudio.instances[0].onplaying?.();
+      FakeAudio.instances[0].onended?.();
+    });
+    fireEvent.click(screen.getByTestId("intro-replay"));
+    await act(async () => {
+      FakeAudio.instances[FakeAudio.instances.length - 1].onplaying?.();
+    });
+    // Replaying now: Pause/Resume owns the state, Replay is gone — so a second
+    // tap cannot start a second, overlapping session.
+    expect(screen.queryByTestId("intro-replay")).toBeNull();
+    expect(screen.getByTestId("intro-pause-resume")).toBeInTheDocument();
+    expect(startCall).not.toHaveBeenCalled();
+  });
+
+  it("works for Tamil too — Replay re-plays the Tamil intro asset without Vapi", async () => {
+    const mic = await mountCard("ta");
+    await screen.findByText(taBundle.mic.playIntroduction);
+    fireEvent.click(mic);
+    await act(async () => {
+      FakeAudio.instances[0].onplaying?.();
+      FakeAudio.instances[0].onended?.();
+    });
+    const replay = screen.getByTestId("intro-replay");
+    expect(replay).toHaveTextContent(taBundle.buttons.replay);
+    fireEvent.click(replay);
+    const replayAudio = FakeAudio.instances[FakeAudio.instances.length - 1];
+    expect(replayAudio.src).toContain("/pitch?type=intro&lang=ta");
+    expect(startCall).not.toHaveBeenCalled();
+  });
+});
+
+describe("Smart AI Lead Business Card — a Tamil-only pitch item beside Why Us", () => {
+  it("appears in the Listen row and, when tapped, plays the Tamil asset without starting Vapi — even on an English card", async () => {
+    await mountCard("en");
+    await screen.findByText("Play Introduction");
+    const btn = screen.getByTestId("pitch-smart_ai_lead_business_card");
+    expect(btn).toHaveTextContent("Smart AI Lead Business Card");
+
+    fireEvent.click(btn);
+    expect(FakeAudio.instances).toHaveLength(1);
+    // Tamil-only content: always requested at lang=ta, regardless of UI language.
+    expect(FakeAudio.instances[0].src).toContain("/pitch?type=smart_ai_lead_business_card&lang=ta");
+    expect(startCall).not.toHaveBeenCalled();
+  });
+
+  it("leaves the three existing pitch buttons present and unchanged", async () => {
+    await mountCard("en");
+    await screen.findByText("Play Introduction");
+    expect(screen.getByTestId("pitch-elevator")).toHaveTextContent("Elevator Pitch");
+    expect(screen.getByTestId("pitch-product")).toHaveTextContent("Service Pitch");
+    expect(screen.getByTestId("pitch-usp")).toHaveTextContent("Why Us");
+  });
+});
+
 describe("Service Pitch label", () => {
   it("every locale's visible pitch label says Service, and 'Product Pitch' is gone; the intro Play key exists everywhere", () => {
     const expected: Record<string, string> = {

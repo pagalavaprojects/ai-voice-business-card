@@ -2,7 +2,7 @@ import { AIAgent } from "@/core/domain/agent/AIAgent";
 import { Company, Employee } from "@/core/domain/models/types";
 import { substituteTemplateVariables } from "@/core/application/services/promptVariables";
 import { DEFAULT_LANGUAGE, LanguageCode, SUPPORTED_LANGUAGES, getLanguageDefinition, isSupportedLanguage } from "./config";
-import { getDefaultGreeting, MAYLAANAI_INTRODUCTION } from "./greetings";
+import { getDefaultGreeting, MAYLAANAI_INTRODUCTION, MAYLAANAI_INTRODUCTION_TA } from "./greetings";
 import { DEMO_COMPANY_ID } from "@/shared/lib/demoCard";
 import en from "./locales/en.json";
 import ta from "./locales/ta.json";
@@ -51,6 +51,14 @@ export function resolveGreeting(
   // authored/DB/default chain below.
   if (language === "en" && company.id === DEMO_COMPANY_ID) {
     return MAYLAANAI_INTRODUCTION;
+  }
+  // The approved Tamil introduction — the parallel per-company override for
+  // Tamil visitors (supplied 2026-09-01). Same rule as the English one:
+  // code-authored, wins over any DB greeting so approved content cannot drift
+  // through dashboard edits, and returned verbatim (no template substitution —
+  // the approved text is byte-exact and contains no variables).
+  if (language === "ta" && company.id === DEMO_COMPANY_ID) {
+    return MAYLAANAI_INTRODUCTION_TA;
   }
 
   const override = agent?.greetings?.[language]?.trim();

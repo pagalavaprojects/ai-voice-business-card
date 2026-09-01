@@ -40,7 +40,8 @@
     "shareQR": "QR ని భాగస్వామ్యం చేయండి",
     "close": "మూసివేయి",
     "pauseVoice": "ఆపండి",
-    "resumeVoice": "కొనసాగించండి"
+    "resumeVoice": "కొనసాగించండి",
+    "replay": "మళ్లీ వినండి"
   },
   "sections": {
     "tryAsking": "అడిగి చూడండి",
@@ -54,6 +55,7 @@
     "elevator": "పరిచయ పిచ్",
     "product": "సేవా పిచ్",
     "usp": "మా ప్రత్యేకత",
+    "smartCard": "Smart AI Lead Business Card",
     "playAria": "{label} ప్లే చేయండి",
     "error": "పిచ్ ప్లే కాలేదు — దయచేసి మళ్లీ ప్రయత్నించండి.",
     "pauseAria": "{label} ఆపండి",

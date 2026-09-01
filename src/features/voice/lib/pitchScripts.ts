@@ -89,6 +89,46 @@ export function isPitchType(value: string | null | undefined): value is PitchTyp
   return value === "elevator" || value === "product" || value === "usp";
 }
 
+/**
+ * The "Smart AI Lead Business Card" recorded audio item (added 2026-09-01).
+ *
+ * A Tamil-only approved script — NOT a composed pitch, and deliberately NOT
+ * added to PitchType/PITCH_TYPES/isPitchType (those stay the three composed
+ * pitches). Like the recorded introduction, it is a fixed, byte-exact script
+ * served through the same pitch route + persist-then-serve cache stack, under
+ * its own type key so its cached audio can never collide with
+ * elevator/product/usp/intro. Its content is Tamil regardless of the visitor's
+ * UI language, so the route always renders it through the Gemini Tamil voice.
+ *
+ * Preserve the wording, spelling, spacing and line structure EXACTLY as
+ * supplied — including the embedded English terms and the intentional double
+ * spaces. This is approved content: never paraphrase, translate, shorten,
+ * "grammar-fix", or normalize whitespace.
+ */
+export const SMART_AI_LEAD_BUSINESS_CARD_TYPE = "smart_ai_lead_business_card";
+
+export const SMART_AI_LEAD_BUSINESS_CARD_TA = `Smart AI Lead Business Card.
+
+இது செயற்கை நுண்ணறிவு மூலம் இயங்கும் எங்களுடைய  Business Card ஆகும்.
+
+இந்த Business Card-ஐ தங்களுக்கு தேவையான எந்த நேரத்திலும் பயன்படுத்திக்கொள்ளலாம்.
+
+இந்த AI Business Card-ஐ உங்கள் பழைய மற்றும்  புதிய வாடிக்கையாளர் அல்லது Leads-களின் மொபைலில் tap அல்லது QR Code share செய்தவுடன், உங்கள் தொடர்பு விவரங்கள் உடனடியாக அவர்களின் Contact List-இல் சேமிக்கப்படும்.
+
+அதன்பிறகு, உங்கள் நிறுவனத்தை அவர்களுக்கு விளக்கி கூறும்.
+
+பிறகு, அவர்கள் கேட்கும் கேள்விகளுக்கு உடனடியாக பதிலளிக்கும்.
+
+தேவையானால் உங்கள் WhatsApp, Email அல்லது Book an Appointment வழியாக உங்களை நேரடியாக தொடர்பு கொள்ளவும் உதவும்.
+
+Book an Appointment வழியாக, ஆறு தரவுகள் மூலம் Lead Assessment செய்யப்படும்.
+
+வாடிக்கையாளர் அல்லது Lead எத்தனை முறை உங்களது சேவை அல்லது தயாரிப்பு பற்றி AI உடன் தெரிந்து கொண்டுள்ளார்கள் என்பதை உங்களுடைய Dash Board மூலம் தெரிந்து கொள்ளமுடியும்.
+
+வாடிக்கையாளர் அல்லது Lead பெறப்பட்ட Contact Details தனை இரண்டு நாட்களாக பயன் படுத்தவில்லை எனில், அவர்களுக்கு ஒரு நினைவூட்டல் email அல்லது WhatsApp அனுப்பப்படும்.
+
+பெறப்பட்ட அணைத்து தரவுகளையும் உங்களுக்கு Email அல்லது Whatsapp அல்லது Dash Board மூலம் தெரிய படுத்தும்.`;
+
 export interface PitchSourceData {
   /** Enables per-company authored overrides (see
    * MAYLAANAI_PITCHES); composition is unaffected when absent. */

@@ -40,7 +40,8 @@
     "shareQR": "QR ಹಂಚಿಕೊಳ್ಳಿ",
     "close": "ಮುಚ್ಚಿ",
     "pauseVoice": "ವಿರಾಮ",
-    "resumeVoice": "ಮುಂದುವರಿಸಿ"
+    "resumeVoice": "ಮುಂದುವರಿಸಿ",
+    "replay": "ಮತ್ತೆ ಕೇಳಿ"
   },
   "sections": {
     "tryAsking": "ಕೇಳಿ ನೋಡಿ",
@@ -54,6 +55,7 @@
     "elevator": "ಪರಿಚಯ ಪಿಚ್",
     "product": "ಸೇವಾ ಪಿಚ್",
     "usp": "ನಮ್ಮ ವಿಶೇಷತೆ",
+    "smartCard": "Smart AI Lead Business Card",
     "playAria": "{label} ಪ್ಲೇ ಮಾಡಿ",
     "error": "ಪಿಚ್ ಪ್ಲೇ ಆಗಲಿಲ್ಲ — ದಯವಿಟ್ಟು ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ.",
     "pauseAria": "{label} ವಿರಾಮ",

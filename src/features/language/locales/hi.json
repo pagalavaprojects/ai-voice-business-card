@@ -40,7 +40,8 @@
     "shareQR": "QR साझा करें",
     "close": "बंद करें",
     "pauseVoice": "रोकें",
-    "resumeVoice": "जारी रखें"
+    "resumeVoice": "जारी रखें",
+    "replay": "फिर से सुनें"
   },
   "sections": {
     "tryAsking": "यह पूछ कर देखें",
@@ -54,6 +55,7 @@
     "elevator": "परिचय पिच",
     "product": "सेवा पिच",
     "usp": "हमारी खासियत",
+    "smartCard": "Smart AI Lead Business Card",
     "playAria": "{label} चलाएँ",
     "error": "पिच चलाई नहीं जा सकी — कृपया फिर से कोशिश करें।",
     "pauseAria": "{label} रोकें",

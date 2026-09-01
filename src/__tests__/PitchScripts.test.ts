@@ -6,7 +6,7 @@
  * artifact), and each type stays in its duration band (elevator ≈30s,
  * product ≈40s, USP ≈5s at typical TTS pace) in every supported language.
  */
-import { composePitchScript, isPitchType, PITCH_TYPES, PitchSourceData, MAYLAANAI_PITCHES } from "@/features/voice/lib/pitchScripts";
+import { composePitchScript, isPitchType, PITCH_TYPES, PitchSourceData, MAYLAANAI_PITCHES, SMART_AI_LEAD_BUSINESS_CARD_TA, SMART_AI_LEAD_BUSINESS_CARD_TYPE } from "@/features/voice/lib/pitchScripts";
 import { SUPPORTED_LANGUAGES } from "@/features/language/config";
 import { DEMO_COMPANY_ID } from "@/shared/lib/demoCard";
 
@@ -39,9 +39,57 @@ describe("isPitchType", () => {
     expect(isPitchType("product")).toBe(true);
     expect(isPitchType("usp")).toBe(true);
     expect(isPitchType("intro")).toBe(false);
+    // The Smart AI Lead Business Card is a fixed script served like intro, NOT
+    // a composed PitchType — the composed-pitch guard must keep rejecting it.
+    expect(isPitchType(SMART_AI_LEAD_BUSINESS_CARD_TYPE)).toBe(false);
+    expect(isPitchType("smart_ai_lead_business_card")).toBe(false);
     expect(isPitchType("")).toBe(false);
     expect(isPitchType(null)).toBe(false);
     expect(isPitchType(undefined)).toBe(false);
+  });
+});
+
+describe("Smart AI Lead Business Card — approved Tamil-only recorded script (2026-09-01)", () => {
+  // Duplicated VERBATIM so any edit to the authoritative constant — a
+  // paraphrase, a trimmed sentence, a "spelling fix", a collapsed double
+  // space — fails this test loudly. This is approved content.
+  const APPROVED = `Smart AI Lead Business Card.
+
+இது செயற்கை நுண்ணறிவு மூலம் இயங்கும் எங்களுடைய  Business Card ஆகும்.
+
+இந்த Business Card-ஐ தங்களுக்கு தேவையான எந்த நேரத்திலும் பயன்படுத்திக்கொள்ளலாம்.
+
+இந்த AI Business Card-ஐ உங்கள் பழைய மற்றும்  புதிய வாடிக்கையாளர் அல்லது Leads-களின் மொபைலில் tap அல்லது QR Code share செய்தவுடன், உங்கள் தொடர்பு விவரங்கள் உடனடியாக அவர்களின் Contact List-இல் சேமிக்கப்படும்.
+
+அதன்பிறகு, உங்கள் நிறுவனத்தை அவர்களுக்கு விளக்கி கூறும்.
+
+பிறகு, அவர்கள் கேட்கும் கேள்விகளுக்கு உடனடியாக பதிலளிக்கும்.
+
+தேவையானால் உங்கள் WhatsApp, Email அல்லது Book an Appointment வழியாக உங்களை நேரடியாக தொடர்பு கொள்ளவும் உதவும்.
+
+Book an Appointment வழியாக, ஆறு தரவுகள் மூலம் Lead Assessment செய்யப்படும்.
+
+வாடிக்கையாளர் அல்லது Lead எத்தனை முறை உங்களது சேவை அல்லது தயாரிப்பு பற்றி AI உடன் தெரிந்து கொண்டுள்ளார்கள் என்பதை உங்களுடைய Dash Board மூலம் தெரிந்து கொள்ளமுடியும்.
+
+வாடிக்கையாளர் அல்லது Lead பெறப்பட்ட Contact Details தனை இரண்டு நாட்களாக பயன் படுத்தவில்லை எனில், அவர்களுக்கு ஒரு நினைவூட்டல் email அல்லது WhatsApp அனுப்பப்படும்.
+
+பெறப்பட்ட அணைத்து தரவுகளையும் உங்களுக்கு Email அல்லது Whatsapp அல்லது Dash Board மூலம் தெரிய படுத்தும்.`;
+
+  it("the exported constant matches the approved script EXACTLY (single source of truth)", () => {
+    expect(SMART_AI_LEAD_BUSINESS_CARD_TA).toBe(APPROVED);
+  });
+
+  it("is a real Tamil script, distinct from every composed pitch and from the three approved pitches", () => {
+    expect(SMART_AI_LEAD_BUSINESS_CARD_TA).toMatch(/[஀-௿]/); // contains Tamil
+    for (const type of PITCH_TYPES) {
+      expect(SMART_AI_LEAD_BUSINESS_CARD_TA).not.toBe(MAYLAANAI_PITCHES.ta[type]);
+      expect(SMART_AI_LEAD_BUSINESS_CARD_TA).not.toBe(MAYLAANAI_PITCHES.en[type]);
+    }
+  });
+
+  it("uses a distinct internal type key that is not one of the composed pitch types", () => {
+    expect(SMART_AI_LEAD_BUSINESS_CARD_TYPE).toBe("smart_ai_lead_business_card");
+    expect(PITCH_TYPES).not.toContain(SMART_AI_LEAD_BUSINESS_CARD_TYPE as unknown as (typeof PITCH_TYPES)[number]);
   });
 });
 

@@ -7,9 +7,9 @@ import { LanguageCode } from "./config";
  * over the DB greeting for this company's English visitors). Wording,
  * punctuation, ordering and capitalization are preserved EXACTLY as
  * approved — do not paraphrase, trim, reorder, or "grammar-fix" any of it,
- * and do not machine-translate it (only English was supplied; the Tamil
- * introduction remains the previously authored DB greeting and is a
- * separate content decision). Note: this text intentionally says "their
+ * and do not machine-translate it (the approved Tamil introduction is its
+ * own supplied verbatim constant — MAYLAANAI_INTRODUCTION_TA below — not a
+ * translation of this one). Note: this text intentionally says "their
  * competitors" where the Why Us pitch says "your competitors" — both are
  * as supplied. This introduction must NEVER be used as the qualification
  * opening — qualification starts directly with Q1 via its own
@@ -52,6 +52,38 @@ You don't buy AI. You subscribe to outcomes measurable, trackable, and worth eve
 This is why growing businesses are choosing Pagalava — not merely to adopt technology, but to gain an edge their competitors don't have.
 
 MaylaanAI — by Pagalava Data Analytics Pvt. Ltd. | A Women-Led Deep-Tech Venture, Proudly Rooted in India`;
+
+/**
+ * MaylaanAI's FINAL APPROVED Tamil introduction for the General AI Voice
+ * Card ("Play Introduction" / "Talk with AI" opening) — supplied verbatim as
+ * the source of truth and wired as a code-authored per-company override in
+ * resolveGreeting (it wins over the DB greeting for this company's Tamil
+ * visitors), exactly parallel to MAYLAANAI_INTRODUCTION for English. Wording,
+ * spelling, punctuation, spacing and line structure are preserved EXACTLY as
+ * approved — do NOT paraphrase, trim, reorder, "grammar-fix", or normalize the
+ * embedded English/Tamil mix or the double spaces; this is approved content.
+ * Spoken through the SAME Gemini Tamil voice the Tamil pitches use (the pitch
+ * route routes ta → Gemini). Like the English one, this must NEVER be used as
+ * the qualification opening — qualification starts directly with Q1 via
+ * QUALIFICATION_CALL_OPENING.
+ */
+export const MAYLAANAI_INTRODUCTION_TA = `வணக்கம்.
+
+Pagalava Data Analytics Private Limited சார்பாக எங்களுடைய சேவைகளை உங்களுக்கு தற்பொழுது அறிமுகப்படுத்துகிறோம்.
+
+Pagalava Data Analytics என்பது ஒரு Women-led Deep Tech Startup நிறுவனம்.
+
+நடுத்தர நிறுவனங்களுக்கு தேவையான செயற்கை நுண்ணறிவு தீர்வுகளை Technology as a Service (TaaS) முறையில் வழங்குகிறோம்.
+
+TaaS என்பது நிறுவனங்கள் தங்களுக்கு தேவையான தொழில்நுட்ப வசதிகளை (Software, Hardware, AI Models, Data Analytics போன்றவை) சொந்தமாக வாங்காமல், சேவையாக வாடகை முறையில் பயன்படுத்தும் மாதிரி ஆகும்.
+
+TaaS எப்படி வேலை செய்கிறது: செயற்கை நுண்ணறிவு தரவுகளை பகுப்பாய்வு செய்து, முடிவெடுக்க உதவும் Machine Learning மாடல்களை மற்றும் Big Data தரவுகளை சேகரித்து, சேமித்து, பகுப்பாய்வு செய்து, Cloud Platform மூலம் வழங்கப்படுகின்றன
+
+இதனால் நிறுவனங்கள் பெரிய முதலீடு இல்லாமலேயே, நவீன தொழில்நுட்பத்தை பயன்படுத்த முடியும்.
+
+சிறு, குறு, நடுத்தர தொழில்கள், துறைக்கு TaaS ன் பயன் பாடுகள் பின்வருமாறு: ஒன்று, குறைந்த முதலீடு, இரண்டாவது, scalability, மூன்றாவது, AI-Powered முடிவெடுத்தல் - வாடிக்கையாளர் நடத்தை, விற்பனை போக்கு போன்றவற்றை பகுப்பாய்வு செய்து சிறந்த வணிக முடிவுகள் எடுக்க உதவுகிறது. நான்காவது, Inventory & Supply Chain Management – Big Data மூலம் இருப்பு நிர்வாகம், தேவை கணிப்பு (Demand Forecasting) துல்லியமாகிறது. ஐன்தாவது, போட்டித்திறன் – பெரிய நிறுவனங்களுக்கு இணையான தொழில்நுட்ப வசதிகளை, குறைந்த செலவில் சிறு தொழில்கள் பெற முடிகிறது.
+
+சுருக்கமாக, TaaS என்பது MSMEகளுக்கு சேவைகள் மூலம் அவற்றின் வளர்ச்சிக்கும் போட்டித்திறனுக்கும் பெரிதும் உதவுகிறது.`;
 
 /**
  * Platform-wide fallback greeting per language — used when a company hasn't

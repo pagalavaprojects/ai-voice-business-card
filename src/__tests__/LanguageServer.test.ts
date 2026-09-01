@@ -9,7 +9,7 @@ import {
   resolveEnabledLanguageList,
 } from "@/features/language/server";
 import { Company, Employee } from "@/core/domain/models/types";
-import { MAYLAANAI_INTRODUCTION } from "@/features/language/greetings";
+import { MAYLAANAI_INTRODUCTION, MAYLAANAI_INTRODUCTION_TA } from "@/features/language/greetings";
 import { DEMO_COMPANY_ID } from "@/shared/lib/demoCard";
 
 const company = { name: "Acme Corp", website: "https://acme.example" } as Company;
@@ -131,16 +131,54 @@ MaylaanAI — by Pagalava Data Analytics Pvt. Ltd. | A Women-Led Deep-Tech Ventu
     expect(result).not.toContain("VoiceCard AI");
   });
 
-  it("is NOT machine-applied to other languages — Tamil keeps its existing authored/DB/default chain", () => {
-    const ta = resolveGreeting(null, maylaanCompany, employee, "ta");
-    expect(ta).not.toBe(APPROVED_INTRODUCTION);
-    expect(ta).toMatch(/வணக்கம்/); // default chain (or the DB's authored Tamil at runtime)
+  // The approved TAMIL introduction (supplied 2026-09-01) is now the parallel
+  // per-company override for Tamil visitors — a separate code-authored
+  // constant, NOT a translation of the English one. Duplicated verbatim so any
+  // edit to the authoritative constant fails this suite loudly.
+  const APPROVED_INTRODUCTION_TA = `வணக்கம்.
+
+Pagalava Data Analytics Private Limited சார்பாக எங்களுடைய சேவைகளை உங்களுக்கு தற்பொழுது அறிமுகப்படுத்துகிறோம்.
+
+Pagalava Data Analytics என்பது ஒரு Women-led Deep Tech Startup நிறுவனம்.
+
+நடுத்தர நிறுவனங்களுக்கு தேவையான செயற்கை நுண்ணறிவு தீர்வுகளை Technology as a Service (TaaS) முறையில் வழங்குகிறோம்.
+
+TaaS என்பது நிறுவனங்கள் தங்களுக்கு தேவையான தொழில்நுட்ப வசதிகளை (Software, Hardware, AI Models, Data Analytics போன்றவை) சொந்தமாக வாங்காமல், சேவையாக வாடகை முறையில் பயன்படுத்தும் மாதிரி ஆகும்.
+
+TaaS எப்படி வேலை செய்கிறது: செயற்கை நுண்ணறிவு தரவுகளை பகுப்பாய்வு செய்து, முடிவெடுக்க உதவும் Machine Learning மாடல்களை மற்றும் Big Data தரவுகளை சேகரித்து, சேமித்து, பகுப்பாய்வு செய்து, Cloud Platform மூலம் வழங்கப்படுகின்றன
+
+இதனால் நிறுவனங்கள் பெரிய முதலீடு இல்லாமலேயே, நவீன தொழில்நுட்பத்தை பயன்படுத்த முடியும்.
+
+சிறு, குறு, நடுத்தர தொழில்கள், துறைக்கு TaaS ன் பயன் பாடுகள் பின்வருமாறு: ஒன்று, குறைந்த முதலீடு, இரண்டாவது, scalability, மூன்றாவது, AI-Powered முடிவெடுத்தல் - வாடிக்கையாளர் நடத்தை, விற்பனை போக்கு போன்றவற்றை பகுப்பாய்வு செய்து சிறந்த வணிக முடிவுகள் எடுக்க உதவுகிறது. நான்காவது, Inventory & Supply Chain Management – Big Data மூலம் இருப்பு நிர்வாகம், தேவை கணிப்பு (Demand Forecasting) துல்லியமாகிறது. ஐன்தாவது, போட்டித்திறன் – பெரிய நிறுவனங்களுக்கு இணையான தொழில்நுட்ப வசதிகளை, குறைந்த செலவில் சிறு தொழில்கள் பெற முடிகிறது.
+
+சுருக்கமாக, TaaS என்பது MSMEகளுக்கு சேவைகள் மூலம் அவற்றின் வளர்ச்சிக்கும் போட்டித்திறனுக்கும் பெரிதும் உதவுகிறது.`;
+
+  it("returns the approved TAMIL introduction EXACTLY for MaylaanAI's Tamil visitors, and it wins over a DB greeting", () => {
+    expect(resolveGreeting(null, maylaanCompany, employee, "ta")).toBe(APPROVED_INTRODUCTION_TA);
+    expect(resolveGreeting(agentWithDbGreeting, maylaanCompany, employee, "ta")).toBe(APPROVED_INTRODUCTION_TA);
+    expect(MAYLAANAI_INTRODUCTION_TA).toBe(APPROVED_INTRODUCTION_TA);
   });
 
-  it("does NOT leak to other companies", () => {
-    const other = resolveGreeting(null, { ...company, id: "99999999-9999-9999-9999-999999999999" } as Company, employee, "en");
-    expect(other).not.toBe(APPROVED_INTRODUCTION);
-    expect(other).toMatch(/Hello/);
+  it("keeps the English and Tamil approved introductions as distinct content — the Tamil one is not the English one, and vice versa", () => {
+    expect(APPROVED_INTRODUCTION_TA).not.toBe(APPROVED_INTRODUCTION);
+    expect(resolveGreeting(null, maylaanCompany, employee, "ta")).not.toBe(APPROVED_INTRODUCTION);
+    expect(resolveGreeting(null, maylaanCompany, employee, "en")).not.toBe(APPROVED_INTRODUCTION_TA);
+  });
+
+  it("neither approved introduction leaks to other companies (English OR Tamil)", () => {
+    const otherId = { ...company, id: "99999999-9999-9999-9999-999999999999" } as Company;
+    const otherEn = resolveGreeting(null, otherId, employee, "en");
+    expect(otherEn).not.toBe(APPROVED_INTRODUCTION);
+    expect(otherEn).toMatch(/Hello/);
+    const otherTa = resolveGreeting(null, otherId, employee, "ta");
+    expect(otherTa).not.toBe(APPROVED_INTRODUCTION_TA);
+    expect(otherTa).toMatch(/வணக்கம்/); // the generic default Tamil greeting, not the approved intro
+  });
+
+  it("the other display languages (hi/te/ml/kn) are NOT given the approved Tamil intro — it is Tamil-only", () => {
+    for (const lang of ["hi", "te", "ml", "kn"] as const) {
+      expect(resolveGreeting(null, maylaanCompany, employee, lang)).not.toBe(APPROVED_INTRODUCTION_TA);
+    }
   });
 });
 

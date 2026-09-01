@@ -40,7 +40,8 @@
     "shareQR": "Share QR",
     "close": "Close",
     "pauseVoice": "Pause",
-    "resumeVoice": "Resume"
+    "resumeVoice": "Resume",
+    "replay": "Replay"
   },
   "sections": {
     "tryAsking": "Try asking",
@@ -54,6 +55,7 @@
     "elevator": "Elevator Pitch",
     "product": "Service Pitch",
     "usp": "Why Us",
+    "smartCard": "Smart AI Lead Business Card",
     "playAria": "Play {label}",
     "error": "Could not play the pitch — please try again.",
     "pauseAria": "Pause {label}",

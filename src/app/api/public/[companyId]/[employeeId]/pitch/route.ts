@@ -7,7 +7,7 @@ import { isEmployeeCardVisible } from "@/shared/lib/employeeVisibility";
 import { checkRateLimitDistributed } from "@/shared/lib/rateLimit";
 import { resolveRequestLanguage, resolveGreeting } from "@/features/language/server";
 import { agentRepo } from "@/core/infrastructure/bootstrap/assistantRuntime";
-import { composePitchScript, isPitchType, PitchSourceData } from "@/features/voice/lib/pitchScripts";
+import { composePitchScript, isPitchType, PitchSourceData, SMART_AI_LEAD_BUSINESS_CARD_TA, SMART_AI_LEAD_BUSINESS_CARD_TYPE } from "@/features/voice/lib/pitchScripts";
 import { GEMINI_TTS_MODEL, GEMINI_TTS_VOICE, isConfiguredKey, pcmToWav, renderGeminiPcm } from "@/shared/lib/tts/ttsBackends";
 
 export const dynamic = "force-dynamic";
@@ -76,10 +76,19 @@ export async function GET(req: NextRequest, { params }: { params: { companyId: s
   // what the phone path speaks), not a composed pitch, and the LISTEN grid
   // must not grow a fourth button.
   const isIntro = type === "intro";
-  if (!isIntro && !isPitchType(type)) {
+  // "smart_ai_lead_business_card" (2026-09-01) is a fixed, approved TAMIL-ONLY
+  // recorded item — like the intro, it rides the whole persist-then-serve
+  // cache + Gemini/OpenAI/browser-TTS fallback stack, but is deliberately NOT
+  // a PitchType (its script is a fixed constant, not a composed pitch). Its
+  // content is Tamil regardless of the visitor's UI language, so its audio
+  // identity below is pinned to "ta" (contentLanguage) — one Tamil asset,
+  // always the Gemini voice, never mis-rendered through OpenAI as gibberish.
+  const isSmartCard = type === SMART_AI_LEAD_BUSINESS_CARD_TYPE;
+  if (!isIntro && !isSmartCard && !isPitchType(type)) {
     return NextResponse.json({ message: "Unknown pitch type" }, { status: 400 });
   }
   const language = resolveRequestLanguage(req.nextUrl.searchParams.get("lang"));
+  const contentLanguage = isSmartCard ? "ta" : language;
   const wantsScript = req.nextUrl.searchParams.get("format") === "script";
 
   if (!(await enforcePitchRateLimit(req))) {
@@ -118,11 +127,15 @@ export async function GET(req: NextRequest, { params }: { params: { companyId: s
     // approved MAYLAANAI_INTRODUCTION for the demo company's English, the
     // approved Tamil greeting for Tamil) — so the recorded intro and a
     // phone caller's opening can never drift apart.
-    const script = isIntro ? resolveGreeting(agent, company, employee, language) : composePitchScript(type, language, source);
+    const script = isIntro
+      ? resolveGreeting(agent, company, employee, language)
+      : isSmartCard
+        ? SMART_AI_LEAD_BUSINESS_CARD_TA
+        : composePitchScript(type, language, source);
 
     if (wantsScript) {
       return NextResponse.json(
-        { script, language },
+        { script, language: contentLanguage },
         // Shorter than the audio cache: the script is cheap to recompose
         // and is only fetched on the fallback path.
         { headers: { "Cache-Control": "public, max-age=300, s-maxage=3600" } }
@@ -137,15 +150,15 @@ export async function GET(req: NextRequest, { params }: { params: { companyId: s
     // the pre-2026-08-19 keys that carried only the provider implicitly —
     // old objects simply age out unused; EN had nothing stored, TA is
     // re-warmed post-deploy.)
-    const mp3Path = `pitch/${companyId}/${employeeId}/${type}.${language}.${scriptHash}.openai.tts-1-hd.nova.mp3`;
-    const geminiPath = `pitch/${companyId}/${employeeId}/${type}.${language}.${scriptHash}.gemini.${GEMINI_TTS_MODEL}.${GEMINI_TTS_VOICE}.wav`;
-    const useGemini = language === "ta" && isConfiguredKey(process.env.GEMINI_API_KEY);
+    const mp3Path = `pitch/${companyId}/${employeeId}/${type}.${contentLanguage}.${scriptHash}.openai.tts-1-hd.nova.mp3`;
+    const geminiPath = `pitch/${companyId}/${employeeId}/${type}.${contentLanguage}.${scriptHash}.gemini.${GEMINI_TTS_MODEL}.${GEMINI_TTS_VOICE}.wav`;
+    const useGemini = contentLanguage === "ta" && isConfiguredKey(process.env.GEMINI_API_KEY);
 
     // Content identity for conditional requests: the URL never changes when
     // content does (the hash lives in the storage key), so the ETag is what
     // lets a returning browser revalidate its cached multi-megabyte WAV
     // with an empty 304 instead of re-downloading it after max-age expires.
-    const etag = `"${type}-${language}-${scriptHash}-${useGemini ? "gemini" : "openai"}"`;
+    const etag = `"${type}-${contentLanguage}-${scriptHash}-${useGemini ? "gemini" : "openai"}"`;
     if (req.headers.get("if-none-match") === etag) {
       return notModifiedResponse(etag);
     }

@@ -40,7 +40,8 @@
     "shareQR": "QR-ஐப் பகிரவும்",
     "close": "மூடு",
     "pauseVoice": "இடைநிறுத்து",
-    "resumeVoice": "தொடருங்கள்"
+    "resumeVoice": "தொடருங்கள்",
+    "replay": "மீண்டும் கேட்க"
   },
   "sections": {
     "tryAsking": "இதைக் கேளுங்கள்",
@@ -54,6 +55,7 @@
     "elevator": "அறிமுக உரை",
     "product": "சேவை உரை",
     "usp": "எங்கள் சிறப்பு",
+    "smartCard": "Smart AI Lead Business Card",
     "playAria": "{label} இயக்கவும்",
     "error": "உரையை இயக்க முடியவில்லை — மீண்டும் முயற்சிக்கவும்.",
     "pauseAria": "{label} இடைநிறுத்து",

@@ -40,7 +40,8 @@
     "shareQR": "QR പങ്കിടുക",
     "close": "അടയ്ക്കുക",
     "pauseVoice": "താൽക്കാലികമായി നിർത്തൂ",
-    "resumeVoice": "തുടരൂ"
+    "resumeVoice": "തുടരൂ",
+    "replay": "വീണ്ടും കേൾക്കുക"
   },
   "sections": {
     "tryAsking": "ചോദിച്ചു നോക്കൂ",
@@ -54,6 +55,7 @@
     "elevator": "പരിചയ പിച്ച്",
     "product": "സേവന പിച്ച്",
     "usp": "ഞങ്ങളുടെ പ്രത്യേകത",
+    "smartCard": "Smart AI Lead Business Card",
     "playAria": "{label} പ്ലേ ചെയ്യുക",
     "error": "പിച്ച് പ്ലേ ചെയ്യാനായില്ല — വീണ്ടും ശ്രമിക്കുക.",
     "pauseAria": "{label} നിർത്തൂ",
