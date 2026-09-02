@@ -101,18 +101,17 @@ describe("PublicBusinessCard — exactly one card fetch, in the stored language"
     const pitchCalls = pitchRequests.map((r) => r.url);
     // Five assets: the recorded introduction (2026-08-19 spec — its first
     // render must happen here in the background, never on the Play tap), the
-    // three Listen pitches, and the Tamil-only Smart AI Lead Business Card
-    // (2026-09-01).
+    // three Listen pitches, and the Smart AI Lead Business Card (2026-09-01).
     expect(pitchCalls).toHaveLength(5);
     for (const type of ["intro", "elevator", "product", "usp", "smart_ai_lead_business_card"]) {
       expect(pitchCalls).toContainEqual(expect.stringContaining(`type=${type}`));
     }
-    // The confirmed-language assets warm in en; the Smart AI Lead Business Card
-    // is Tamil-only content, so it warms in ta regardless of the UI language.
-    for (const type of ["intro", "elevator", "product", "usp"]) {
+    // On this English card, every asset warms in en — including the Smart AI
+    // Lead Business Card, whose English request resolves to its English asset
+    // (a Tamil card would instead warm smart_ai_lead_business_card at lang=ta).
+    for (const type of ["intro", "elevator", "product", "usp", "smart_ai_lead_business_card"]) {
       expect(pitchRequests.find((r) => r.url.includes(`type=${type}`))!.url).toContain("lang=en");
     }
-    expect(pitchRequests.find((r) => r.url.includes("type=smart_ai_lead_business_card"))!.url).toContain("lang=ta");
 
     // Only the introduction's BODY is downloaded. Pulling all four made a
     // card load cost 10.7MB before the visitor tapped anything (measured in

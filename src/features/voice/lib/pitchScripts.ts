@@ -13,13 +13,13 @@ import { DEMO_COMPANY_ID } from "@/shared/lib/demoCard";
  */
 export const MAYLAANAI_PITCHES: Record<"en" | "ta", Record<PitchType, string>> = {
   en: {
-    elevator: `MaylaanAI is the deep-tech flagship of Pagalava Data Analytics Private Limited, a proudly women-led Indian startup, built on the belief that Big Data and AI should work as hard as you do.
+    elevator: `Hello! I represent Pagalava Data Analytics — a Women-led Deep Tech Startup.
 
-We understand that every business here is built on relationships, trust, and years of hard-earned experience. MaylaanAI doesn't replace that it strengthens it with data, so your decisions are backed by evidence, not just instinct.
+We provide AI solutions for mid-sized businesses through Technology as a Service (TaaS) — meaning companies can access powerful AI and Big Data technology on the Cloud, on a pay-as-you-use basis, without any heavy upfront investment.
 
-We don't just build technology. We build outcomes you can bank on.
+This gives MSMEs lower costs, smarter data-driven decisions, accurate inventory management, and the ability to compete with much larger companies.
 
-MaylaanAI is a Technology-as-a-Service (TaaS) platform built for Indian businesses, no heavy upfront investment, no hiring a data science team, no complicated IT overhead. Just results, delivered as a service, at a cost that makes sense for growing enterprises.`,
+In short — we help small businesses think big, by delivering AI as a Service!`,
     product: `Our Product Smart Lead Card provides More qualified leads, less time wasted chasing the wrong customer
 
 Our product Customer Experience Analytics Understands what keeps your customers coming back and why some walk away
@@ -92,18 +92,21 @@ export function isPitchType(value: string | null | undefined): value is PitchTyp
 /**
  * The "Smart AI Lead Business Card" recorded audio item (added 2026-09-01).
  *
- * A Tamil-only approved script — NOT a composed pitch, and deliberately NOT
- * added to PitchType/PITCH_TYPES/isPitchType (those stay the three composed
- * pitches). Like the recorded introduction, it is a fixed, byte-exact script
- * served through the same pitch route + persist-then-serve cache stack, under
- * its own type key so its cached audio can never collide with
- * elevator/product/usp/intro. Its content is Tamil regardless of the visitor's
- * UI language, so the route always renders it through the Gemini Tamil voice.
+ * Two approved, byte-exact scripts — English and Tamil — NOT composed pitches,
+ * and deliberately NOT added to PitchType/PITCH_TYPES/isPitchType (those stay
+ * the three composed pitches). Like the recorded introduction, each is a fixed
+ * script served through the same pitch route + persist-then-serve cache stack,
+ * under its own type key AND its own language, so an English request gets the
+ * English script/audio (OpenAI voice, the English provider) and a Tamil request
+ * gets the Tamil script/audio (Gemini voice) — separate cache identities that
+ * can never collide with each other or with elevator/product/usp/intro. Any
+ * non-English UI language resolves to Tamil (the only two authored scripts),
+ * via getSmartAiLeadBusinessCardScript below.
  *
- * Preserve the wording, spelling, spacing and line structure EXACTLY as
- * supplied — including the embedded English terms and the intentional double
- * spaces. This is approved content: never paraphrase, translate, shorten,
- * "grammar-fix", or normalize whitespace.
+ * Preserve the wording, spelling, spacing and line structure of BOTH scripts
+ * EXACTLY as supplied — including the embedded English terms and the intentional
+ * double spaces in the Tamil one. This is approved content: never paraphrase,
+ * translate, shorten, "grammar-fix", or normalize whitespace.
  */
 export const SMART_AI_LEAD_BUSINESS_CARD_TYPE = "smart_ai_lead_business_card";
 
@@ -128,6 +131,42 @@ Book an Appointment வழியாக, ஆறு தரவுகள் மூ�
 வாடிக்கையாளர் அல்லது Lead பெறப்பட்ட Contact Details தனை இரண்டு நாட்களாக பயன் படுத்தவில்லை எனில், அவர்களுக்கு ஒரு நினைவூட்டல் email அல்லது WhatsApp அனுப்பப்படும்.
 
 பெறப்பட்ட அணைத்து தரவுகளையும் உங்களுக்கு Email அல்லது Whatsapp அல்லது Dash Board மூலம் தெரிய படுத்தும்.`;
+
+export const SMART_AI_LEAD_BUSINESS_CARD_EN = `Smart AI Lead Business Card.
+
+This is our AI-powered Business Card.
+
+You can use this Business Card anytime you need it.
+
+When you tap this AI Business Card or share it via QR Code with your existing or new customers and leads, your contact details are instantly saved to their phone's contact list.
+
+It then introduces and explains your business to them.
+
+After that, it instantly answers any questions they ask.
+
+If needed, it also helps them connect with you directly through WhatsApp, Email, or by booking an appointment.
+
+Through the "Book an Appointment" feature, a Lead Assessment is done based on six key data points.
+
+Your Dashboard lets you track how many times a customer or lead has interacted with the AI to learn about your product or service.
+
+If a customer or lead's contact details remain unused for two days, an automatic reminder is sent to them via Email or WhatsApp.
+
+All the data collected is shared with you through Email, WhatsApp, or your Dashboard.`;
+
+/**
+ * Resolves the Smart AI Lead Business Card script + its content language for a
+ * requested UI language. English gets its own English script (and, downstream,
+ * its own English-voice audio and cache key); every other language resolves to
+ * the approved Tamil script (the only two authored). The returned `language` is
+ * what the route uses for the cache key, ETag and provider routing, so English
+ * and Tamil can never share an audio asset.
+ */
+export function getSmartAiLeadBusinessCardScript(language: string): { language: "en" | "ta"; script: string } {
+  return language === "en"
+    ? { language: "en", script: SMART_AI_LEAD_BUSINESS_CARD_EN }
+    : { language: "ta", script: SMART_AI_LEAD_BUSINESS_CARD_TA };
+}
 
 export interface PitchSourceData {
   /** Enables per-company authored overrides (see

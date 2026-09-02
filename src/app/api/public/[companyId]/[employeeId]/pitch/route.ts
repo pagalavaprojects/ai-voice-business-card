@@ -7,7 +7,7 @@ import { isEmployeeCardVisible } from "@/shared/lib/employeeVisibility";
 import { checkRateLimitDistributed } from "@/shared/lib/rateLimit";
 import { resolveRequestLanguage, resolveGreeting } from "@/features/language/server";
 import { agentRepo } from "@/core/infrastructure/bootstrap/assistantRuntime";
-import { composePitchScript, isPitchType, PitchSourceData, SMART_AI_LEAD_BUSINESS_CARD_TA, SMART_AI_LEAD_BUSINESS_CARD_TYPE } from "@/features/voice/lib/pitchScripts";
+import { composePitchScript, isPitchType, PitchSourceData, getSmartAiLeadBusinessCardScript, SMART_AI_LEAD_BUSINESS_CARD_TYPE } from "@/features/voice/lib/pitchScripts";
 import { GEMINI_TTS_MODEL, GEMINI_TTS_VOICE, isConfiguredKey, pcmToWav, renderGeminiPcm } from "@/shared/lib/tts/ttsBackends";
 
 export const dynamic = "force-dynamic";
@@ -76,19 +76,24 @@ export async function GET(req: NextRequest, { params }: { params: { companyId: s
   // what the phone path speaks), not a composed pitch, and the LISTEN grid
   // must not grow a fourth button.
   const isIntro = type === "intro";
-  // "smart_ai_lead_business_card" (2026-09-01) is a fixed, approved TAMIL-ONLY
-  // recorded item — like the intro, it rides the whole persist-then-serve
-  // cache + Gemini/OpenAI/browser-TTS fallback stack, but is deliberately NOT
-  // a PitchType (its script is a fixed constant, not a composed pitch). Its
-  // content is Tamil regardless of the visitor's UI language, so its audio
-  // identity below is pinned to "ta" (contentLanguage) — one Tamil asset,
-  // always the Gemini voice, never mis-rendered through OpenAI as gibberish.
+  // "smart_ai_lead_business_card" (2026-09-01) is a fixed, approved recorded
+  // item — like the intro, it rides the whole persist-then-serve cache +
+  // Gemini/OpenAI/browser-TTS fallback stack, but is deliberately NOT a
+  // PitchType (its script is a fixed constant, not a composed pitch). It has
+  // its OWN English and Tamil scripts: an English request renders the English
+  // script through the English (OpenAI) voice, a Tamil (or any non-English)
+  // request renders the Tamil script through Gemini — separate cache identities
+  // (contentLanguage below) that can never cross-contaminate.
   const isSmartCard = type === SMART_AI_LEAD_BUSINESS_CARD_TYPE;
   if (!isIntro && !isSmartCard && !isPitchType(type)) {
     return NextResponse.json({ message: "Unknown pitch type" }, { status: 400 });
   }
   const language = resolveRequestLanguage(req.nextUrl.searchParams.get("lang"));
-  const contentLanguage = isSmartCard ? "ta" : language;
+  const smartCard = isSmartCard ? getSmartAiLeadBusinessCardScript(language) : null;
+  // The language the audio is actually IN — drives the cache key, ETag and
+  // provider routing. For the smart card it is the resolved en/ta; otherwise
+  // the requested language unchanged.
+  const contentLanguage = smartCard ? smartCard.language : language;
   const wantsScript = req.nextUrl.searchParams.get("format") === "script";
 
   if (!(await enforcePitchRateLimit(req))) {
@@ -130,7 +135,7 @@ export async function GET(req: NextRequest, { params }: { params: { companyId: s
     const script = isIntro
       ? resolveGreeting(agent, company, employee, language)
       : isSmartCard
-        ? SMART_AI_LEAD_BUSINESS_CARD_TA
+        ? smartCard!.script
         : composePitchScript(type, language, source);
 
     if (wantsScript) {

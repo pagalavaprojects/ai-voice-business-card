@@ -6,7 +6,7 @@
  * artifact), and each type stays in its duration band (elevator ≈30s,
  * product ≈40s, USP ≈5s at typical TTS pace) in every supported language.
  */
-import { composePitchScript, isPitchType, PITCH_TYPES, PitchSourceData, MAYLAANAI_PITCHES, SMART_AI_LEAD_BUSINESS_CARD_TA, SMART_AI_LEAD_BUSINESS_CARD_TYPE } from "@/features/voice/lib/pitchScripts";
+import { composePitchScript, isPitchType, PITCH_TYPES, PitchSourceData, MAYLAANAI_PITCHES, SMART_AI_LEAD_BUSINESS_CARD_TA, SMART_AI_LEAD_BUSINESS_CARD_EN, SMART_AI_LEAD_BUSINESS_CARD_TYPE, getSmartAiLeadBusinessCardScript } from "@/features/voice/lib/pitchScripts";
 import { SUPPORTED_LANGUAGES } from "@/features/language/config";
 import { DEMO_COMPANY_ID } from "@/shared/lib/demoCard";
 
@@ -49,10 +49,32 @@ describe("isPitchType", () => {
   });
 });
 
-describe("Smart AI Lead Business Card — approved Tamil-only recorded script (2026-09-01)", () => {
+describe("Smart AI Lead Business Card — approved English + Tamil recorded scripts (2026-09-01)", () => {
   // Duplicated VERBATIM so any edit to the authoritative constant — a
   // paraphrase, a trimmed sentence, a "spelling fix", a collapsed double
   // space — fails this test loudly. This is approved content.
+  const APPROVED_EN = `Smart AI Lead Business Card.
+
+This is our AI-powered Business Card.
+
+You can use this Business Card anytime you need it.
+
+When you tap this AI Business Card or share it via QR Code with your existing or new customers and leads, your contact details are instantly saved to their phone's contact list.
+
+It then introduces and explains your business to them.
+
+After that, it instantly answers any questions they ask.
+
+If needed, it also helps them connect with you directly through WhatsApp, Email, or by booking an appointment.
+
+Through the "Book an Appointment" feature, a Lead Assessment is done based on six key data points.
+
+Your Dashboard lets you track how many times a customer or lead has interacted with the AI to learn about your product or service.
+
+If a customer or lead's contact details remain unused for two days, an automatic reminder is sent to them via Email or WhatsApp.
+
+All the data collected is shared with you through Email, WhatsApp, or your Dashboard.`;
+
   const APPROVED = `Smart AI Lead Business Card.
 
 இது செயற்கை நுண்ணறிவு மூலம் இயங்கும் எங்களுடைய  Business Card ஆகும்.
@@ -75,15 +97,31 @@ Book an Appointment வழியாக, ஆறு தரவுகள் மூ�
 
 பெறப்பட்ட அணைத்து தரவுகளையும் உங்களுக்கு Email அல்லது Whatsapp அல்லது Dash Board மூலம் தெரிய படுத்தும்.`;
 
-  it("the exported constant matches the approved script EXACTLY (single source of truth)", () => {
+  it("both exported constants match their approved scripts EXACTLY (single source of truth)", () => {
+    expect(SMART_AI_LEAD_BUSINESS_CARD_EN).toBe(APPROVED_EN);
     expect(SMART_AI_LEAD_BUSINESS_CARD_TA).toBe(APPROVED);
   });
 
-  it("is a real Tamil script, distinct from every composed pitch and from the three approved pitches", () => {
-    expect(SMART_AI_LEAD_BUSINESS_CARD_TA).toMatch(/[஀-௿]/); // contains Tamil
+  it("English and Tamil are genuinely different content — never the same string", () => {
+    expect(SMART_AI_LEAD_BUSINESS_CARD_EN).not.toBe(SMART_AI_LEAD_BUSINESS_CARD_TA);
+    expect(SMART_AI_LEAD_BUSINESS_CARD_EN).not.toMatch(/[஀-௿]/); // English has no Tamil
+    expect(SMART_AI_LEAD_BUSINESS_CARD_TA).toMatch(/[஀-௿]/); // Tamil does
+  });
+
+  it("the resolver returns English for en, Tamil for ta, and Tamil for every other language", () => {
+    expect(getSmartAiLeadBusinessCardScript("en")).toEqual({ language: "en", script: SMART_AI_LEAD_BUSINESS_CARD_EN });
+    expect(getSmartAiLeadBusinessCardScript("ta")).toEqual({ language: "ta", script: SMART_AI_LEAD_BUSINESS_CARD_TA });
+    for (const lang of ["hi", "te", "ml", "kn"]) {
+      expect(getSmartAiLeadBusinessCardScript(lang)).toEqual({ language: "ta", script: SMART_AI_LEAD_BUSINESS_CARD_TA });
+    }
+  });
+
+  it("neither script collides with a composed pitch or one of the three approved pitches", () => {
     for (const type of PITCH_TYPES) {
-      expect(SMART_AI_LEAD_BUSINESS_CARD_TA).not.toBe(MAYLAANAI_PITCHES.ta[type]);
-      expect(SMART_AI_LEAD_BUSINESS_CARD_TA).not.toBe(MAYLAANAI_PITCHES.en[type]);
+      for (const script of [SMART_AI_LEAD_BUSINESS_CARD_EN, SMART_AI_LEAD_BUSINESS_CARD_TA]) {
+        expect(script).not.toBe(MAYLAANAI_PITCHES.ta[type]);
+        expect(script).not.toBe(MAYLAANAI_PITCHES.en[type]);
+      }
     }
   });
 
@@ -171,13 +209,13 @@ describe("composePitchScript", () => {
     // "grammar fix", a dropped sentence) fails this suite loudly. The
     // supplied wording, punctuation, capitalization, product names and
     // ordering are the spec.
-    const APPROVED_EN_ELEVATOR = `MaylaanAI is the deep-tech flagship of Pagalava Data Analytics Private Limited, a proudly women-led Indian startup, built on the belief that Big Data and AI should work as hard as you do.
+    const APPROVED_EN_ELEVATOR = `Hello! I represent Pagalava Data Analytics — a Women-led Deep Tech Startup.
 
-We understand that every business here is built on relationships, trust, and years of hard-earned experience. MaylaanAI doesn't replace that it strengthens it with data, so your decisions are backed by evidence, not just instinct.
+We provide AI solutions for mid-sized businesses through Technology as a Service (TaaS) — meaning companies can access powerful AI and Big Data technology on the Cloud, on a pay-as-you-use basis, without any heavy upfront investment.
 
-We don't just build technology. We build outcomes you can bank on.
+This gives MSMEs lower costs, smarter data-driven decisions, accurate inventory management, and the ability to compete with much larger companies.
 
-MaylaanAI is a Technology-as-a-Service (TaaS) platform built for Indian businesses, no heavy upfront investment, no hiring a data science team, no complicated IT overhead. Just results, delivered as a service, at a cost that makes sense for growing enterprises.`;
+In short — we help small businesses think big, by delivering AI as a Service!`;
 
     const APPROVED_EN_PRODUCT = `Our Product Smart Lead Card provides More qualified leads, less time wasted chasing the wrong customer
 

@@ -2,56 +2,39 @@ import { LanguageCode } from "./config";
 
 /**
  * MaylaanAI's FINAL APPROVED English introduction for the General AI Voice
- * Card ("Talk with AI") opening — supplied verbatim as the source of truth
- * and wired as an authored per-company override in resolveGreeting (it wins
- * over the DB greeting for this company's English visitors). Wording,
- * punctuation, ordering and capitalization are preserved EXACTLY as
- * approved — do not paraphrase, trim, reorder, or "grammar-fix" any of it,
- * and do not machine-translate it (the approved Tamil introduction is its
- * own supplied verbatim constant — MAYLAANAI_INTRODUCTION_TA below — not a
- * translation of this one). Note: this text intentionally says "their
- * competitors" where the Why Us pitch says "your competitors" — both are
- * as supplied. This introduction must NEVER be used as the qualification
- * opening — qualification starts directly with Q1 via its own
- * QUALIFICATION_CALL_OPENING override.
+ * Card ("Talk with AI" / "Play Introduction") opening — supplied verbatim as
+ * the source of truth and wired as a code-authored per-company override in
+ * resolveGreeting (it wins over the DB greeting for this company's English
+ * visitors), the English counterpart of MAYLAANAI_INTRODUCTION_TA. Wording,
+ * spelling, punctuation, the numbered list, the en-dashes and line structure
+ * are preserved EXACTLY as approved — do not paraphrase, trim, reorder,
+ * renumber, "grammar-fix", or machine-translate any of it. This introduction
+ * must NEVER be used as the qualification opening — qualification starts
+ * directly with Q1 via its own QUALIFICATION_CALL_OPENING override.
  */
-export const MAYLAANAI_INTRODUCTION = `MaylaanAI
+export const MAYLAANAI_INTRODUCTION = `Hello.
 
-Your Business Insight, Backed by Deep-Tech
+On behalf of Pagalava Data Analytics Private Limited, we would like to introduce our services to you.
 
-MaylaanAI is the deep-tech flagship of Pagalava Data Analytics Private Limited, a proudly women-led Indian startup, built on the belief that Big Data and AI should work as hard as you do.
+Pagalava Data Analytics is a Women-led Deep Tech Startup company.
 
-We understand that every business here is built on relationships, trust, and years of hard-earned experience. MaylaanAI doesn't replace that it strengthens it with data, so your decisions are backed by evidence, not just instinct.
+We provide the artificial intelligence solutions needed by mid-sized businesses through the Technology as a Service (TaaS) model.
 
-We don't just build technology. We build outcomes you can bank on.
+TaaS is a model where companies use the technology facilities they need (Software, Hardware, AI Models, Data Analytics, etc.) on a rental/subscription basis, instead of purchasing them outright.
 
-MaylaanAI is a Technology-as-a-Service (TaaS) platform built for Indian businesses, no heavy upfront investment, no hiring a data science team, no complicated IT overhead. Just results, delivered as a service, at a cost that makes sense for growing enterprises.
+How TaaS works: Machine Learning models that analyze data with artificial intelligence to support decision-making, along with Big Data that is collected, stored, and analyzed, are delivered through Cloud Platforms.
 
-Our Product Smart Lead Card provides More qualified leads, less time wasted chasing the wrong customer
+As a result, companies can use modern technology without needing large investments.
 
-Our product Customer Experience Analytics Understands what keeps your customers coming back and why some walk away
+The benefits of TaaS for the Micro, Small, and Medium Enterprises (MSME) sector are as follows:
 
-Our product Predictive Business Intelligence Plans your stock, sales, and strategy ahead of the market, not behind it
+1. Lower Investment – No need for heavy upfront capital.
+2. Scalability – Services can be scaled up or down as the business grows.
+3. AI-Powered Decision Making – Analyzing customer behavior and sales trends to support better business decisions.
+4. Inventory & Supply Chain Management – Big Data enables accurate inventory management and demand forecasting.
+5. Competitiveness – Small businesses gain access to the same advanced technology as large corporations, at a much lower cost.
 
-Our Marketing Performance Optimization Knows exactly which ad, which channel, which rupee is actually working
-
-Our product Operations & Bottleneck Analysis, Finds where time and money are leaking in your operations and plug it.
-
-Our product Fraud Detection & Risk Management Protects your business and your customers' trust, round the clock
-
-Every business you run generates a goldmine of data — every bill, every customer call, every order.
-
-But between managing staff, suppliers, and customers, who has the time to mine it?
-
-That's where we step in like a trusted partner, not an outside vendor.
-
-We don't hand you complicated software and leave you to figure it out. We deliver plug-and-play intelligence watching your customers, predicting your numbers, optimizing your marketing spend, fixing your operational bottlenecks, and catching fraud, 24/7 so you can focus on what you do best: running your business.
-
-You don't buy AI. You subscribe to outcomes measurable, trackable, and worth every rupee.
-
-This is why growing businesses are choosing Pagalava — not merely to adopt technology, but to gain an edge their competitors don't have.
-
-MaylaanAI — by Pagalava Data Analytics Pvt. Ltd. | A Women-Led Deep-Tech Venture, Proudly Rooted in India`;
+In summary, TaaS greatly supports MSMEs' growth and competitiveness through accessible, service-based technology.`;
 
 /**
  * MaylaanAI's FINAL APPROVED Tamil introduction for the General AI Voice

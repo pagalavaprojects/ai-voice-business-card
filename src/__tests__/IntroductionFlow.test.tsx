@@ -318,8 +318,8 @@ describe("Replay — replays the recorded introduction, never Vapi/mic", () => {
   });
 });
 
-describe("Smart AI Lead Business Card — a Tamil-only pitch item beside Why Us", () => {
-  it("appears in the Listen row and, when tapped, plays the Tamil asset without starting Vapi — even on an English card", async () => {
+describe("Smart AI Lead Business Card — language-specific pitch item beside Why Us", () => {
+  it("on an ENGLISH card, tapping it plays the English asset (lang=en) without starting Vapi", async () => {
     await mountCard("en");
     await screen.findByText("Play Introduction");
     const btn = screen.getByTestId("pitch-smart_ai_lead_business_card");
@@ -327,7 +327,17 @@ describe("Smart AI Lead Business Card — a Tamil-only pitch item beside Why Us"
 
     fireEvent.click(btn);
     expect(FakeAudio.instances).toHaveLength(1);
-    // Tamil-only content: always requested at lang=ta, regardless of UI language.
+    expect(FakeAudio.instances[0].src).toContain("/pitch?type=smart_ai_lead_business_card&lang=en");
+    expect(FakeAudio.instances[0].src).not.toContain("lang=ta");
+    expect(startCall).not.toHaveBeenCalled();
+  });
+
+  it("on a TAMIL card, tapping it plays the Tamil asset (lang=ta) without starting Vapi", async () => {
+    await mountCard("ta");
+    await screen.findByText(taBundle.mic.playIntroduction);
+    const btn = screen.getByTestId("pitch-smart_ai_lead_business_card");
+    fireEvent.click(btn);
+    expect(FakeAudio.instances).toHaveLength(1);
     expect(FakeAudio.instances[0].src).toContain("/pitch?type=smart_ai_lead_business_card&lang=ta");
     expect(startCall).not.toHaveBeenCalled();
   });

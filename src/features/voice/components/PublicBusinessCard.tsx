@@ -334,10 +334,11 @@ export function PublicBusinessCard({
   // from. One prefetch per language per mount (ref), and never while the
   // demo fallback card is showing (card === null).
   const prefetchedPitchLangsRef = useRef<Set<string>>(new Set());
-  // The Smart AI Lead Business Card is Tamil-only, so unlike the per-language
-  // pitches its single asset is warmed exactly ONCE per mount — never again on
-  // a language switch (which would be a redundant fetch for the same ta asset).
-  const prefetchedSmartCardRef = useRef(false);
+  // The Smart AI Lead Business Card has only English and Tamil assets, so it is
+  // warmed once per RESOLVED language (en, or ta for every non-English UI
+  // language) — a language switch among ta/hi/te/ml/kn never re-warms the same
+  // ta asset.
+  const prefetchedSmartCardLangsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!card || !languageConfirmed || prefetchedPitchLangsRef.current.has(language)) return;
     prefetchedPitchLangsRef.current.add(language);
@@ -373,14 +374,14 @@ export function PublicBusinessCard({
         } as RequestInit).catch(() => undefined);
       }
 
-      // The Smart AI Lead Business Card is Tamil-only content — warm its single
-      // Tamil asset (a 1-byte range, exactly like the pitches above) regardless
-      // of the visitor's UI language, so a first tap is a CDN hit too. Warmed
-      // ONCE per mount (its content never varies by UI language), so a language
-      // switch does not re-fetch the same ta asset.
-      if (!prefetchedSmartCardRef.current) {
-        prefetchedSmartCardRef.current = true;
-        fetch(`/api/public/${companyId}/${employeeId}/pitch?type=smart_ai_lead_business_card&lang=ta`, {
+      // The Smart AI Lead Business Card — warm its language-appropriate asset (a
+      // 1-byte range, exactly like the pitches above) so a first tap is a CDN
+      // hit too. English resolves to the English asset, every other UI language
+      // to the Tamil one; warmed once per resolved language.
+      const smartLang = language === "en" ? "en" : "ta";
+      if (!prefetchedSmartCardLangsRef.current.has(smartLang)) {
+        prefetchedSmartCardLangsRef.current.add(smartLang);
+        fetch(`/api/public/${companyId}/${employeeId}/pitch?type=smart_ai_lead_business_card&lang=${smartLang}`, {
           priority: "low",
           cache: "no-store",
           headers: { Range: "bytes=0-0" },
@@ -492,11 +493,12 @@ export function PublicBusinessCard({
     // a mismatch means the visitor has since switched pitches, cancelled,
     // or changed language, and this pitch's late callbacks must do nothing.
     const session = pitchSessionRef.current;
-    // The Smart AI Lead Business Card is Tamil-only content — always request
-    // it (and voice its browser-TTS fallback) in Tamil, regardless of the
-    // visitor's UI language, so it plays through the Tamil voice and resolves
-    // to the single Tamil cache asset the route stores it under.
-    const pitchLang = type === "smart_ai_lead_business_card" ? "ta" : language;
+    // The Smart AI Lead Business Card has its own English and Tamil scripts:
+    // an English card requests the English asset (English voice + fallback), any
+    // other language requests the Tamil asset (Gemini voice) — matching the
+    // route's own en/ta resolution so the request, the browser-TTS fallback
+    // language and the cache identity all agree.
+    const pitchLang = type === "smart_ai_lead_business_card" ? (language === "en" ? "en" : "ta") : language;
     const pitchUrl = `/api/public/${companyId}/${employeeId}/pitch?type=${type}&lang=${encodeURIComponent(pitchLang)}`;
 
     // When the server can't produce the rendered MP3 (e.g. TTS credits

@@ -57,7 +57,7 @@ jest.mock("@/core/infrastructure/bootstrap/assistantRuntime", () => ({
 
 import { NextRequest } from "next/server";
 import { GET } from "@/app/api/public/[companyId]/[employeeId]/pitch/route";
-import { SMART_AI_LEAD_BUSINESS_CARD_TA } from "@/features/voice/lib/pitchScripts";
+import { SMART_AI_LEAD_BUSINESS_CARD_TA, SMART_AI_LEAD_BUSINESS_CARD_EN } from "@/features/voice/lib/pitchScripts";
 
 const COMPANY_ID = "company-1";
 const EMPLOYEE_ID = "employee-1";
@@ -516,12 +516,12 @@ describe("GET /api/public/{companyId}/{employeeId}/pitch", () => {
   });
 
   // ---- Smart AI Lead Business Card (type=smart_ai_lead_business_card) -----
-  // A fixed, approved TAMIL-ONLY recorded item. Like the intro it rides the
-  // whole cache/fallback stack, but its content is Tamil regardless of the
-  // ?lang= param, so it always renders through Gemini and caches under a
-  // single ta-scoped, type-scoped key that can never collide with the pitches
-  // or the intro.
-  describe("type=smart_ai_lead_business_card — the fixed Tamil-only recorded item", () => {
+  // A fixed, approved recorded item with its OWN English and Tamil scripts.
+  // Like the intro it rides the whole cache/fallback stack, but is NOT a
+  // PitchType. An English request must return the English script/English-voice
+  // audio; a Tamil (or any non-English) request the Tamil script/Gemini audio —
+  // separate cache identities that never cross-contaminate.
+  describe("type=smart_ai_lead_business_card — its own English and Tamil scripts", () => {
     beforeEach(() => {
       process.env = { ...ORIGINAL_ENV, OPENAI_API_KEY: "sk-real-test-key-1234567890", GEMINI_API_KEY: "AQ.real-looking-gemini-test-key" };
     });
@@ -535,23 +535,32 @@ describe("GET /api/public/{companyId}/{employeeId}/pitch", () => {
       }),
     };
 
-    it("format=script returns the approved Tamil script EXACTLY — and reports Tamil even when the request asked for English", async () => {
-      const res = await GET(req("type=smart_ai_lead_business_card&lang=en&format=script"), { params: { companyId: COMPANY_ID, employeeId: EMPLOYEE_ID } });
-      expect(res.status).toBe(200);
-      const body = await res.json();
-      expect(body.script).toBe(SMART_AI_LEAD_BUSINESS_CARD_TA);
-      // Tamil-only content: the route pins it to Tamil regardless of the param.
-      expect(body.language).toBe("ta");
+    it("format=script returns the ENGLISH script for lang=en, the TAMIL script for lang=ta — never crossed", async () => {
+      const en = await (await GET(req("type=smart_ai_lead_business_card&lang=en&format=script"), { params: { companyId: COMPANY_ID, employeeId: EMPLOYEE_ID } })).json();
+      expect(en.language).toBe("en");
+      expect(en.script).toBe(SMART_AI_LEAD_BUSINESS_CARD_EN);
+      expect(en.script).not.toBe(SMART_AI_LEAD_BUSINESS_CARD_TA);
+
+      const ta = await (await GET(req("type=smart_ai_lead_business_card&lang=ta&format=script"), { params: { companyId: COMPANY_ID, employeeId: EMPLOYEE_ID } })).json();
+      expect(ta.language).toBe("ta");
+      expect(ta.script).toBe(SMART_AI_LEAD_BUSINESS_CARD_TA);
+      expect(ta.script).not.toBe(SMART_AI_LEAD_BUSINESS_CARD_EN);
     });
 
-    it("renders through Gemini (the Tamil voice) and caches under a smart-card + ta scoped key, even with lang=en", async () => {
+    it("a non-English UI language (hi) resolves to the Tamil script, not English", async () => {
+      const hi = await (await GET(req("type=smart_ai_lead_business_card&lang=hi&format=script"), { params: { companyId: COMPANY_ID, employeeId: EMPLOYEE_ID } })).json();
+      expect(hi.language).toBe("ta");
+      expect(hi.script).toBe(SMART_AI_LEAD_BUSINESS_CARD_TA);
+    });
+
+    it("lang=ta renders through Gemini and caches under a smart-card + ta key", async () => {
       const fetchSpy = jest.fn().mockImplementation(async (url: string) => {
         if (String(url).includes("generativelanguage.googleapis.com")) return introGeminiSuccess;
         throw new Error("unexpected fetch: " + url);
       });
       global.fetch = fetchSpy as unknown as typeof fetch;
 
-      const res = await GET(req("type=smart_ai_lead_business_card&lang=en"), { params: { companyId: COMPANY_ID, employeeId: EMPLOYEE_ID } });
+      const res = await GET(req("type=smart_ai_lead_business_card&lang=ta"), { params: { companyId: COMPANY_ID, employeeId: EMPLOYEE_ID } });
 
       expect(res.status).toBe(200);
       expect(res.headers.get("Content-Type")).toBe("audio/wav");
@@ -559,21 +568,34 @@ describe("GET /api/public/{companyId}/{employeeId}/pitch", () => {
       expect(String(upload.mock.calls[0][1])).toMatch(/\/smart_ai_lead_business_card\.ta\.[0-9a-f]{8}\.gemini\./);
     });
 
-    it("resolves to a storage key distinct from the intro and the composed pitches", async () => {
+    it("lang=en renders through OpenAI (the English voice) and caches under a smart-card + en key — never the Tamil/Gemini one", async () => {
       const fetchSpy = jest.fn().mockImplementation(async (url: string) => {
-        if (String(url).includes("generativelanguage.googleapis.com")) return introGeminiSuccess;
+        if (String(url).includes("api.openai.com")) return { ok: true, arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer };
         throw new Error("unexpected fetch: " + url);
       });
       global.fetch = fetchSpy as unknown as typeof fetch;
 
+      const res = await GET(req("type=smart_ai_lead_business_card&lang=en"), { params: { companyId: COMPANY_ID, employeeId: EMPLOYEE_ID } });
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get("Content-Type")).toBe("audio/mpeg");
+      expect(fetchSpy.mock.calls.every(([u]) => String(u).includes("api.openai.com"))).toBe(true);
+      expect(String(upload.mock.calls[0][1])).toMatch(/\/smart_ai_lead_business_card\.en\.[0-9a-f]{8}\.openai\./);
+    });
+
+    it("English and Tamil resolve to DIFFERENT storage keys (no cross-language collision) and both differ from usp", async () => {
       await GET(req("type=smart_ai_lead_business_card&lang=ta"), { params: { companyId: COMPANY_ID, employeeId: EMPLOYEE_ID } });
-      const smartPath = download.mock.calls[0][0];
+      const taPath = download.mock.calls[0][0];
+      download.mockClear();
+      await GET(req("type=smart_ai_lead_business_card&lang=en"), { params: { companyId: COMPANY_ID, employeeId: EMPLOYEE_ID } });
+      const enPath = download.mock.calls[0][0];
       download.mockClear();
       await GET(req("type=usp&lang=ta"), { params: { companyId: COMPANY_ID, employeeId: EMPLOYEE_ID } });
       const uspPath = download.mock.calls[0][0];
 
-      expect(smartPath).toContain("smart_ai_lead_business_card.ta.");
-      expect(smartPath).not.toBe(uspPath);
+      expect(taPath).toContain("smart_ai_lead_business_card.ta.");
+      expect(enPath).toContain("smart_ai_lead_business_card.en.");
+      expect(new Set([taPath, enPath, uspPath]).size).toBe(3);
     });
   });
 });
