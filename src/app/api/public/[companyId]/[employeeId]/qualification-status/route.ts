@@ -2,8 +2,51 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/shared/lib/supabase";
 import { Logger } from "@/shared/lib/logger";
 import { checkRateLimitDistributed } from "@/shared/lib/rateLimit";
+import { toolRegistry } from "@/core/infrastructure/bootstrap/assistantRuntime";
+import { SupabaseConversationRepository } from "@/core/infrastructure/database/supabase/SupabaseConversationRepository";
+import { isSupportedLanguage } from "@/features/language/config";
 
 export const dynamic = "force-dynamic";
+
+const conversationRepo = new SupabaseConversationRepository();
+
+/**
+ * The per-question answer records the sequencing tool appends to
+ * qualification_notes ("Qn [YES|NO|MAYBE] (ISO): english answer"), parsed back
+ * out so the booking UI can show the visitor their OWN answers. Non-matching
+ * note lines (the AI's internal reasoning) are never exposed.
+ */
+function parseAnswers(notes: string | null | undefined): Array<{ n: number; c: string; a: string }> {
+  return (notes ?? "")
+    .split("\n")
+    .map((line: string) => /^Q(\d+) \[(YES|NO|MAYBE)\] \([^)]*\): (.*)$/.exec(line.trim()))
+    .filter((m: RegExpExecArray | null): m is RegExpExecArray => m !== null)
+    .map((m: RegExpExecArray) => ({ n: Number(m[1]), c: m[2], a: m[3] }));
+}
+
+/** Reads the answers recorded so far for a session's conversation (by the
+ * client-generated session id stored in conversations.vapi_call_id) — shared
+ * by the GET poll and the POST answer submission below. */
+async function readAnswers(companyId: string, employeeId: string, callId: string) {
+  const { data: conversation } = await supabaseAdmin
+    .from("conversations")
+    .select("id")
+    .eq("vapi_call_id", callId)
+    .eq("company_id", companyId)
+    .eq("employee_id", employeeId)
+    .maybeSingle();
+  if (!conversation) return { conversationId: null as string | null, answers: [] as Array<{ n: number; c: string; a: string }> };
+
+  const { data: lead } = await supabaseAdmin
+    .from("leads")
+    .select("qualification_notes")
+    .eq("conversation_id", conversation.id)
+    .eq("company_id", companyId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return { conversationId: conversation.id as string, answers: parseAnswers(lead?.qualification_notes) };
+}
 
 /**
  * Read-only poll the booking flow's voice-qualification step uses to learn
@@ -66,16 +109,7 @@ export async function GET(req: NextRequest, { params }: { params: { companyId: s
       .limit(1)
       .maybeSingle();
 
-    // The per-question answer records the sequencing tool appends to
-    // qualification_notes ("Qn [YES|NO|MAYBE] (ISO): english answer") —
-    // parsed back out so the booking UI can show the visitor their OWN
-    // answers. Non-matching note lines (the AI's internal reasoning) are
-    // never exposed.
-    const answers = (lead?.qualification_notes ?? "")
-      .split("\n")
-      .map((line: string) => /^Q(\d+) \[(YES|NO|MAYBE)\] \([^)]*\): (.*)$/.exec(line.trim()))
-      .filter((m: RegExpExecArray | null): m is RegExpExecArray => m !== null)
-      .map((m: RegExpExecArray) => ({ n: Number(m[1]), c: m[2], a: m[3] }));
+    const answers = parseAnswers(lead?.qualification_notes);
 
     // "Qualified" means genuine completion of all six questions — the
     // visitor has answered question 6 — not a lead-scoring byproduct.
@@ -89,5 +123,79 @@ export async function GET(req: NextRequest, { params }: { params: { companyId: s
   } catch (err) {
     Logger.warn("qualification-status lookup failed", { error: err instanceof Error ? err.message : String(err) });
     return NextResponse.json({ qualified: false, answers: [] });
+  }
+}
+
+/**
+ * Submits ONE qualification answer for the text/button (voiceless) booking
+ * flow. The visitor taps Yes/No/Maybe on screen; there is no Vapi call, no
+ * microphone, no TTS. The answer is classified and persisted by the SAME
+ * server-authoritative sequencing tool the live voice call uses
+ * (get_next_qualification_question) — so the recorded record, the dashboard
+ * funnel and this endpoint's own GET poll are all identical whether the six
+ * data points were answered by voice or by tapping. The client owns only an
+ * unguessable session id (its role is the voice flow's callId), stored in
+ * conversations.vapi_call_id so the GET above reads it back unchanged.
+ *
+ * Returns the authoritative answers array so the UI advances directly from the
+ * response — no polling needed. Forward-only and duplicate-safe are inherited
+ * from the tool: it no-ops a question already recorded and never regresses.
+ */
+export async function POST(req: NextRequest, { params }: { params: { companyId: string; employeeId: string } }) {
+  const identifier = req.headers.get("x-forwarded-for") || "unknown";
+  // Six answers per booking; this covers many visitors behind one NAT plus
+  // retries, while bounding session enumeration (the unguessable session id is
+  // the primary guard).
+  const { allowed } = await checkRateLimitDistributed(`qual-answer:${identifier}`, 120, 10 * 60_000);
+  if (!allowed) {
+    return NextResponse.json({ message: "Too many requests" }, { status: 429 });
+  }
+
+  const body = await req.json().catch(() => null);
+  const sessionId = typeof body?.sessionId === "string" ? body.sessionId : "";
+  const questionNumber = Number(body?.questionNumber);
+  const answer = typeof body?.answer === "string" ? body.answer : "";
+  const language = isSupportedLanguage(body?.language) ? body.language : undefined;
+
+  if (sessionId.length < 8 || sessionId.length > 128) {
+    return NextResponse.json({ message: "sessionId required" }, { status: 400 });
+  }
+  if (!Number.isInteger(questionNumber) || questionNumber < 1 || questionNumber > 6) {
+    return NextResponse.json({ message: "questionNumber must be 1-6" }, { status: 400 });
+  }
+  if (!answer || answer.length > 100) {
+    return NextResponse.json({ message: "answer required" }, { status: 400 });
+  }
+
+  try {
+    // One conversation row per session (keyed by the session id in the
+    // vapi_call_id column, exactly like a voice call's), so the lead the tool
+    // writes attaches by conversation_id and the GET poll resolves it.
+    const conversation = await conversationRepo.getOrCreateConversationByVapiCallId(params.companyId, params.employeeId, sessionId, language);
+
+    const tool = toolRegistry.getTool("get_next_qualification_question");
+    if (!tool) {
+      Logger.error("qualification-answer: get_next_qualification_question tool missing from registry");
+      return NextResponse.json({ message: "Qualification is temporarily unavailable." }, { status: 503 });
+    }
+
+    const result = (await tool.execute(
+      { last_answered_question: questionNumber, user_response: answer },
+      { companyId: params.companyId, employeeId: params.employeeId, conversationId: conversation.id, language }
+    )) as { action?: string };
+
+    // The tool has classified + persisted (idempotently); re-read the
+    // authoritative record so the UI advances from server truth, not a client
+    // guess. `accepted` is false only when the tap somehow failed to classify
+    // (impossible for the three canonical labels, but reported honestly).
+    const { answers } = await readAnswers(params.companyId, params.employeeId, sessionId);
+    const qualified = answers.some((a) => a.n === 6);
+    return NextResponse.json(
+      { qualified, answers, accepted: result?.action !== "reprompt" },
+      { headers: { "Cache-Control": "no-store" } }
+    );
+  } catch (err) {
+    Logger.warn("qualification-answer submission failed", { error: err instanceof Error ? err.message : String(err) });
+    return NextResponse.json({ message: "Could not record your answer — please try again." }, { status: 500 });
   }
 }

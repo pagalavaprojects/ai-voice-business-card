@@ -12,9 +12,8 @@
  * verified by direct code reading, not by a dedicated component test.
  */
 import "@testing-library/jest-dom";
-import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
+import { render, screen, fireEvent, act } from "@testing-library/react";
 import { PublicBusinessCard } from "@/features/voice/components/PublicBusinessCard";
-import { QUALIFICATION_CALL_OPENING, getQualificationCallOpening } from "@/features/voice/lib/qualificationScript";
 
 const startCall = jest.fn();
 
@@ -117,62 +116,24 @@ describe("PublicBusinessCard — mic button vs. qualification call wiring", () =
     expect(arg.systemPrompt).toBeUndefined();
   });
 
-  it("a TAMIL card starts qualification with the TAMIL Q1 opening AND the Tamil directive — never leaking into the plain mic path", async () => {
+  it("Book an Appointment opens the VOICELESS data-point step — it never starts a Vapi call", async () => {
     render(<PublicBusinessCard companyId="comp-1" employeeId="emp-1" />);
     await screen.findByTestId("voice-mic-button");
 
     fireEvent.click(screen.getByTestId("book-meeting-button"));
-    const startQualification = await screen.findByTestId("start-qualification");
-
+    // The booking flow opens on the data-point qualification "Begin" control,
+    // not a voice call.
+    const begin = await screen.findByTestId("start-qualification");
     await act(async () => {
-      fireEvent.click(startQualification);
+      fireEvent.click(begin);
     });
 
-    expect(startCall).toHaveBeenCalledTimes(1);
-    const [overrides] = startCall.mock.calls[0] as [{ firstMessage: string; systemPrompt: string }];
-    // baseProps store 'ta' — the 2026-08-19 decision: qualification
-    // language follows the selected card language.
-    expect(overrides.firstMessage).toBe(getQualificationCallOpening("ta"));
-    expect(overrides.firstMessage).toContain("எங்கள் சேவை அல்லது தயாரிப்பு உங்களுக்கு உடனடியாகத் தேவைப்படுகிறதா?");
-    expect(overrides.firstMessage).not.toContain("Is our service or product");
-    expect(overrides.systemPrompt).toContain("BASE_SYSTEM_PROMPT_MARKER");
-    expect(overrides.systemPrompt).toContain("STRICT CLOSED-ENDED questionnaire");
-    expect(overrides.systemPrompt).toContain("TAMIL ONLY");
-
-    // The plain mic button, untouched by the modal interaction above, is
-    // still behind the introduction gate: a tap plays the recorded intro,
-    // never a call — the qualification overrides can't leak into it because
-    // no call starts from it at all here.
-    startCall.mockClear();
-    await act(async () => {
-      fireEvent.click(screen.getByTestId("voice-mic-button"));
-    });
+    // Beginning qualification shows the tap answers and starts NO Vapi call —
+    // the booking flow is text/button only.
+    expect(await screen.findByTestId("quick-replies")).toBeInTheDocument();
     expect(startCall).not.toHaveBeenCalled();
-    expect(IntroFakeAudio.instances.some((a) => a.src.includes("type=intro"))).toBe(true);
-  });
-
-  it("an ENGLISH card starts qualification with the ENGLISH Q1 opening and directive — no Tamil leaks into it", async () => {
-    window.localStorage.setItem("pagalava.language", "en");
-    global.fetch = jest.fn(() => Promise.resolve(cardResponse("en"))) as unknown as typeof fetch;
-
-    render(<PublicBusinessCard companyId="comp-1" employeeId="emp-1" />);
-    await screen.findByTestId("voice-mic-button");
-
-    fireEvent.click(screen.getByTestId("book-meeting-button"));
-    const startQualification = await screen.findByTestId("start-qualification");
-    await act(async () => {
-      fireEvent.click(startQualification);
-    });
-
-    expect(startCall).toHaveBeenCalledTimes(1);
-    const [overrides] = startCall.mock.calls[0] as [{ firstMessage: string; systemPrompt: string }];
-    expect(overrides.firstMessage).toBe(QUALIFICATION_CALL_OPENING);
-    expect(overrides.firstMessage).toBe("Is our service or product something you need immediately?\n\nPlease answer with Yes, No, or Maybe.");
-    expect(overrides.systemPrompt).toContain("BASE_SYSTEM_PROMPT_MARKER");
-    expect(overrides.systemPrompt).toContain("STRICT CLOSED-ENDED questionnaire");
-    expect(overrides.systemPrompt).not.toMatch(/[஀-௿]/); // no Tamil script anywhere in the ENGLISH qualification directive
-    // And the English opening is never the generic greeting.
-    expect(overrides.firstMessage).not.toMatch(/how can i help/i);
+    // And it never plays a recorded introduction or any audio either.
+    expect(IntroFakeAudio.instances.some((a) => a.src.includes("type=intro"))).toBe(false);
   });
 });
 

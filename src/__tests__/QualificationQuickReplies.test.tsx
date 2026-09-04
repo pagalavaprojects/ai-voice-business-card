@@ -2,75 +2,82 @@
  * @jest-environment jsdom
  */
 import "@testing-library/jest-dom";
-import { render, screen, fireEvent, act } from "@testing-library/react";
+import { render, screen, fireEvent, act, waitFor } from "@testing-library/react";
 import { AppointmentModal } from "@/features/voice/components/AppointmentModal";
 import {
   classifyClosedResponse,
   getQualificationQuestions,
   getQuickReplyOptions,
-  withAnswerGuidance,
-  getAnswerGuidance,
 } from "@/features/voice/lib/qualificationScript";
 
 /**
- * Tapping Yes/No/Maybe instead of speaking it.
- *
- * The whole point is that a tap is not a second answer system: the label IS
- * the word, it enters the conversation as a USER message, and the server
- * classifies and records it exactly as it would a spoken reply. So the tests
- * that matter are the ones that would catch it quietly becoming a parallel
- * path — a label that does not classify, an answer sent twice, or buttons
- * appearing somewhere there is no question to answer.
+ * Tapping Yes/No/Maybe for the six booking data points — the TEXT/BUTTON
+ * (voiceless) flow. There is no microphone, no Vapi and no spoken answer: the
+ * label IS the answer word, POSTed to the server-authoritative
+ * qualification-status endpoint, which classifies and records it exactly as a
+ * spoken reply once did. The tests that matter are the ones that catch it
+ * quietly regressing — a label that does not classify, an answer sent twice,
+ * or buttons appearing where there is no data point to answer.
  */
 
-const sendUserMessage = jest.fn(() => true);
-const startCall = jest.fn();
-
-/** Same stand-in the other modal tests use: keys echo through, so a missing
- * key would be visible rather than silently blank. */
 const t = (key: string, vars?: Record<string, string>) => (vars ? `${key}:${Object.values(vars).join("/")}` : key);
 
-function voiceProp(overrides: Record<string, unknown> = {}) {
+const classOf = (label: string): "YES" | "NO" | "MAYBE" =>
+  label === "Yes" || label === "ஆம்" ? "YES" : label === "No" || label === "இல்லை" ? "NO" : "MAYBE";
+
+/** One fetch mock covering BOTH the modal's availability GET and the
+ * qualification answer POST. The POST records answers server-side
+ * (idempotently, by question number) and returns the cumulative authoritative
+ * array — exactly the shape the real route returns. */
+function installFetchMock() {
+  const recorded: Array<{ n: number; c: string; a: string }> = [];
+  const postCalls: Array<{ questionNumber: number; answer: string; sessionId: string }> = [];
+  global.fetch = jest.fn(async (url: string, init?: RequestInit) => {
+    const u = String(url);
+    if (u.includes("/qualification-status") && init?.method === "POST") {
+      const body = JSON.parse(String(init.body));
+      postCalls.push(body);
+      if (!recorded.some((a) => a.n === body.questionNumber)) {
+        recorded.push({ n: body.questionNumber, c: classOf(body.answer), a: body.answer });
+      }
+      return { ok: true, status: 200, json: async () => ({ answers: [...recorded], qualified: recorded.some((a) => a.n === 6), accepted: true }) };
+    }
+    // Availability GET (and anything else) — a successful empty response.
+    return { ok: true, status: 200, json: async () => ({ configured: true, slots: [] }) };
+  }) as unknown as typeof fetch;
+  return { recorded, postCalls };
+}
+
+function props(language: "en" | "ta" = "en", extra: Record<string, unknown> = {}) {
   return {
-    voiceState: "listening",
-    callId: "call-1",
-    startCall,
-    endCall: jest.fn(),
-    messages: [] as Array<{ role: "assistant" | "user"; content: string }>,
-    error: null,
-    sendUserMessage,
-    ...overrides,
+    open: true,
+    onClose: jest.fn(),
+    companyId: "comp-1",
+    employeeId: "emp-1",
+    employeeName: "Srinivasan Kandasamy",
+    companyName: "Pagalava",
+    language: language as never,
+    t,
+    qualifyFirst: true,
+    ...extra,
   };
 }
 
-function renderQualification(language: "en" | "ta" = "en", voiceOverrides: Record<string, unknown> = {}) {
-  const result = render(
-    <AppointmentModal
-      open
-      onClose={jest.fn()}
-      companyId="comp-1"
-      employeeId="emp-1"
-      employeeName="Srinivasan Kandasamy"
-      companyName="Pagalava"
-      language={language as never}
-      t={t}
-      voice={voiceProp(voiceOverrides) as never}
-    />
-  );
-  // The questionnaire only starts on an explicit tap.
-  act(() => {
+async function renderQualification(language: "en" | "ta" = "en") {
+  const result = render(<AppointmentModal {...props(language)} />);
+  // Qualification only starts on the explicit Begin tap.
+  await act(async () => {
     fireEvent.click(screen.getByTestId("start-qualification"));
   });
   return result;
 }
 
+const postCount = () =>
+  (global.fetch as jest.Mock).mock.calls.filter((c) => String(c[0]).includes("/qualification-status") && c[1]?.method === "POST").length;
+
 beforeEach(() => {
   jest.clearAllMocks();
-  global.fetch = jest.fn(async () => ({
-    ok: true,
-    status: 200,
-    json: async () => ({ data: { answers: [], complete: false } }),
-  })) as unknown as typeof fetch;
+  installFetchMock();
 });
 
 describe("quick reply labels", () => {
@@ -83,8 +90,6 @@ describe("quick reply labels", () => {
   });
 
   it("sends a label the SERVER classifier already accepts — in both languages", () => {
-    // A label that failed to classify would silently reprompt, which is the
-    // exact failure a tappable answer is meant to remove.
     for (const language of ["en", "ta"] as const) {
       for (const option of getQuickReplyOptions(language)) {
         expect(classifyClosedResponse(option.label, language)).toBe(option.classification);
@@ -98,150 +103,106 @@ describe("quick reply labels", () => {
   });
 });
 
-describe("tapping an answer", () => {
-  it("delivers the English word into the conversation, not a classification", () => {
-    renderQualification("en");
+describe("tapping an answer (voiceless — POSTed, not spoken)", () => {
+  it("POSTs the English word (not a classification) for the active data point", async () => {
+    await renderQualification("en");
     fireEvent.click(screen.getByTestId("quick-reply-yes"));
-
-    // The raw word travels; the server decides what it means.
-    expect(sendUserMessage).toHaveBeenCalledWith("Yes");
-    expect(sendUserMessage).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(postCount()).toBe(1));
+    const body = (global.fetch as jest.Mock).mock.calls.find((c) => c[1]?.method === "POST")![1];
+    const parsed = JSON.parse(String(body.body));
+    expect(parsed.answer).toBe("Yes");
+    expect(parsed.questionNumber).toBe(1);
+    expect(typeof parsed.sessionId).toBe("string");
+    expect(parsed.sessionId.length).toBeGreaterThanOrEqual(8);
   });
 
-  it("delivers the Tamil word on a Tamil card", () => {
-    renderQualification("ta");
+  it("POSTs the Tamil word on a Tamil card", async () => {
+    await renderQualification("ta");
     fireEvent.click(screen.getByTestId("quick-reply-no"));
-
-    expect(sendUserMessage).toHaveBeenCalledWith("இல்லை");
+    await waitFor(() => expect(postCount()).toBe(1));
+    const parsed = JSON.parse(String((global.fetch as jest.Mock).mock.calls.find((c) => c[1]?.method === "POST")![1].body));
+    expect(parsed.answer).toBe("இல்லை");
   });
 
-  it("covers all three classifications", () => {
-    renderQualification("en");
-    fireEvent.click(screen.getByTestId("quick-reply-maybe"));
-    expect(sendUserMessage).toHaveBeenCalledWith("Maybe");
-  });
-
-  it("cannot answer the same question twice, however many times it is tapped", () => {
-    renderQualification("en");
+  it("cannot answer the same data point twice, however many times it is tapped", async () => {
+    await renderQualification("en");
     const yes = screen.getByTestId("quick-reply-yes");
     const no = screen.getByTestId("quick-reply-no");
-
-    // Batched deliberately: a real double tap fires both clicks before React
-    // re-renders, so neither sees the other's state. An earlier version of
-    // this test clicked with a render in between and passed while the code
-    // was sending twice.
+    // Batched: a real double tap fires both clicks before React re-renders.
     act(() => {
       fireEvent.click(yes);
       fireEvent.click(yes);
       fireEvent.click(no);
     });
-
-    // One answer per question — a double tap must not advance two questions.
-    expect(sendUserMessage).toHaveBeenCalledTimes(1);
-    expect(sendUserMessage).toHaveBeenCalledWith("Yes");
+    await waitFor(() => expect(postCount()).toBe(1));
+    // A single POST, carrying the first tap only.
+    const parsed = JSON.parse(String((global.fetch as jest.Mock).mock.calls.find((c) => c[1]?.method === "POST")![1].body));
+    expect(parsed.answer).toBe("Yes");
+    expect(postCount()).toBe(1);
   });
 
-  it("replaces the row with a processing indicator once an answer is sent", () => {
-    renderQualification("en");
+  it("replaces the row with a processing indicator while the answer is in flight", async () => {
+    await renderQualification("en");
     fireEvent.click(screen.getByTestId("quick-reply-yes"));
-
-    // The options give way to a processing state that belongs to the same
-    // question — no locked, greyed row left sitting beside it.
+    // Synchronously after the tap (before the POST resolves) the options give
+    // way to a processing state that belongs to the same data point.
     expect(screen.queryByTestId("quick-replies")).toBeNull();
     expect(screen.getByTestId("quick-reply-processing")).toBeInTheDocument();
   });
 
-  it("keeps the options live when the answer could not be delivered", () => {
-    // No session to speak into (demo mode, dropped call): the visitor must
-    // not be left with a dead row and no way to answer.
-    renderQualification("en", { sendUserMessage: jest.fn(() => false) });
-    fireEvent.click(screen.getByTestId("quick-reply-yes"));
-
-    expect(screen.getByTestId("quick-reply-yes")).not.toBeDisabled();
-  });
-
-  it("does not advance on the transcript alone — the server decides the next question", () => {
-    const { rerender } = renderQualification("en");
+  it("advances to the next data point once the server records the answer", async () => {
+    await renderQualification("en");
     const questions = getQualificationQuestions("en");
-    // Q1 is on screen with its options.
     expect(screen.getByTestId("current-question")).toHaveTextContent(questions[0].question);
     fireEvent.click(screen.getByTestId("quick-reply-yes"));
-    expect(screen.queryByTestId("quick-replies")).toBeNull();
+    await waitFor(() => expect(screen.getByTestId("current-question")).toHaveTextContent(questions[1].question));
+    // The options are back for the fresh data point.
+    expect(screen.getByTestId("quick-replies")).toBeInTheDocument();
+  });
 
-    // The assistant SPEAKS Q2 in the transcript, but the server has not
-    // recorded the Q1 answer yet. The display must stay on Q1 (still
-    // processing) — the transcript can never push the question ahead of what
-    // the server has actually accepted. (The fresh Q2 row once the server
-    // advances is proven end-to-end in QualificationQuickReplySequence.)
-    rerender(
-      <AppointmentModal
-        open
-        onClose={jest.fn()}
-        companyId="comp-1"
-        employeeId="emp-1"
-        employeeName="Srinivasan Kandasamy"
-        companyName="Pagalava"
-        language={"en" as never}
-        t={t}
-        voice={
-          voiceProp({
-            messages: [{ role: "assistant", content: withAnswerGuidance(questions[1].question, getAnswerGuidance("en")) }],
-          }) as never
-        }
-      />
-    );
-
-    expect(screen.getByTestId("current-question")).toHaveTextContent(questions[0].question);
-    expect(screen.queryByTestId("quick-replies")).toBeNull();
-    expect(screen.getByTestId("quick-reply-processing")).toBeInTheDocument();
+  it("releases the row so the visitor can retry when the answer POST fails", async () => {
+    await renderQualification("en");
+    // Make the answer POST fail.
+    (global.fetch as jest.Mock).mockImplementation(async (url: string, init?: RequestInit) => {
+      if (String(url).includes("/qualification-status") && init?.method === "POST") return { ok: false, status: 500, json: async () => ({}) };
+      return { ok: true, status: 200, json: async () => ({ configured: true, slots: [] }) };
+    });
+    fireEvent.click(screen.getByTestId("quick-reply-yes"));
+    // After the failure the honest error shows and the options return — not a
+    // dead, greyed row.
+    await waitFor(() => expect(screen.getByTestId("qual-answer-error")).toBeInTheDocument());
+    expect(screen.getByTestId("quick-replies")).toBeInTheDocument();
   });
 });
 
 describe("where the options may appear", () => {
-  it("not before the questionnaire has been started", () => {
-    render(
-      <AppointmentModal
-        open
-        onClose={jest.fn()}
-        companyId="comp-1"
-        employeeId="emp-1"
-        employeeName="Srinivasan Kandasamy"
-        companyName="Pagalava"
-        language={"en" as never}
-        t={t}
-        voice={voiceProp() as never}
-      />
-    );
+  it("not before the visitor has begun qualification", () => {
+    render(<AppointmentModal {...props("en")} />);
     expect(screen.queryByTestId("quick-replies")).toBeNull();
+    expect(screen.getByTestId("start-qualification")).toBeInTheDocument();
   });
 
-  it("not when the modal has no voice session at all — the plain booking path", () => {
-    render(
-      <AppointmentModal
-        open
-        onClose={jest.fn()}
-        companyId="comp-1"
-        employeeId="emp-1"
-        employeeName="Srinivasan Kandasamy"
-        companyName="Pagalava"
-        language={"en" as never}
-        t={t}
-      />
-    );
+  it("not when the modal is not in qualify-first mode — the plain booking path", () => {
+    render(<AppointmentModal {...props("en", { qualifyFirst: undefined })} />);
     expect(screen.queryByTestId("quick-replies")).toBeNull();
     expect(screen.queryByTestId("start-qualification")).toBeNull();
   });
 
-  it("not when the session cannot accept a typed answer", () => {
-    renderQualification("en", { sendUserMessage: undefined });
-    expect(screen.queryByTestId("quick-replies")).toBeNull();
-  });
-
-  it("shows a question and its options together, in the qualification language", () => {
-    renderQualification("ta");
+  it("shows a data point and its options together, in the qualification language", async () => {
+    await renderQualification("ta");
     const group = screen.getByTestId("quick-replies");
     expect(group).toHaveAttribute("role", "group");
     expect(group).toHaveAccessibleName();
     expect(screen.getByTestId("current-question")).toHaveTextContent(getQualificationQuestions("ta")[0].question);
+  });
+
+  it("never starts a microphone or Vapi — the only network work is the answer POST", async () => {
+    await renderQualification("en");
+    fireEvent.click(screen.getByTestId("quick-reply-yes"));
+    await waitFor(() => expect(postCount()).toBe(1));
+    // Every fetch is same-origin GET availability or the qualification POST;
+    // nothing hits a voice provider.
+    const urls = (global.fetch as jest.Mock).mock.calls.map((c) => String(c[0]));
+    expect(urls.some((u) => /vapi|daily|tts|audio/i.test(u))).toBe(false);
   });
 });

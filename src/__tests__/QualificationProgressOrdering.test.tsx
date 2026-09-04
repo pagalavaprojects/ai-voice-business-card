@@ -2,276 +2,110 @@
  * @jest-environment jsdom
  */
 import "@testing-library/jest-dom";
-import { render, screen, fireEvent, act } from "@testing-library/react";
+import { render, screen, fireEvent, act, waitFor } from "@testing-library/react";
 import { AppointmentModal } from "@/features/voice/components/AppointmentModal";
-import {
-  getAnswerGuidance,
-  getQualificationQuestions,
-  withAnswerGuidance,
-} from "@/features/voice/lib/qualificationScript";
+import { getQualificationQuestions } from "@/features/voice/lib/qualificationScript";
 
 /**
- * Which question the modal shows when its two sources of truth disagree.
- *
- * There are two, and they arrive independently: the assistant's transcript
- * (what was just spoken) and the qualification-status poll (what the server
- * has actually recorded). Either can be first — the poll runs on its own
- * timer and a transcript event can land mid-interval — so the display has to
- * be right under both orderings, and must never walk backwards when a slow
- * response finally arrives.
- *
- * This matters beyond cosmetics: the displayed question number is what a
- * tapped answer is filed against and what its lock is keyed to. Showing a
- * stale question would misfile the next tap.
+ * Server-authoritative, forward-only progression in the voiceless flow. The
+ * active data point is derived only from the answers the SERVER has recorded
+ * (returned by the answer POST) — never from client state — so it can never
+ * skip, regress, or run ahead of what was actually accepted. Because taps are
+ * serialized by the per-data-point lock (the options are hidden while an answer
+ * is in flight), there is only ever one POST outstanding, so responses cannot
+ * apply out of order; a response from a session the visitor has since left
+ * (skip/close) is discarded by the run token.
  */
 
 const t = (key: string, vars?: Record<string, string>) => (vars ? `${key}:${Object.values(vars).join("/")}` : key);
-const QUESTIONS = getQualificationQuestions("en");
+const questions = getQualificationQuestions("en");
 
-type Answer = { n: number; c: string; a: string };
-type Message = { role: "assistant" | "user"; content: string };
-
-let served: { qualified: boolean; answers: Answer[] } = { qualified: false, answers: [] };
-
-/** The assistant having just asked question `n`. */
-const spoke = (n: number): Message => ({
-  role: "assistant",
-  content: withAnswerGuidance(QUESTIONS[n - 1].question, getAnswerGuidance("en")),
-});
-
-/** The server having recorded answers 1..n. */
-const recorded = (n: number): Answer[] => Array.from({ length: n }, (_, i) => ({ n: i + 1, c: "YES", a: "Yes" }));
-
-const sendUserMessage = jest.fn(() => true);
-
-function view(messages: Message[]) {
-  return (
-    <AppointmentModal
-      open
-      onClose={jest.fn()}
-      companyId="comp-1"
-      employeeId="emp-1"
-      employeeName="Srinivasan Kandasamy"
-      companyName="Pagalava"
-      language={"en" as never}
-      t={t}
-      voice={
-        {
-          voiceState: "listening",
-          callId: "call-1",
-          startCall: jest.fn(),
-          endCall: jest.fn(),
-          messages,
-          error: null,
-          sendUserMessage,
-        } as never
-      }
-    />
-  );
+/** A fetch mock whose POST resolution can be deferred, so tests can observe the
+ * in-flight (locked) state before the server answer lands. */
+function installControllableMock() {
+  const recorded: Array<{ n: number; c: string; a: string }> = [];
+  let pending: (() => void) | null = null;
+  global.fetch = jest.fn((url: string, init?: RequestInit) => {
+    const u = String(url);
+    if (u.includes("/qualification-status") && init?.method === "POST") {
+      const body = JSON.parse(String(init.body));
+      return new Promise((resolve) => {
+        const settle = () => {
+          if (!recorded.some((a) => a.n === body.questionNumber)) recorded.push({ n: body.questionNumber, c: "YES", a: body.answer });
+          resolve({ ok: true, status: 200, json: async () => ({ answers: [...recorded], qualified: recorded.some((a) => a.n === 6), accepted: true }) } as never);
+        };
+        pending = settle;
+      });
+    }
+    return Promise.resolve({ ok: true, status: 200, json: async () => ({ configured: true, slots: [] }) } as never);
+  }) as unknown as typeof fetch;
+  return {
+    recorded,
+    flush: async () => {
+      await act(async () => {
+        pending?.();
+        pending = null;
+        await Promise.resolve();
+      });
+    },
+  };
 }
 
-beforeEach(() => {
-  jest.clearAllMocks();
-  jest.useFakeTimers();
-  served = { qualified: false, answers: [] };
-  global.fetch = jest.fn(async (url: RequestInfo | URL) =>
-    String(url).includes("qualification-status")
-      ? ({ ok: true, status: 200, json: async () => served } as unknown as Response)
-      : ({ ok: true, status: 200, json: async () => ({}) } as unknown as Response)
-  ) as unknown as typeof fetch;
-});
-
-afterEach(() => {
-  jest.useRealTimers();
-});
-
-/** Lets the component's own polling loop run — never replaced, only fed. */
-async function poll() {
+function props() {
+  return { open: true, onClose: jest.fn(), companyId: "comp-1", employeeId: "emp-1", employeeName: "Srinivasan Kandasamy", companyName: "Pagalava", language: "en" as never, t, qualifyFirst: true };
+}
+async function begin() {
+  render(<AppointmentModal {...props()} />);
   await act(async () => {
-    jest.advanceTimersByTime(4000);
-  });
-}
-
-function start() {
-  act(() => {
     fireEvent.click(screen.getByTestId("start-qualification"));
   });
 }
 
-const shown = () => screen.getByTestId("current-question").textContent ?? "";
+beforeEach(() => jest.clearAllMocks());
 
-describe("transcript and status arriving in either order", () => {
-  it("CASE A — status first, then the transcript catches up", async () => {
-    const { rerender } = render(view([]));
-    start();
+describe("forward-only, server-driven progression", () => {
+  it("holds the current data point (locked, no options) until the server records the answer, then moves on", async () => {
+    const ctl = installControllableMock();
+    await begin();
+    expect(screen.getByTestId("current-question")).toHaveTextContent(questions[0].question);
 
-    // The server has recorded Q1's answer; the assistant has not been heard
-    // asking Q2 yet.
-    served = { qualified: false, answers: recorded(1) };
-    await poll();
-    expect(shown()).toContain(QUESTIONS[1].question);
+    fireEvent.click(screen.getByTestId("quick-reply-yes"));
+    // In flight: the data point is unchanged, options are gone, processing shows.
+    expect(screen.getByTestId("current-question")).toHaveTextContent(questions[0].question);
+    expect(screen.queryByTestId("quick-replies")).toBeNull();
+    expect(screen.getByTestId("quick-reply-processing")).toBeInTheDocument();
 
-    // The transcript arrives saying the same thing. Nothing should move.
-    rerender(view([spoke(2)]));
-    await poll();
-    expect(shown()).toContain(QUESTIONS[1].question);
+    await ctl.flush();
+    // Server recorded it → advance to DP2 with a fresh option row.
+    await waitFor(() => expect(screen.getByTestId("current-question")).toHaveTextContent(questions[1].question));
+    expect(screen.getByTestId("quick-replies")).toBeInTheDocument();
   });
 
-  it("CASE B — the transcript alone never advances the question", async () => {
-    const { rerender } = render(view([]));
-    start();
-
-    // The assistant SPEAKS Q2, but the server has recorded no answer yet.
-    // The display stays on Q1: the number comes from the server's answer
-    // count, not from what was spoken, so it can never jump ahead.
-    rerender(view([spoke(2)]));
-    await poll();
-    expect(shown()).toContain(QUESTIONS[0].question);
-
-    // Only when the server records the first answer does it become Q2.
-    served = { qualified: false, answers: recorded(1) };
-    await poll();
-    expect(shown()).toContain(QUESTIONS[1].question);
-  });
-
-  it("CASE C — status, transcript, then the next status moves it on", async () => {
-    const { rerender } = render(view([]));
-    start();
-
-    served = { qualified: false, answers: recorded(1) };
-    await poll();
-    rerender(view([spoke(2)]));
-    await poll();
-    expect(shown()).toContain(QUESTIONS[1].question);
-
-    // Q2 is answered too — the visitor belongs on Q3 even though the
-    // assistant has not been heard asking it yet.
-    served = { qualified: false, answers: recorded(2) };
-    await poll();
-    expect(shown()).toContain(QUESTIONS[2].question);
-  });
-
-  it("CASE D — the transcript running several questions ahead cannot skip", async () => {
-    const { rerender } = render(view([]));
-    start();
-
-    // The assistant has raced ahead in the transcript to Q3, but the server
-    // has recorded nothing. The display holds at Q1 — it never skips to the
-    // spoken question.
-    rerender(view([spoke(2), spoke(3)]));
-    await poll();
-    expect(shown()).toContain(QUESTIONS[0].question);
-
-    // The server records exactly one answer: the display advances to Q2, one
-    // step, not to the Q3 the transcript was already claiming.
-    served = { qualified: false, answers: recorded(1) };
-    await poll();
-    expect(shown()).toContain(QUESTIONS[1].question);
-  });
-
-  it("never regresses across a full run, whichever source leads", async () => {
-    const { rerender } = render(view([]));
-    start();
-
+  it("never regresses or skips across a full six-data-point run", async () => {
+    const ctl = installControllableMock();
+    await begin();
     const seen: string[] = [];
-    let messages: Message[] = [];
-    for (let n = 1; n <= 5; n++) {
-      // Alternate which source leads, so neither ordering is privileged.
-      if (n % 2 === 0) {
-        messages = [...messages, spoke(n + 1)];
-        rerender(view(messages));
-        await poll();
-        served = { qualified: false, answers: recorded(n) };
-        await poll();
-      } else {
-        served = { qualified: false, answers: recorded(n) };
-        await poll();
-        messages = [...messages, spoke(n + 1)];
-        rerender(view(messages));
-        await poll();
-      }
-      seen.push(shown());
+    for (let n = 1; n <= 6; n++) {
+      await waitFor(() => expect(screen.getByTestId("quick-replies")).toBeInTheDocument());
+      seen.push(screen.getByTestId("current-question").textContent || "");
+      fireEvent.click(screen.getByTestId("quick-reply-yes"));
+      await ctl.flush();
     }
-
-    // Strictly forward: Q2, Q3, Q4, Q5, Q6.
-    seen.forEach((text, index) => {
-      expect(text).toContain(QUESTIONS[index + 1].question);
-    });
-  });
-});
-
-describe("a tap never persists anything itself", () => {
-  it("only reads the server's status — the answer travels through the session", async () => {
-    render(view([]));
-    start();
-
-    act(() => {
-      fireEvent.click(screen.getByTestId("quick-reply-yes"));
-    });
-    await poll();
-
-    const requests = (global.fetch as jest.Mock).mock.calls.map((call) => ({
-      url: String(call[0]),
-      method: (call[1]?.method ?? "GET").toUpperCase(),
-    }));
-
-    // A tap must not write anything. The component legitimately READS —
-    // the status poll and the availability lookup — but if an answer were
-    // ever persisted straight from React, a write would appear here, and
-    // that is where a second qualification path would begin.
-    expect(requests.length).toBeGreaterThan(0);
-    for (const request of requests) {
-      expect(request.method).toBe("GET");
-    }
-    expect(requests.some((r) => r.url.includes("qualification-status"))).toBe(true);
-    expect(requests.some((r) => /leads|qualification-answer|classify/.test(r.url))).toBe(false);
-    // The word went into the conversation instead.
-    expect(sendUserMessage).toHaveBeenCalledWith("Yes");
-  });
-});
-
-describe("the tap lock follows the same progression", () => {
-  it("re-opens for the next question once the server has moved on", async () => {
-    const { rerender } = render(view([]));
-    start();
-
-    act(() => {
-      fireEvent.click(screen.getByTestId("quick-reply-yes"));
-    });
-    expect(sendUserMessage).toHaveBeenCalledTimes(1);
-    // The answered question shows processing, not options.
-    expect(screen.queryByTestId("quick-replies")).toBeNull();
-    expect(screen.getByTestId("quick-reply-processing")).toBeInTheDocument();
-
-    served = { qualified: false, answers: recorded(1) };
-    await poll();
-    rerender(view([spoke(2)]));
-    await poll();
-
-    expect(shown()).toContain(QUESTIONS[1].question);
-    // The next question gets a fresh, enabled row.
-    expect(screen.getByTestId("quick-reply-yes")).not.toBeDisabled();
-
-    act(() => {
-      fireEvent.click(screen.getByTestId("quick-reply-no"));
-    });
-    expect(sendUserMessage).toHaveBeenCalledTimes(2);
-    expect(sendUserMessage).toHaveBeenLastCalledWith("No");
+    // Each data point appeared exactly once, in authored order.
+    expect(seen).toEqual(questions.map((q) => q.question));
+    await waitFor(() => expect(screen.getByTestId("qualification-continue")).toBeInTheDocument());
   });
 
-  it("holds the lock while the server has not yet caught up", async () => {
-    render(view([]));
-    start();
-
-    act(() => {
-      fireEvent.click(screen.getByTestId("quick-reply-yes"));
-    });
-
-    // Nothing has advanced yet — the answer is still in flight. The options
-    // are gone (processing shown), so there is nothing to double-send.
-    await poll();
-    expect(screen.queryByTestId("quick-replies")).toBeNull();
-    expect(screen.getByTestId("quick-reply-processing")).toBeInTheDocument();
-    expect(sendUserMessage).toHaveBeenCalledTimes(1);
+  it("a response from a session the visitor has left (Skip) does not repopulate the new step", async () => {
+    const ctl = installControllableMock();
+    await begin();
+    fireEvent.click(screen.getByTestId("quick-reply-yes")); // POST in flight
+    // Visitor skips to Select Time before the answer lands.
+    fireEvent.click(screen.getByTestId("skip-qualification"));
+    expect(await screen.findByText("appointment.chooseSlotTitle")).toBeInTheDocument();
+    // The late answer resolves — it must not drag the UI back into qualification.
+    await ctl.flush();
+    expect(screen.getByText("appointment.chooseSlotTitle")).toBeInTheDocument();
+    expect(screen.queryByTestId("current-question")).toBeNull();
   });
 });

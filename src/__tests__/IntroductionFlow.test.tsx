@@ -318,6 +318,67 @@ describe("Replay — replays the recorded introduction, never Vapi/mic", () => {
   });
 });
 
+describe("AI Conversation button — first-class, beside Replay, starts the shared live path", () => {
+  async function completeIntro(lang: "en" | "ta" = "en") {
+    const mic = await mountCard(lang);
+    await screen.findByText(lang === "en" ? "Play Introduction" : taBundle.mic.playIntroduction);
+    fireEvent.click(mic);
+    await act(async () => {
+      FakeAudio.instances[0].onplaying?.();
+      FakeAudio.instances[0].onended?.();
+    });
+  }
+
+  it("appears beside Replay only after the introduction completes, not before or during", async () => {
+    const mic = await mountCard("en");
+    await screen.findByText("Play Introduction");
+    expect(screen.queryByTestId("ai-conversation")).toBeNull(); // idle
+    fireEvent.click(mic);
+    await act(async () => {
+      FakeAudio.instances[0].onplaying?.();
+    });
+    expect(screen.queryByTestId("ai-conversation")).toBeNull(); // playing
+    await act(async () => {
+      FakeAudio.instances[0].onended?.();
+    });
+    // Completed: AI Conversation and Replay side by side.
+    expect(screen.getByTestId("ai-conversation")).toHaveTextContent("AI Conversation");
+    expect(screen.getByTestId("intro-replay")).toBeInTheDocument();
+  });
+
+  it("clicking AI Conversation starts the live AI conversation (startCall), with the approved post-intro opening", async () => {
+    await completeIntro("en");
+    expect(startCall).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("ai-conversation"));
+    expect(startCall).toHaveBeenCalledTimes(1);
+    expect(startCall.mock.calls[0][0]).toEqual({ firstMessage: "Now you can ask your questions" });
+  });
+
+  it("a double-click starts exactly ONE conversation", async () => {
+    await completeIntro("en");
+    act(() => {
+      fireEvent.click(screen.getByTestId("ai-conversation"));
+      fireEvent.click(screen.getByTestId("ai-conversation"));
+    });
+    expect(startCall).toHaveBeenCalledTimes(1);
+  });
+
+  it("Replay beside it still replays the introduction only — no startCall, no new audio type", async () => {
+    await completeIntro("en");
+    const before = FakeAudio.instances.length;
+    fireEvent.click(screen.getByTestId("intro-replay"));
+    expect(startCall).not.toHaveBeenCalled();
+    expect(FakeAudio.instances.length).toBe(before + 1);
+    expect(FakeAudio.instances[FakeAudio.instances.length - 1].src).toContain("/pitch?type=intro&lang=en");
+  });
+
+  it("no Vapi/startCall happens before the explicit AI Conversation click", async () => {
+    await completeIntro("en");
+    // Intro completed, controls shown — still nothing started.
+    expect(startCall).not.toHaveBeenCalled();
+  });
+});
+
 describe("Smart AI Lead Business Card — language-specific pitch item beside Why Us", () => {
   it("on an ENGLISH card, tapping it plays the English asset (lang=en) without starting Vapi", async () => {
     await mountCard("en");

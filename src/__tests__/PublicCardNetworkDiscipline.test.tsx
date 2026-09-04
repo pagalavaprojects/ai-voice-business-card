@@ -205,8 +205,8 @@ describe("PublicBusinessCard — server-rendered fast path (2026-08-19 FCP round
   });
 });
 
-describe("AppointmentModal — qualification polling discipline", () => {
-  const t = (key: string) => key;
+describe("AppointmentModal — voiceless qualification network discipline", () => {
+  const t = (key: string, vars?: Record<string, string>) => (vars ? `${key}:${Object.values(vars).join("/")}` : key);
   const baseProps = {
     open: true,
     onClose: jest.fn(),
@@ -216,88 +216,68 @@ describe("AppointmentModal — qualification polling discipline", () => {
     companyName: "Pagalava",
     language: "en" as const,
     t,
+    qualifyFirst: true,
   };
-  const voice = (callId = "call-1") => ({ voiceState: "listening", callId, startCall: jest.fn(), endCall: jest.fn(), messages: [] });
 
-  function statusFetchMock(behavior: (u: string, init?: RequestInit) => Promise<unknown>) {
+  // Records answers server-side (idempotently) and returns the cumulative
+  // array — the real POST shape. Availability GET returns empty slots.
+  function fetchMock() {
+    const recorded: Array<{ n: number; c: string; a: string }> = [];
     return jest.fn((url: RequestInfo | URL, init?: RequestInit) => {
       const u = String(url);
-      if (u.includes("qualification-status")) return behavior(u, init);
-      return Promise.resolve({ ok: true, json: async () => ({ slots: [] }) });
+      if (u.includes("qualification-status") && init?.method === "POST") {
+        const body = JSON.parse(String(init.body));
+        if (!recorded.some((a) => a.n === body.questionNumber)) recorded.push({ n: body.questionNumber, c: "YES", a: body.answer });
+        return Promise.resolve({ ok: true, json: async () => ({ answers: [...recorded], qualified: false, accepted: true }) });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({ configured: true, slots: [] }) });
     }) as unknown as jest.Mock;
   }
+  const postCount = (spy: jest.Mock) => spy.mock.calls.filter((c) => String(c[0]).includes("qualification-status") && c[1]?.method === "POST").length;
 
-  const statusUrls = (spy: jest.Mock) => spy.mock.calls.map((c) => String(c[0])).filter((u) => u.includes("qualification-status"));
+  it("does NOT poll: becoming active (Begin) issues no qualification-status request on its own", async () => {
+    const spy = fetchMock();
+    global.fetch = spy as unknown as typeof fetch;
+    render(<AppointmentModal {...baseProps} />);
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("start-qualification"));
+      await Promise.resolve();
+    });
+    // No poll — the only qualification traffic is a POST, and only on a tap.
+    expect(postCount(spy)).toBe(0);
+  });
 
-  afterEach(() => {
+  it("a tapped answer fires EXACTLY ONE POST — no repeated polling afterward", async () => {
+    jest.useFakeTimers();
+    const spy = fetchMock();
+    global.fetch = spy as unknown as typeof fetch;
+    render(<AppointmentModal {...baseProps} />);
+    fireEvent.click(screen.getByTestId("start-qualification"));
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("quick-reply-yes"));
+      await jest.advanceTimersByTimeAsync(0);
+    });
+    // Let plenty of time pass — nothing should keep polling.
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(10_000);
+    });
+    expect(postCount(spy)).toBe(1);
     jest.useRealTimers();
   });
 
-  it("fires the FIRST status fetch immediately on becoming active — not after the first 3s interval", async () => {
-    jest.useFakeTimers();
-    const fetchSpy = statusFetchMock(() => Promise.resolve({ ok: true, json: async () => ({ qualified: false, answers: [] }) }));
-    global.fetch = fetchSpy as unknown as typeof fetch;
-
-    render(<AppointmentModal {...baseProps} voice={voice()} />);
-    fireEvent.click(screen.getByTestId("start-qualification"));
+  it("never contacts a voice provider or requests audio during qualification", async () => {
+    const spy = fetchMock();
+    global.fetch = spy as unknown as typeof fetch;
+    render(<AppointmentModal {...baseProps} />);
     await act(async () => {
-      await jest.advanceTimersByTimeAsync(0);
+      fireEvent.click(screen.getByTestId("start-qualification"));
+      await Promise.resolve();
     });
-
-    expect(statusUrls(fetchSpy)).toHaveLength(1);
-  });
-
-  it("single-flight: while one status request is still pending, interval ticks do not stack a second one", async () => {
-    jest.useFakeTimers();
-    // Never resolves — the worst-case slow network.
-    const fetchSpy = statusFetchMock(() => new Promise(() => undefined));
-    global.fetch = fetchSpy as unknown as typeof fetch;
-
-    render(<AppointmentModal {...baseProps} voice={voice()} />);
-    fireEvent.click(screen.getByTestId("start-qualification"));
     await act(async () => {
-      await jest.advanceTimersByTimeAsync(9500); // immediate + 3 interval ticks elapse
+      fireEvent.click(screen.getByTestId("quick-reply-yes"));
+      await Promise.resolve();
     });
-
-    expect(statusUrls(fetchSpy)).toHaveLength(1);
-  });
-
-  it("backs off after consecutive failures instead of hammering full cadence through an outage", async () => {
-    jest.useFakeTimers();
-    const fetchSpy = statusFetchMock(() => Promise.resolve({ ok: false, status: 500 }));
-    global.fetch = fetchSpy as unknown as typeof fetch;
-
-    render(<AppointmentModal {...baseProps} voice={voice()} />);
-    fireEvent.click(screen.getByTestId("start-qualification"));
-    // 12s of outage = immediate + ticks at 3/6/9/12s. Full cadence would be
-    // 5 attempts; backoff (skip 1, then 3…) must make it strictly fewer.
-    await act(async () => {
-      await jest.advanceTimersByTimeAsync(12_000);
-    });
-
-    const attempts = statusUrls(fetchSpy).length;
-    expect(attempts).toBeGreaterThanOrEqual(2); // still retrying — never gives up silently
-    expect(attempts).toBeLessThan(5); // but no longer at full cadence
-  });
-
-  it("aborts the in-flight status request outright when the modal closes", async () => {
-    jest.useFakeTimers();
-    let inFlightSignal: AbortSignal | undefined;
-    const fetchSpy = statusFetchMock((_u, init) => {
-      inFlightSignal = init?.signal ?? undefined;
-      return new Promise(() => undefined);
-    });
-    global.fetch = fetchSpy as unknown as typeof fetch;
-
-    const { unmount } = render(<AppointmentModal {...baseProps} voice={voice()} />);
-    fireEvent.click(screen.getByTestId("start-qualification"));
-    await act(async () => {
-      await jest.advanceTimersByTimeAsync(0);
-    });
-    expect(inFlightSignal).toBeInstanceOf(AbortSignal);
-    expect(inFlightSignal!.aborted).toBe(false);
-
-    unmount();
-    expect(inFlightSignal!.aborted).toBe(true);
+    const urls = spy.mock.calls.map((c) => String(c[0]));
+    expect(urls.some((u) => /vapi|daily|tts|\/pitch|audio/i.test(u))).toBe(false);
   });
 });

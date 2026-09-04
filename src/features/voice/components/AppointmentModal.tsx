@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
-import { Clock, User, Mail, Phone, CheckCircle2, ArrowRight, Loader2, AlertTriangle, Globe, Mic } from "lucide-react";
+import { Clock, User, Mail, Phone, CheckCircle2, ArrowRight, Loader2, AlertTriangle, Globe } from "lucide-react";
 import { Dialog } from "@/shared/ui/dialog";
 import { Button } from "@/shared/ui/button";
 import { Skeleton } from "@/shared/ui/skeleton";
@@ -28,36 +28,17 @@ interface AppointmentModalProps {
    * never drift from the rest of the card's. */
   language: LanguageCode;
   t: (key: string, vars?: Record<string, string>) => string;
-  /** The card's live AI voice session, lent to this modal for the
-   * qualification-first booking flow. When present, "Book an Appointment"
-   * opens on a voice-qualification step BEFORE slot selection: the visitor
-   * explicitly starts the AI conversation (microphone/Vapi are never
-   * initialized merely by opening the modal), the conversation qualifies
-   * them through the six authoritative questions (get_next_qualification_
-   * question), and this modal polls the qualification-status endpoint
-   * (keyed by the live callId) for completion. The visitor is never
-   * trapped: a skip control is always available regardless of progress.
-   * Absent (older callers/tests), the modal behaves exactly as before,
-   * opening directly on slot selection. */
-  voice?: {
-    voiceState: string;
-    callId: string | null;
-    startCall: () => void;
-    endCall: () => void;
-    /** Live conversation transcript (assistant + visitor) from the session
-     * — the qualification panel renders the current question and the
-     * visitor's REAL answers from this. Never fabricated. */
-    messages?: Array<{ role: "assistant" | "user"; content: string }>;
-    /** The session's own (already-localized) error text. Without this the
-     * card's error alert renders BEHIND the modal backdrop, so a failed
-     * start (mic denied, connection error) left the modal showing Q1 with
-     * no hint anything went wrong. */
-    error?: string | null;
-    /** Delivers a tapped answer into the live conversation as a USER
-     * message, so a tap and a spoken reply travel the identical path.
-     * Returns false when there is no session to speak into. */
-    sendUserMessage?: (content: string) => boolean;
-  };
+  /** When true, "Book an Appointment" opens on the six-data-point
+   * qualification step BEFORE slot selection. The step is TEXT/BUTTON ONLY —
+   * the visitor taps Yes/No/Maybe (ஆம்/இல்லை/இருந்தாலும் in Tamil); there is
+   * NO voice, NO microphone, NO Vapi, NO TTS and NO audio at any point in
+   * qualification. Each tap is classified and persisted by the same
+   * server-authoritative sequencing endpoint the voice flow uses (POST
+   * qualification-status), keyed by an unguessable per-open session id, so the
+   * recorded funnel is identical to a voice qualification. The visitor is
+   * never trapped: a skip control is always available. Absent/false (older
+   * callers/tests), the modal opens directly on slot selection as before. */
+  qualifyFirst?: boolean;
 }
 
 interface CalcomSlot {
@@ -97,11 +78,11 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   externalBookingUrl,
   language,
   t,
-  voice,
+  qualifyFirst,
 }) => {
-  // Step 0 (voice qualification) exists only when a live session was lent
-  // to us; without one the flow starts on slot selection as it always did.
-  const [step, setStep] = useState<0 | 1 | 2 | 3>(voice ? 0 : 1);
+  // Step 0 (voiceless data-point qualification) exists only when the caller
+  // asked for it; otherwise the flow starts on slot selection as it always did.
+  const [step, setStep] = useState<0 | 1 | 2 | 3>(qualifyFirst ? 0 : 1);
   const [qualStage, setQualStage] = useState<"intro" | "active">("intro");
   // True once the visitor has answered all six authoritative questions
   // (the server's qualification-status endpoint reports this directly —
@@ -125,10 +106,10 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
    * question and can never re-answer a question already recorded.
    */
   const [quickReply, setQuickReply] = useState<{ questionNumber: number; label: string } | null>(null);
-  /** Bumped after a tapped answer is sent, so the status poll re-runs at once
-   * instead of waiting out the 3s interval — the display advances as soon as
-   * the server has recorded the answer, not a poll-cycle later. */
-  const [pollNonce, setPollNonce] = useState(0);
+  /** An answer submission (POST qualification-status) failed — the tap is
+   * released so the visitor can retry; the current data point stays on screen
+   * with a short, honest error (never a "please wait" filler). */
+  const [qualError, setQualError] = useState(false);
   /**
    * The same claim, held in a ref so it is true IMMEDIATELY.
    *
@@ -139,13 +120,16 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
    * second click in the same batch sees the first one's claim.
    */
   const quickReplyLockRef = useRef<number | null>(null);
-  const qualStageRef = useRef(qualStage);
-  qualStageRef.current = qualStage;
-  // Which callId the qualification-status poll is CURRENTLY set up for —
-  // lets a stale response from an ended/replaced call recognize itself as
-  // stale and discard, even though clearing the poll's interval can never
-  // cancel a fetch already in flight. See the poll effect below.
-  const activeCallIdRef = useRef<string | null>(null);
+  // The unguessable session id for THIS booking's qualification — the
+  // text-flow analogue of a voice call's callId. Created lazily when the
+  // visitor begins qualification and reset on close, so a fresh open starts a
+  // clean session. Kept in a ref (never triggers a render) and read
+  // synchronously by the answer submitter and its in-flight guard.
+  const qualSessionRef = useRef<string | null>(null);
+  // Bumped on begin/close so a POST that resolves after the visitor moved on
+  // (skipped, closed, restarted) can recognize itself as stale and not write
+  // its result onto the new session's state.
+  const qualRunRef = useRef(0);
   const [slots, setSlots] = useState<CalcomSlot[]>([]);
   const [slotsLoading, setSlotsLoading] = useState(false);
   // Distinguishes WHY the slot list is empty — "unconfigured" (this company
@@ -294,121 +278,93 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
     }
   };
 
-  // Polls qualification progress while the conversation is live. The
-  // interval is modest (3s) and stops itself the moment the modal closes,
-  // the step advances, OR qualification completes — once qualComplete is
-  // true the answers array already holds all six records and nothing
-  // further can change (the directive routes Q6's completion straight to
-  // booking, never back through this tool), so continuing to poll is pure
-  // waste until the visitor gets around to clicking Continue.
-  useEffect(() => {
-    if (!open || step !== 0 || qualStage !== "active" || qualComplete || !voice?.callId) return;
-    // callId guard: a close-then-reopen (or a reconnect that hands out a new
-    // Vapi call) starts a NEW effect invocation, but does nothing to cancel
-    // a fetch already in flight from the PREVIOUS one — clearInterval only
-    // stops future ticks, never an already-issued request. If that stale
-    // request resolves after the new session has started, it would silently
-    // apply the ENDED call's answers on top of the NEW call's (freshly
-    // empty) state, showing the visitor someone else's — or their own
-    // previous, abandoned — answers as if they belonged to the call
-    // actually in progress. activeCallIdRef always holds whichever callId
-    // the effect is CURRENTLY set up for, so a response is discarded
-    // outright the moment it no longer matches, regardless of its own
-    // sequence number.
-    const callIdForThisEffect = voice.callId;
-    activeCallIdRef.current = callIdForThisEffect;
-    // Sequence guard against out-of-order responses WITHIN this same call:
-    // each tick's fetch can resolve in any order relative to the others
-    // (normal network jitter — no server-side change makes this
-    // impossible). Without this, a slow EARLIER request resolving AFTER a
-    // fast LATER one overwrites qualAnswers with stale data, visibly
-    // regressing the displayed question/progress even though the server's
-    // actual state only ever moved forward. A response is applied only if
-    // no later-issued request has already been applied.
-    let requestSeq = 0;
-    let latestAppliedSeq = 0;
-    // Single-flight + failure backoff + hard cancellation (2026-08-19 perf
-    // round): a tick is skipped while the previous request is still in
-    // flight (a slow network must never stack concurrent status requests —
-    // the sequence guard made stacking safe, this makes it not happen);
-    // consecutive failures skip 1/3/7… ticks (capped ~24s) so an outage
-    // isn't hammered at full cadence; and cleanup aborts the in-flight
-    // request outright instead of merely discarding its result.
-    let inFlight = false;
-    let consecutiveFailures = 0;
-    let skipTicks = 0;
-    const controller = new AbortController();
-    const tick = () => {
-      if (inFlight) return;
-      if (skipTicks > 0) {
-        skipTicks--;
-        return;
-      }
-      const thisSeq = ++requestSeq;
-      inFlight = true;
-      fetch(`/api/public/${companyId}/${employeeId}/qualification-status?callId=${encodeURIComponent(callIdForThisEffect)}`, {
-        signal: controller.signal,
+  // Begins the six-data-point qualification: mints a fresh, unguessable
+  // session id (the text-flow analogue of a voice callId) and reveals the
+  // first data point. No microphone, no Vapi, no audio — nothing is
+  // initialized here beyond a random id and a state flip.
+  const beginQualification = () => {
+    qualRunRef.current++;
+    qualSessionRef.current =
+      typeof crypto !== "undefined" && crypto.randomUUID ? `web-${crypto.randomUUID()}` : `web-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    setQualAnswers([]);
+    setQualComplete(false);
+    setQuickReply(null);
+    quickReplyLockRef.current = null;
+    setQualError(false);
+    setQualStage("active");
+  };
+
+  // Submits ONE tapped answer to the server-authoritative sequencing endpoint
+  // (POST qualification-status) — the SAME classification + persistence the
+  // voice flow used, minus the voice. The response carries the authoritative
+  // answers array, so the display advances directly from server truth (no
+  // polling). Forward-only and duplicate-safe: the double-tap claim below
+  // guards the client, and the tool no-ops an already-recorded data point on
+  // the server. A stale response (visitor skipped/closed/restarted meanwhile)
+  // is discarded via the run token.
+  const submitAnswer = (questionNumber: number, label: string) => {
+    // A data point already answered (or its answer in flight) must never be
+    // answered again — the ref is set synchronously so a double tap in the
+    // same batch is already too late.
+    if (quickReplyLockRef.current === questionNumber || quickReply?.questionNumber === questionNumber) return;
+    const sessionId = qualSessionRef.current;
+    if (!sessionId) return;
+    quickReplyLockRef.current = questionNumber;
+    setQuickReply({ questionNumber, label });
+    setQualError(false);
+    const run = qualRunRef.current;
+    fetch(`/api/public/${companyId}/${employeeId}/qualification-status`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionId, questionNumber, answer: label, language }),
+    })
+      .then((res) => (res.ok ? (res.json() as Promise<{ qualified?: boolean; answers?: Array<{ n: number; c: string; a: string }> }>) : Promise.reject(new Error(`status ${res.status}`))))
+      .then((data) => {
+        if (qualRunRef.current !== run) return; // superseded — ignore
+        if (Array.isArray(data?.answers)) setQualAnswers(data.answers);
+        if (data?.qualified) setQualComplete(true);
+        // Release the claim: the next data point (a different number) renders
+        // its own fresh answer row. If the server somehow did NOT record this
+        // answer (network hiccup mid-write), the claim clears so the visitor
+        // can tap again rather than facing a dead row.
+        quickReplyLockRef.current = null;
+        setQuickReply(null);
       })
-        .then((res) => (res.ok ? (res.json() as Promise<{ qualified?: boolean; answers?: Array<{ n: number; c: string; a: string }> }>) : Promise.reject(new Error(`status ${res.status}`))))
-        .then((data) => {
-          consecutiveFailures = 0;
-          if (activeCallIdRef.current !== callIdForThisEffect) return;
-          if (thisSeq < latestAppliedSeq) return;
-          latestAppliedSeq = thisSeq;
-          if (data?.qualified) setQualComplete(true);
-          if (Array.isArray(data?.answers)) setQualAnswers(data.answers);
-        })
-        .catch((err: Error) => {
-          if (err?.name === "AbortError") return;
-          consecutiveFailures++;
-          skipTicks = Math.min(2 ** consecutiveFailures - 1, 8);
-        })
-        .finally(() => {
-          inFlight = false;
-        });
-    };
-    // Immediate first fetch — a reopened modal (or one opened mid-call)
-    // shows real progress now, not after the first 3s interval elapses.
-    tick();
-    const timer = setInterval(tick, 3000);
-    return () => {
-      clearInterval(timer);
-      controller.abort();
-    };
-  }, [open, step, qualStage, qualComplete, voice?.callId, companyId, employeeId, pollNonce]);
+      .catch(() => {
+        if (qualRunRef.current !== run) return;
+        quickReplyLockRef.current = null;
+        setQuickReply(null);
+        setQualError(true);
+      });
+  };
 
   const advanceToSlots = () => {
-    // The visitor is done talking (or never wanted to) — the mic must not
-    // stay hot while they read slots and type contact details.
-    if (qualStageRef.current === "active") voice?.endCall();
-    // Invalidates any poll response still in flight for the call just left
-    // behind: clearing the interval (the poll effect's own cleanup, fired
-    // by `step` leaving 0) only stops FUTURE ticks, never an
-    // already-issued fetch. Without this, that fetch could still resolve
-    // a moment later and silently repopulate qualAnswers/qualComplete for
-    // a step the visitor has already moved past — the same class of bug
-    // the cross-call activeCallIdRef guard covers, but for the "no new
-    // call has started yet" case that guard alone doesn't reach.
-    activeCallIdRef.current = null;
+    // Leaving qualification behind — invalidate any answer POST still in
+    // flight so a late response cannot repopulate a step the visitor has
+    // already moved past.
+    qualRunRef.current++;
     setStep(1);
   };
 
   const handleReset = () => {
-    if (qualStageRef.current === "active") voice?.endCall();
-    activeCallIdRef.current = null;
-    // Invalidates any booking POST still in flight (see bookingSessionRef).
+    // Invalidates any qualification answer POST and any booking POST still in
+    // flight (see bookingSessionRef).
+    qualRunRef.current++;
+    qualSessionRef.current = null;
     bookingSessionRef.current++;
     spokenConfirmationRef.current = false;
-    setStep(voice ? 0 : 1);
+    setStep(qualifyFirst ? 0 : 1);
     setQualStage("intro");
     setQualComplete(false);
     setQualAnswers([]);
     // The modal is reused, never unmounted — a leftover pending-answer claim
     // from the session just closed must not survive into the next one, or the
-    // first question of a fresh qualification could render already "answered"
-    // (its options swapped for a processing spinner that never resolves).
+    // first data point of a fresh qualification could render already
+    // "answered" (its options swapped for a processing spinner that never
+    // resolves).
     setQuickReply(null);
     quickReplyLockRef.current = null;
+    setQualError(false);
     setFormData({ name: "", email: "", phone: "" });
     setOutcome(null);
     setSubmitErrorKey(null);
@@ -418,10 +374,10 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   return (
     <Dialog open={open} onClose={handleReset} title={t("appointment.title")} size="md" closeLabel={t("buttons.close")}>
       <div className="space-y-6">
-        {/* Progress Bar — the Qualify step appears only when this modal was
-            lent a live voice session. */}
+        {/* Progress Bar — the Data Points step appears only when the caller
+            asked for qualification-first. */}
         <div className="flex items-center justify-between border-b border-white/[0.08] pb-4 overflow-x-auto">
-          {(voice
+          {(qualifyFirst
             ? ([
                 { at: 0 as const, label: t("appointment.stepQualify") },
                 { at: 1 as const, label: t("appointment.stepSelectTime") },
@@ -460,59 +416,44 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
           ))}
         </div>
 
-        {/* Step 0: Voice qualification — interactive AI, started only by an
-            explicit tap; opening the modal never touches the microphone. */}
-        {step === 0 && voice && (
+        {/* Step 0: Data-point qualification — TEXT/BUTTON ONLY. No voice, no
+            microphone, no Vapi, no TTS. The visitor taps Yes/No/Maybe
+            (ஆம்/இல்லை/இருந்தாலும் in Tamil) for six data points; each tap is
+            classified and persisted server-side (POST qualification-status),
+            and the display advances from that authoritative response. */}
+        {step === 0 && qualifyFirst && (
           <div className="space-y-4">
             {qualStage === "intro" && (
-              <Button
-                variant="default"
-                data-testid="start-qualification"
-                onClick={() => {
-                  setQualStage("active");
-                  voice.startCall();
-                }}
-                className="w-full flex items-center justify-center gap-2 text-xs font-semibold"
-              >
-                <Mic className="h-4 w-4" aria-hidden="true" />
-                {t("appointment.qualifyStart")}
-              </Button>
+              <div className="space-y-3">
+                <p className="text-xs text-slate-400 text-center leading-relaxed">{t("appointment.qualifyInProgress")}</p>
+                <Button
+                  variant="default"
+                  data-testid="start-qualification"
+                  onClick={beginQualification}
+                  className="w-full flex items-center justify-center gap-2 text-xs font-semibold min-h-[44px]"
+                >
+                  {t("appointment.qualifyStart")} <ArrowRight className="h-4 w-4" aria-hidden="true" />
+                </Button>
+              </div>
             )}
 
             {qualStage === "active" && (
               <div className="p-4 rounded-xl bg-white/[0.04] border border-white/[0.08] space-y-3">
-                {/* The conversation itself — never just a bare "Listening…".
-                    The AI line shows the AUTHORITATIVE authored question:
-                    seeded with Q1 (it IS the call's opening line), advanced
-                    when a live assistant transcript matches the next
-                    authored question — the exact authored wording is always
-                    what renders, never an ASR paraphrase. The visitor line
-                    is their REAL transcript only; nothing is ever invented. */}
                 {(() => {
                   // The qualification language follows the selected card
                   // language (en/ta authored sets; anything else English) —
-                  // the SAME mapping the call's firstMessage/systemPrompt and
-                  // the server's sequencing tool use.
+                  // the SAME mapping the server's sequencing tool uses.
                   const qualLang = toQualificationLanguage(language);
-                  // ONE source of truth: the active question is decided by the
-                  // SERVER's recorded-answer count, never by the assistant's
-                  // transcript, so the number can never jump ahead of what was
-                  // actually answered, skip, or fall back. The count only
-                  // grows (stale poll responses are dropped by the sequence
-                  // guard above), so this moves strictly forward.
+                  // ONE source of truth: the active data point is decided by
+                  // the SERVER's recorded-answer count, never by client state,
+                  // so the number can never jump ahead of what was actually
+                  // answered, skip, or fall back. The count only grows (a
+                  // stale answer POST is dropped by the run-token guard above),
+                  // so this moves strictly forward.
                   const answeredCount = qualAnswers.reduce((m, a) => Math.max(m, a.n), 0);
                   const active = getActiveQualificationQuestion({ language: qualLang, answeredCount, complete: qualComplete });
                   const qNum = active.number;
-                  const aiLine = active.text;
-                  // A tapped answer only reaches the server while the voice
-                  // session is live. On a connection error or ejection the
-                  // hook sets `error` and drops the session (see
-                  // useVapiSession's error handler), after which every tap
-                  // would be a silent no-op — the SDK's send() does not throw
-                  // on a dead meeting, so the tap's own return value cannot
-                  // catch it. Gate the tappable options on the absence of an
-                  // error instead, and offer a reconnect when one is present.
-                  const voiceLive = !voice.error;
+                  const dpLine = active.text;
                   return (
                     <div className="space-y-2.5" data-testid="qualification-conversation">
                       {qNum > 0 && (
@@ -520,195 +461,105 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                           {t("appointment.qualifyProgress", { n: String(qNum), total: String(active.total) })}
                         </p>
                       )}
-                      {/* Answered questions: the authored question + the
-                          visitor's answer + its YES/NO/MAYBE tag, exactly as
-                          the server recorded them — never reconstructed or
-                          invented client-side. */}
+                      {/* Answered data points: the authored text + its
+                          YES/NO/MAYBE tag, exactly as the server recorded them
+                          — never reconstructed or invented client-side. */}
                       {qualAnswers.length > 0 && (
-                        <div>
-                          <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-1" data-testid="qual-transcript-heading">
-                            {t("transcript.heading", { count: String(qualAnswers.length) })}
-                          </p>
-                          <div className="space-y-2 max-h-36 overflow-y-auto pr-1" data-testid="qual-history">
-                            {qualAnswers.map((ans) => {
-                              const authored = getAuthoredQuestion(ans.n, toQualificationLanguage(language));
-                              const accentBorder =
-                                ans.c === "YES" ? "border-emerald-400/40" : ans.c === "NO" ? "border-rose-400/40" : "border-amber-400/40";
-                              return (
-                                <div key={ans.n} className={`border-l-2 ${accentBorder} pl-2.5`}>
-                                  {authored && (
-                                    <p className="text-[11px] text-slate-400 leading-snug" lang={toQualificationLanguage(language)}>
-                                      {authored.question}
-                                    </p>
-                                  )}
-                                  {/* Closed-ended spec: the English record is ONLY the
-                                      classification — never model-generated content. */}
-                                  <p className="text-[11px] text-slate-200 leading-snug mt-0.5" data-testid={`answer-${ans.n}`}>
-                                    <span className="text-slate-400 font-semibold mr-1.5">User:</span>
-                                    <span
-                                      className={`inline-block px-1.5 py-0.5 rounded-full text-[9px] font-bold align-middle border ${
-                                        ans.c === "YES"
-                                          ? "bg-emerald-500/10 text-emerald-300 border-emerald-400/30"
-                                          : ans.c === "NO"
-                                            ? "bg-rose-500/10 text-rose-300 border-rose-400/30"
-                                            : "bg-amber-500/10 text-amber-300 border-amber-400/30"
-                                      }`}
-                                    >
-                                      {ans.c}
-                                    </span>
+                        <div className="space-y-2 max-h-36 overflow-y-auto pr-1" data-testid="qual-history">
+                          {qualAnswers.map((ans) => {
+                            const authored = getAuthoredQuestion(ans.n, qualLang);
+                            const accentBorder =
+                              ans.c === "YES" ? "border-emerald-400/40" : ans.c === "NO" ? "border-rose-400/40" : "border-amber-400/40";
+                            return (
+                              <div key={ans.n} className={`border-l-2 ${accentBorder} pl-2.5`}>
+                                {authored && (
+                                  <p className="text-[11px] text-slate-400 leading-snug" lang={qualLang}>
+                                    {authored.question}
                                   </p>
-                                </div>
-                              );
-                            })}
-                          </div>
+                                )}
+                                <p className="text-[11px] text-slate-200 leading-snug mt-0.5" data-testid={`answer-${ans.n}`}>
+                                  <span
+                                    className={`inline-block px-1.5 py-0.5 rounded-full text-[9px] font-bold align-middle border ${
+                                      ans.c === "YES"
+                                        ? "bg-emerald-500/10 text-emerald-300 border-emerald-400/30"
+                                        : ans.c === "NO"
+                                          ? "bg-rose-500/10 text-rose-300 border-rose-400/30"
+                                          : "bg-amber-500/10 text-amber-300 border-amber-400/30"
+                                    }`}
+                                  >
+                                    {ans.c}
+                                  </span>
+                                </p>
+                              </div>
+                            );
+                          })}
                         </div>
                       )}
-                      {aiLine && (
-                        <div>
-                          <p className="text-[10px] uppercase tracking-wider text-sky-400 font-semibold mb-1">{t("transcript.aiTwin")}</p>
-                          <p className="text-sm text-slate-100 leading-relaxed" data-testid="current-question" lang={toQualificationLanguage(language)}>
-                            {aiLine}
-                          </p>
-                        </div>
+                      {/* The current data point, in the authoritative authored
+                          wording (never a paraphrase). */}
+                      {dpLine && (
+                        <p className="text-sm text-slate-100 leading-relaxed pt-1" data-testid="current-question" lang={qualLang}>
+                          {dpLine}
+                        </p>
                       )}
-                      {/* Once THIS question's answer has been sent, its
-                          options give way to a processing indicator that
-                          belongs to the same question — so the screen never
-                          shows a question beside a locked, greyed row that
-                          reads as inconsistent. When the server advances,
-                          qNum changes, the pending claim no longer matches,
-                          and the next question renders with a fresh row: the
-                          swap is atomic, question and options always agree. */}
-                      {qNum > 0 && !qualComplete && voice.sendUserMessage && voiceLive && quickReply?.questionNumber === qNum && (
+                      {/* Once THIS data point's answer is in flight, its options
+                          give way to a processing indicator that belongs to the
+                          same data point — so the screen never shows a question
+                          beside a locked, greyed row. When the server advances,
+                          qNum changes, the pending claim no longer matches, and
+                          the next data point renders a fresh row: the swap is
+                          atomic, data point and options always agree. */}
+                      {qNum > 0 && !qualComplete && quickReply?.questionNumber === qNum && (
                         <div className="flex items-center gap-2 pt-1" data-testid="quick-reply-processing" aria-live="polite">
                           <Loader2 className="h-3.5 w-3.5 animate-spin text-sky-400" aria-hidden="true" />
                           <span className="text-xs font-medium text-slate-300">{t("appointment.stateProcessing")}</span>
                         </div>
                       )}
-                      {/* Tap instead of speak. The label IS the word sent
-                          into the conversation, as a USER message, so the
-                          server classifies and records it exactly as it
-                          would a spoken reply — one answer path, not two.
-                          Offered only while a question is actually on screen
-                          and unanswered: never during the introduction,
-                          never in general Talk-with-AI, never after Q6, and
-                          never once this question's answer is in flight. */}
-                      {qNum > 0 && !qualComplete && voice.sendUserMessage && voiceLive && quickReply?.questionNumber !== qNum && (
+                      {/* Tap Yes / No / Maybe. The label IS the answer word the
+                          server classifies — one answer path. Offered only
+                          while a data point is on screen and unanswered, and
+                          never once this data point's answer is in flight. */}
+                      {qNum > 0 && !qualComplete && quickReply?.questionNumber !== qNum && (
                         <div
                           className="flex flex-wrap gap-2 pt-1"
                           role="group"
                           aria-label={t("appointment.quickReplyLabel")}
                           data-testid="quick-replies"
                         >
-                          {active.options.map((option) => {
-                            const answeredThis = quickReply?.questionNumber === qNum;
-                            const chosen = answeredThis && quickReply?.label === option.label;
-                            return (
-                              <button
-                                key={option.classification}
-                                type="button"
-                                lang={qualLang}
-                                disabled={answeredThis}
-                                aria-pressed={chosen}
-                                data-testid={`quick-reply-${option.classification.toLowerCase()}`}
-                                onClick={() => {
-                                  // A question already answered this way must
-                                  // never be answered again. The ref is what
-                                  // makes this hold for a double tap: it is
-                                  // set before the send, so a second click in
-                                  // the same batch — before React has had a
-                                  // chance to re-render or disable anything —
-                                  // is already too late.
-                                  if (quickReplyLockRef.current === qNum || quickReply?.questionNumber === qNum) return;
-                                  quickReplyLockRef.current = qNum;
-                                  const delivered = voice.sendUserMessage?.(option.label);
-                                  if (delivered) {
-                                    setQuickReply({ questionNumber: qNum, label: option.label });
-                                    // Poll now, not in up to 3s — the server
-                                    // will have the answer imminently and the
-                                    // next question should follow promptly.
-                                    setPollNonce((n) => n + 1);
-                                  } else {
-                                    // Undelivered means unanswered: release
-                                    // the claim so the visitor can try again
-                                    // rather than facing a dead row.
-                                    quickReplyLockRef.current = null;
-                                  }
-                                }}
-                                className={`min-h-[44px] flex-1 min-w-[88px] px-3 rounded-xl border text-xs font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 disabled:cursor-not-allowed ${
-                                  chosen
-                                    ? "bg-sky-500/20 border-sky-400/50 text-sky-200"
-                                    : answeredThis
-                                      ? "bg-white/[0.02] border-white/[0.06] text-slate-500"
-                                      : "bg-white/[0.04] border-white/[0.10] text-slate-100 hover:bg-white/[0.08] hover:border-white/20"
-                                }`}
-                              >
-                                {option.label}
-                              </button>
-                            );
-                          })}
+                          {active.options.map((option) => (
+                            <button
+                              key={option.classification}
+                              type="button"
+                              lang={qualLang}
+                              aria-label={option.label}
+                              data-testid={`quick-reply-${option.classification.toLowerCase()}`}
+                              onClick={() => submitAnswer(qNum, option.label)}
+                              className="min-h-[44px] flex-1 min-w-[88px] px-3 rounded-xl border text-xs font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 bg-white/[0.04] border-white/[0.10] text-slate-100 hover:bg-white/[0.08] hover:border-white/20 active:scale-[0.98]"
+                            >
+                              {option.label}
+                            </button>
+                          ))}
                         </div>
                       )}
-                      {/* Voice dropped mid-questionnaire: the tappable options
-                          can no longer deliver an answer (the send silently
-                          no-ops once the session is gone), so they give way to
-                          a clear state and a way back — reconnect to restart
-                          the voice conversation, or use the Skip escape below.
-                          The current question stays on screen; nothing is lost
-                          visually. */}
-                      {qNum > 0 && !qualComplete && voice.sendUserMessage && !voiceLive && (
-                        <div className="space-y-2 pt-1" data-testid="quick-reply-disconnected" role="group" aria-label={t("appointment.voiceDisconnected")}>
-                          <p className="text-xs text-slate-300">{t("appointment.voiceDisconnected")}</p>
-                          <button
-                            type="button"
-                            data-testid="quick-reply-reconnect"
-                            onClick={() => {
-                              // Clear any in-flight claim from the dead session
-                              // so the restarted call's fresh question is
-                              // immediately answerable.
-                              quickReplyLockRef.current = null;
-                              setQuickReply(null);
-                              voice.startCall();
-                            }}
-                            className="min-h-[44px] w-full px-3 rounded-xl border border-sky-400/40 bg-sky-500/10 text-xs font-semibold text-sky-200 hover:bg-sky-500/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 flex items-center justify-center gap-2"
-                          >
-                            <Mic className="h-4 w-4" aria-hidden="true" />
-                            {t("appointment.reconnect")}
-                          </button>
-                        </div>
+                      {/* An answer POST failed — the tap is released so the
+                          visitor can retry the same data point. Honest, brief,
+                          never a "please wait" filler. */}
+                      {qualError && !qualComplete && (
+                        <p className="text-xs text-rose-300" role="alert" data-testid="qual-answer-error">
+                          {t("appointment.qualifyAnswerError")}
+                        </p>
                       )}
                     </div>
                   );
                 })()}
 
-                <div className="flex items-center gap-2.5 pt-2 border-t border-white/[0.06]">
-                  <span className={`h-2.5 w-2.5 rounded-full ${voice.voiceState === "idle" ? "bg-slate-500" : "bg-sky-400 animate-pulse"}`} aria-hidden="true" />
-                  <span className="text-xs font-semibold text-slate-200" data-testid="qual-status" aria-live="polite">
-                    {voice.voiceState === "connecting" || voice.voiceState === "speaking"
-                      ? t("appointment.stateAsking")
-                      : voice.voiceState === "thinking"
-                        ? t("appointment.stateProcessing")
-                        : voice.voiceState === "listening"
-                          ? t("appointment.stateAnswer")
-                          : t("status.availableNow")}
-                  </span>
-                </div>
-                {/* The session's own localized error, surfaced INSIDE the
-                    modal — the card-level alert is visually behind the
-                    backdrop. Skip stays available either way, so a failed
-                    voice start never traps the visitor. */}
-                {voice.error && !qualComplete && (
-                  <p className="text-xs text-rose-300" role="alert" data-testid="qual-voice-error">
-                    {voice.error}
-                  </p>
-                )}
                 {qualComplete && <p className="text-xs text-slate-400">{t("appointment.qualifyDone")}</p>}
                 {qualComplete && (
                   <Button
                     variant="default"
                     data-testid="qualification-continue"
                     onClick={advanceToSlots}
-                    className="w-full flex items-center justify-center gap-2 text-xs font-semibold ai-pulse-glow"
+                    className="w-full flex items-center justify-center gap-2 text-xs font-semibold min-h-[44px] ai-pulse-glow"
                   >
                     {t("appointment.qualifyContinue")} <ArrowRight className="h-4 w-4" aria-hidden="true" />
                   </Button>
@@ -716,9 +567,8 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
               </div>
             )}
 
-            {/* The escape hatch: nobody is ever trapped in the questionnaire.
-                A visitor who skips still books; the lead simply carries no
-                voice qualification. */}
+            {/* The escape hatch: nobody is ever trapped. A visitor who skips
+                still books; the lead simply carries no qualification. */}
             <button
               type="button"
               data-testid="skip-qualification"

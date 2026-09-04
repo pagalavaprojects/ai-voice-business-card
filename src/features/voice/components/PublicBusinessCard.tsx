@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
-import { Mail, Phone, Globe, Calendar, Download, QrCode, MessageCircle, Linkedin, Link2, FileText, X, Loader2, CheckCircle2, Play, Pause as PauseIcon, Volume2, RotateCcw } from "lucide-react";
+import { Mail, Phone, Globe, Calendar, Download, QrCode, MessageCircle, Linkedin, Link2, FileText, X, Loader2, CheckCircle2, Play, Pause as PauseIcon, Volume2, RotateCcw, Mic } from "lucide-react";
 import { useVapiSession } from "@/features/voice/hooks/useVapiSession";
 import { VoiceMicButton } from "@/features/voice/components/VoiceMicButton";
 import { Card } from "@/shared/ui/card";
@@ -12,7 +12,6 @@ import { Dialog } from "@/shared/ui/dialog";
 import { downloadVCard, imageUrlToDataUri } from "@/features/voice/lib/vcard";
 import { speakPitchWithBrowserTts, stopBrowserTts, pauseBrowserTts, resumeBrowserTts } from "@/features/voice/lib/pitchFallback";
 import { DEMO_COMPANY_ID } from "@/shared/lib/demoCard";
-import { getQualificationCallOpening, getQualificationDirective, toQualificationLanguage } from "@/features/voice/lib/qualificationScript";
 import { useLanguage, LocaleBundle } from "@/features/language/hooks/useLanguage";
 import { LanguageSelector } from "@/features/language/components/LanguageSelector";
 import { LanguageGate } from "@/features/language/components/LanguageGate";
@@ -393,7 +392,7 @@ export function PublicBusinessCard({
     else setTimeout(warm, 2500);
   }, [card, languageConfirmed, language, companyId, employeeId]);
 
-  const { voiceState, isMuted, messages, durationSeconds, error, isPlayingIntro, callId, startCall, endCall, toggleMute, sendUserMessage } = useVapiSession({
+  const { voiceState, isMuted, messages, durationSeconds, error, isPlayingIntro, startCall, endCall, toggleMute } = useVapiSession({
     companyId,
     employeeId,
     firstMessage: card?.firstMessage,
@@ -453,9 +452,29 @@ export function PublicBusinessCard({
     }
   }, [language, endCall, stopPitch]);
 
+  // Guards a double-tap on the AI Conversation controls: startCall is async
+  // and voiceState only flips to "connecting" a beat later, so two rapid
+  // clicks would otherwise both pass the idle check and start two sessions.
+  // Written synchronously; released once the call has ended (voiceState back
+  // to idle).
+  const startingCallRef = useRef(false);
   useEffect(() => {
     voiceStateRef.current = voiceState;
+    if (voiceState === "idle") startingCallRef.current = false;
   }, [voiceState]);
+
+  // The ONE shared entry point into the live AI conversation — used by both
+  // the mic button and the labelled "AI Conversation" button, so there is a
+  // single approved Vapi startup path, never two implementations. Explicit,
+  // user-initiated only (Vapi/Daily/mic are never touched until this runs),
+  // and re-entrancy-guarded so a double-click starts exactly one call. The
+  // recorded introduction already delivered the intro content, so the call
+  // opens with the short approved "now you can ask" line, not the intro again.
+  const startAiConversation = useCallback(() => {
+    if (startingCallRef.current || voiceStateRef.current !== "idle") return;
+    startingCallRef.current = true;
+    startCall({ firstMessage: t("mic.nowYouCanAsk") });
+  }, [startCall, t]);
 
   // The live conversation and a pre-recorded pitch are two different audio
   // sources — never let them talk over each other. A call starting (mic
@@ -852,12 +871,7 @@ export function PublicBusinessCard({
                 isCallActive
                   ? endCall
                   : introDone
-                    ? () =>
-                        // The recorded introduction already delivered the
-                        // full introduction content — the call opens with
-                        // the short, approved "now you can ask" line
-                        // instead of speaking the same introduction twice.
-                        startCall({ firstMessage: t("mic.nowYouCanAsk") })
+                    ? startAiConversation
                     : () => playPitch("intro")
               }
               ringActive={false}
@@ -915,14 +929,34 @@ export function PublicBusinessCard({
                 and while it is playing toggles pause — never an overlapping
                 session). Hidden while the intro is playing/paused (Pause/Resume
                 owns that state) and during a live AI call. */}
+            {/* Post-introduction action row: two first-class controls side by
+                side — "AI Conversation" starts the live AI conversation (the
+                shared startAiConversation path; Vapi/mic only on this explicit
+                click), and "Replay" plays the recorded introduction again
+                (playPitch("intro") — never Vapi, never mic). One row, no
+                horizontal overflow at 390px (flex-wrap + min-w-0), touch-sized
+                targets, and rendered in a fixed-height slot so states swapping
+                in and out cause no layout jump. */}
             {introDone && !introActive && !isCallActive && (
-              <div className="flex gap-2 mt-4">
+              <div className="flex flex-wrap items-center justify-center gap-2 mt-4 w-full">
+                <Button
+                  variant="default"
+                  size="sm"
+                  onClick={startAiConversation}
+                  data-testid="ai-conversation"
+                  aria-label={t("mic.aiConversation")}
+                  className="text-xs font-semibold flex items-center justify-center gap-1.5 flex-1 min-w-[140px] min-h-[44px]"
+                >
+                  <Mic className="h-3.5 w-3.5" aria-hidden="true" />
+                  {t("mic.aiConversation")}
+                </Button>
                 <Button
                   variant="outline"
                   size="sm"
                   onClick={() => playPitch("intro")}
                   data-testid="intro-replay"
-                  className="text-xs flex items-center gap-1.5"
+                  aria-label={t("buttons.replay")}
+                  className="text-xs font-semibold flex items-center justify-center gap-1.5 flex-1 min-w-[120px] min-h-[44px]"
                 >
                   <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
                   {t("buttons.replay")}
@@ -1254,43 +1288,13 @@ export function PublicBusinessCard({
         externalBookingUrl={card.bookingUrl}
         language={language}
         t={t}
-        voice={{
-          voiceState,
-          callId,
-          // The qualification call always opens with Q1 + the closed-answer
-          // guidance, in English — never the founder pitch, which belongs
-          // to the card/pitch experience — AND carries its own systemPrompt
-          // with the closed-ended questionnaire directive appended. That
-          // directive is scoped to ONLY this call: the base card.
-          // systemPrompt (used by the plain mic button below, unaffected
-          // here) never includes it, so a general conversation is never
-          // told "this is a strict closed-ended questionnaire." The
-          // qualification script itself is English-only by product
-          // decision regardless of the card's chosen display language —
-          // pitch playback and general conversation remain fully
-          // multilingual and are untouched by this.
-          // The qualification language follows the visitor's selected card
-          // language for the two authored sets (English/Tamil); other card
-          // languages qualify in English. Opening = that language's Q1 +
-          // guidance — never the greeting, never DEFAULT_FIRST_MESSAGE.
-          startCall: () =>
-            startCall({
-              firstMessage: getQualificationCallOpening(toQualificationLanguage(language)),
-              systemPrompt: (card.systemPrompt ?? "") + getQualificationDirective(toQualificationLanguage(language)),
-            }),
-          endCall,
-          messages,
-          // Already-localized error text from the session hook — rendered
-          // inside the modal, since the card's own alert sits behind the
-          // modal backdrop where a failed voice start would be invisible.
-          error,
-          // Lets a tapped Yes/No/Maybe enter the conversation as a user
-          // message, so it travels the same server classification path a
-          // spoken answer does. Passed ONLY to the qualification modal — the
-          // plain mic button below runs a general conversation, which has no
-          // closed-ended answers to tap.
-          sendUserMessage,
-        }}
+        // Open on the six-data-point qualification step. It is TEXT/BUTTON
+        // ONLY — the modal persists each Yes/No/Maybe tap through the
+        // server-authoritative POST qualification-status endpoint itself, with
+        // NO voice, NO microphone and NO Vapi. The card's live AI conversation
+        // (the mic button / "AI Conversation") is a completely separate path
+        // and is not lent to the booking flow any more.
+        qualifyFirst
       />
     </main>
   );
