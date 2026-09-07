@@ -24,18 +24,31 @@ jest.mock("@/core/infrastructure/database/supabase/SupabaseKnowledgeRepository",
   SupabaseKnowledgeRepository: jest.fn().mockImplementation(() => ({ getEmployeeById })),
 }));
 
-const appointmentRows: unknown[] = [];
+// Datasets served per query. appointmentRows = the 24-48h appointment sweep
+// (query uses .gte); leadRows = the unused-lead sweep (from "leads");
+// leadApptRows = the "does this lead have an appointment" lookup (from
+// "appointments" WITHOUT .gte).
+const appointmentRows: Array<Record<string, unknown>> = [];
+const leadRows: Array<Record<string, unknown>> = [];
+const leadApptRows: Array<Record<string, unknown>> = [];
 jest.mock("@/shared/lib/supabase", () => ({
   supabaseAdmin: {
-    from: () => ({
-      select: () => ({
-        gte: () => ({
-          lte: () => ({
-            in: () => ({ limit: async () => ({ data: appointmentRows, error: null }) }),
-          }),
-        }),
-      }),
-    }),
+    from: (table: string) => {
+      const state = { gte: false };
+      const b: Record<string, unknown> = {};
+      for (const m of ["select", "eq", "lte", "order", "limit"]) b[m] = () => b;
+      b.gte = () => {
+        state.gte = true;
+        return b;
+      };
+      b.in = () => b;
+      // Thenable: resolves to the dataset for this query shape.
+      (b as { then: (r: (v: unknown) => void) => void }).then = (resolve) => {
+        const data = table === "leads" ? leadRows : state.gte ? appointmentRows : leadApptRows;
+        resolve({ data, error: null });
+      };
+      return b;
+    },
   },
 }));
 
@@ -76,6 +89,8 @@ describe("reminder cron", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     appointmentRows.length = 0;
+    leadRows.length = 0;
+    leadApptRows.length = 0;
     reminderClaims.clear();
     process.env.CRON_SECRET = "test-secret";
     isConfigured.mockReturnValue(true);
@@ -175,5 +190,106 @@ describe("reminder cron", () => {
     const clientSends = send.mock.calls.filter((c) => c[0] === "+91 94431 25639");
     expect(clientSends).toHaveLength(2); // attempted (failed) then retried (sent)
     expect(addActivity).toHaveBeenCalledTimes(1); // marked only on the successful run
+  });
+});
+
+describe("2-day unused-lead reminder (req 15) — distinct sweep, same engine", () => {
+  const LEAD = {
+    id: "lead-u1",
+    company_id: "c1",
+    employee_id: "e1",
+    name: "Priya",
+    email: "priya@example.com",
+    phone: "+91 98888 12345",
+    status: "NEW",
+    created_at: "2026-09-04T10:00:00Z",
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    appointmentRows.length = 0;
+    leadRows.length = 0;
+    leadApptRows.length = 0;
+    reminderClaims.clear();
+    process.env.CRON_SECRET = "test-secret";
+    isConfigured.mockReturnValue(true);
+    send.mockResolvedValue({ sent: true });
+    getEmployeeById.mockResolvedValue({ id: "e1", name: "Srinivasan", phone: "+91 90000 00000" });
+    getActivityTimeline.mockResolvedValue([]);
+    addActivity.mockResolvedValue({});
+  });
+
+  it("reminds the OWNER about a NEW lead unused ~2 days (no appointment) and writes the distinct marker", async () => {
+    leadRows.push({ ...LEAD });
+
+    const json = await (await GET(request("Bearer test-secret"))).json();
+
+    expect(json.unusedLeads.sent).toBe(1);
+    // Sent to the owner's phone (the one who must follow up), not the lead.
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][0]).toBe("+91 90000 00000");
+    expect(send.mock.calls[0][1]).toContain("Priya");
+    expect(addActivity).toHaveBeenCalledWith("lead-u1", "c1", "NOTE", "lead_unused_reminder_2d", undefined, expect.objectContaining({ kind: "unused_lead_2d" }));
+  });
+
+  it("does NOT remind a lead that already has an appointment — it isn't unused", async () => {
+    leadRows.push({ ...LEAD });
+    leadApptRows.push({ lead_id: "lead-u1" });
+
+    const json = await (await GET(request("Bearer test-secret"))).json();
+
+    expect(json.unusedLeads.sent).toBe(0);
+    expect(send).not.toHaveBeenCalled();
+    expect(addActivity).not.toHaveBeenCalled();
+  });
+
+  it("never reminds the same unused lead twice — the distinct marker short-circuits", async () => {
+    leadRows.push({ ...LEAD });
+    getActivityTimeline.mockResolvedValue([{ content: "lead_unused_reminder_2d" }]);
+
+    const json = await (await GET(request("Bearer test-secret"))).json();
+
+    expect(json.unusedLeads.alreadyReminded).toBe(1);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("skips when the owner has no phone to send to", async () => {
+    leadRows.push({ ...LEAD });
+    getEmployeeById.mockResolvedValue({ id: "e1", name: "Srinivasan", phone: null });
+
+    const json = await (await GET(request("Bearer test-secret"))).json();
+
+    expect(json.unusedLeads.skippedNoOwner).toBe(1);
+    expect(send).not.toHaveBeenCalled();
+    expect(addActivity).not.toHaveBeenCalled();
+  });
+
+  it("releases the claim on a failed send and writes no marker (retry-on-failure preserved)", async () => {
+    leadRows.push({ ...LEAD });
+    send.mockResolvedValue({ sent: false, reason: "http_401" });
+
+    const json = await (await GET(request("Bearer test-secret"))).json();
+
+    expect(json.unusedLeads.sent).toBe(0);
+    expect(releaseClaim).toHaveBeenCalledWith("lead-unused-reminder:lead-u1");
+    expect(addActivity).not.toHaveBeenCalled();
+  });
+
+  it.each([2, 4])("with %i concurrent cron workers, an unused lead is reminded exactly ONCE", async (N) => {
+    leadRows.push({ ...LEAD });
+    const results = await Promise.all(Array.from({ length: N }, () => GET(request("Bearer test-secret"))));
+    const ownerSends = send.mock.calls.filter((c) => c[0] === "+91 90000 00000");
+    expect(ownerSends).toHaveLength(1);
+    for (const r of results) expect(r.status).toBe(200);
+  });
+
+  it("stays a no-op without WhatsApp credentials (delivery externally gated)", async () => {
+    isConfigured.mockReturnValue(false);
+    leadRows.push({ ...LEAD });
+
+    const json = await (await GET(request("Bearer test-secret"))).json();
+
+    expect(json).toEqual({ processed: 0, skipped: "whatsapp_unconfigured" });
+    expect(send).not.toHaveBeenCalled();
   });
 });

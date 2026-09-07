@@ -17,6 +17,9 @@ const knowledgeRepo = new SupabaseKnowledgeRepository();
  * timeline already persists per-lead events durably, and this cannot
  * violate any existing DB constraint on the type column. */
 const REMINDER_MARKER = "whatsapp_reminder_24h";
+/** Idempotency marker for the DISTINCT 2-day unused-lead reminder (req 15) —
+ * separate from the appointment reminder above, on the same timeline. */
+const UNUSED_LEAD_MARKER = "lead_unused_reminder_2d";
 
 /**
  * The ~24-hour WhatsApp follow-up, run once daily by Vercel Cron (see
@@ -134,5 +137,90 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ processed: appointments?.length ?? 0, sent, skippedNoPhone, alreadyReminded });
+  // ============================================================
+  // Second sweep: leads captured but UNUSED for ~2 days (req 15)
+  // ============================================================
+  // DISTINCT from the appointment follow-up above: a lead whose contact was
+  // captured but never advanced (still NEW) and never booked, ~2+ days old,
+  // nudges the OWNER to follow up before it goes cold. It reuses the SAME
+  // engine — notifier, PK-atomic claim, timeline marker — never a second
+  // reminder system. "Unused" uses the authoritative existing state (status
+  // still NEW + no appointment), not an invented field. Bounded to a 48h–120h
+  // window so a genuinely stale lead is reminded once, then ages out.
+  const leadWindowStart = new Date(now - 120 * 3600_000).toISOString();
+  const leadWindowEnd = new Date(now - 48 * 3600_000).toISOString();
+  const { data: unusedLeads, error: leadErr } = await supabaseAdmin
+    .from("leads")
+    .select("id, company_id, employee_id, name, email, phone, status, created_at")
+    .eq("status", "NEW")
+    .gte("created_at", leadWindowStart)
+    .lte("created_at", leadWindowEnd)
+    .limit(50);
+  if (leadErr) Logger.warn("Unused-lead reminder: lead query failed", { error: leadErr.message });
+
+  const candidateLeads = unusedLeads ?? [];
+  // A lead that actually has an appointment is NOT "unused" — exclude it.
+  const bookedLeadIds = new Set<string>();
+  if (candidateLeads.length > 0) {
+    const { data: apptRows } = await supabaseAdmin
+      .from("appointments")
+      .select("lead_id")
+      .in(
+        "lead_id",
+        candidateLeads.map((l) => l.id)
+      );
+    for (const a of apptRows ?? []) if (a.lead_id) bookedLeadIds.add(a.lead_id as string);
+  }
+
+  let leadRemindersSent = 0;
+  let leadSkippedNoOwner = 0;
+  let leadAlreadyReminded = 0;
+  for (const lead of candidateLeads) {
+    if (bookedLeadIds.has(lead.id)) continue; // engaged, not unused
+    try {
+      const [employee, timeline] = await Promise.all([
+        knowledgeRepo.getEmployeeById(lead.employee_id),
+        crmRepo.getActivityTimeline(lead.id),
+      ]);
+      // The reminder goes to the OWNER (the one who captured the lead and
+      // hasn't acted) — no owner phone means nowhere to send it.
+      if (!employee?.phone) {
+        leadSkippedNoOwner++;
+        continue;
+      }
+      if (timeline.some((a) => a.content === UNUSED_LEAD_MARKER)) {
+        leadAlreadyReminded++;
+        continue;
+      }
+      const claim = `lead-unused-reminder:${lead.id}`;
+      if (!(await acquireClaim(claim).catch(() => false))) {
+        leadAlreadyReminded++;
+        continue;
+      }
+      const ownerResult = await whatsapp.send(
+        employee.phone,
+        `Follow-up reminder: the lead ${lead.name ?? "you captured"} (${lead.email}, ${lead.phone}) was captured about 2 days ago and hasn't been contacted or booked yet. A quick WhatsApp/email — or sending them your calendar — could re-engage them.`
+      );
+      if (!ownerResult.sent) {
+        // Retryable next run.
+        await releaseClaim(claim).catch(() => {});
+        continue;
+      }
+      await crmRepo.addActivity(lead.id, lead.company_id, "NOTE", UNUSED_LEAD_MARKER, undefined, { channel: "whatsapp", kind: "unused_lead_2d" });
+      leadRemindersSent++;
+    } catch (err) {
+      Logger.warn("Unused-lead reminder: lead skipped on error", {
+        leadId: lead.id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  return NextResponse.json({
+    processed: appointments?.length ?? 0,
+    sent,
+    skippedNoPhone,
+    alreadyReminded,
+    unusedLeads: { processed: candidateLeads.length, sent: leadRemindersSent, skippedNoOwner: leadSkippedNoOwner, alreadyReminded: leadAlreadyReminded },
+  });
 }
