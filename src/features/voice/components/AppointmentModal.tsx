@@ -10,6 +10,7 @@ import {
   buildAppointmentConfirmedSpeech,
   getActiveQualificationQuestion,
   getAuthoredQuestion,
+  getQuickReplyOptions,
   toQualificationLanguage,
 } from "@/features/voice/lib/qualificationScript";
 import { speakPitchWithBrowserTts } from "@/features/voice/lib/pitchFallback";
@@ -494,7 +495,11 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                                           : "bg-amber-500/10 text-amber-300 border-amber-400/30"
                                     }`}
                                   >
-                                    {ans.c}
+                                    {/* The badge wears the UI language's own answer
+                                        word for the server's classification (ஆம் on a
+                                        Tamil card, not "YES"); the classification itself
+                                        is untouched. */}
+                                    {getQuickReplyOptions(qualLang).find((o) => o.classification === ans.c)?.label ?? ans.c}
                                   </span>
                                 </p>
                               </div>

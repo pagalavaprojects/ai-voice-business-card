@@ -84,9 +84,11 @@ describe("voiceless qualification UI", () => {
   it("renders the server-recorded answers as classification-only records (no free text)", async () => {
     await begin("en");
     fireEvent.click(screen.getByTestId("quick-reply-no"));
-    // The recorded answer shows the classification pill, never a spoken/typed sentence.
+    // The recorded answer shows the fixed answer word for the server's
+    // classification (localised: "No" in English, இல்லை on a Tamil card — see
+    // QualificationAnswerBadgeLocalised.test.tsx), never a spoken/typed sentence.
     await waitFor(() => expect(screen.getByTestId("answer-1")).toBeInTheDocument());
-    expect(screen.getByTestId("answer-1")).toHaveTextContent("NO");
+    expect(screen.getByTestId("answer-1").textContent?.trim()).toBe("No");
   });
 
   it("Continue is absent until all six data points are recorded, and never depends on lead scoring", async () => {
