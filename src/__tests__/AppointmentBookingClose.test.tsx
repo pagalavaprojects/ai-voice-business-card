@@ -171,3 +171,71 @@ describe("AppointmentModal — spoken confirmation after a REAL confirmed bookin
     expect(speak).not.toHaveBeenCalled();
   });
 });
+
+describe("AppointmentModal — AI Conversation CTA on the confirmation result (req 7B)", () => {
+  const onStartAiConversation = jest.fn();
+  const onClose = jest.fn();
+
+  beforeEach(() => {
+    onStartAiConversation.mockClear();
+    onClose.mockClear();
+    global.fetch = jest.fn((url: string, init?: { method?: string }) => {
+      if (init?.method === "POST") return Promise.resolve({ ok: true, status: 200, json: async () => ({ success: true, confirmed: true }) });
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ slots: [{ time: SLOT }] }) });
+    }) as unknown as typeof fetch;
+  });
+
+  async function bookThroughToDone() {
+    render(
+      <AppointmentModal
+        open
+        onClose={onClose}
+        companyId="comp-1"
+        employeeId="emp-1"
+        employeeName="Srinivasan Kandasamy"
+        companyName="Pagalava Data Analytics"
+        language="en"
+        t={t}
+        onStartAiConversation={onStartAiConversation}
+      />
+    );
+    await waitFor(() => expect(screen.getByRole("button", { name: /appointment.nextStep/ })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: /appointment.nextStep/ }));
+    fireEvent.change(screen.getByLabelText("appointment.fullNameLabel"), { target: { value: "Test Visitor" } });
+    fireEvent.change(screen.getByLabelText("appointment.emailLabel"), { target: { value: "visitor@example.com" } });
+    fireEvent.change(screen.getByLabelText("appointment.phoneLabel"), { target: { value: "+911234567890" } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /appointment.confirmBooking/ }));
+    });
+    await waitFor(() => expect(screen.getByText("appointment.confirmedTitle")).toBeInTheDocument());
+  }
+
+  it("shows an AI Conversation CTA on the confirmation, and clicking it closes the modal and starts the shared conversation path", async () => {
+    await bookThroughToDone();
+    const cta = screen.getByTestId("confirmation-ai-conversation");
+    expect(cta).toHaveTextContent("mic.aiConversation");
+    fireEvent.click(cta);
+    expect(onStartAiConversation).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalled(); // handleReset closed the modal first
+  });
+
+  it("does NOT render the CTA when the caller did not lend the conversation path", async () => {
+    global.fetch = jest.fn((url: string, init?: { method?: string }) => {
+      if (init?.method === "POST") return Promise.resolve({ ok: true, status: 200, json: async () => ({ success: true, confirmed: true }) });
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ slots: [{ time: SLOT }] }) });
+    }) as unknown as typeof fetch;
+    render(
+      <AppointmentModal open onClose={jest.fn()} companyId="comp-1" employeeId="emp-1" employeeName="X" companyName="Y" language="en" t={t} />
+    );
+    await waitFor(() => expect(screen.getByRole("button", { name: /appointment.nextStep/ })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: /appointment.nextStep/ }));
+    fireEvent.change(screen.getByLabelText("appointment.fullNameLabel"), { target: { value: "V" } });
+    fireEvent.change(screen.getByLabelText("appointment.emailLabel"), { target: { value: "v@example.com" } });
+    fireEvent.change(screen.getByLabelText("appointment.phoneLabel"), { target: { value: "+911234567890" } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /appointment.confirmBooking/ }));
+    });
+    await waitFor(() => expect(screen.getByText("appointment.confirmedTitle")).toBeInTheDocument());
+    expect(screen.queryByTestId("confirmation-ai-conversation")).toBeNull();
+  });
+});

@@ -439,3 +439,54 @@ describe("Service Pitch label", () => {
     }
   });
 });
+
+describe("Listen telemetry (req 14) — genuine plays only, never prefetch", () => {
+  const listenPosts = () =>
+    (global.fetch as jest.Mock).mock.calls.filter(
+      (c) => String(c[0]).includes("/listen") && (c[1] as { method?: string } | undefined)?.method === "POST"
+    );
+  const bodyOf = (call: unknown[]) => JSON.parse(String((call[1] as { body: string }).body));
+
+  it("records intro_play when the visitor actually plays the Introduction — not on load", async () => {
+    const mic = await mountCard("en");
+    await screen.findByText("Play Introduction");
+    await act(async () => {
+      await Promise.resolve();
+    });
+    // Card load / prefetch must NOT record a listen event.
+    expect(listenPosts()).toHaveLength(0);
+
+    fireEvent.click(mic);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const posts = listenPosts();
+    expect(posts).toHaveLength(1);
+    const body = bodyOf(posts[0]);
+    expect(body.eventType).toBe("intro_play");
+    expect(typeof body.sessionId).toBe("string");
+    expect(body.sessionId.length).toBeGreaterThanOrEqual(8);
+    expect(typeof body.eventId).toBe("string");
+  });
+
+  it("records the matching event type for each Listen pitch, and a distinct event id per play", async () => {
+    await mountCard("en");
+    await screen.findByText("Play Introduction");
+    fireEvent.click(screen.getByTestId("pitch-elevator"));
+    fireEvent.click(screen.getByTestId("pitch-product"));
+    fireEvent.click(screen.getByTestId("pitch-usp"));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const types = listenPosts().map((c) => bodyOf(c).eventType);
+    expect(types).toEqual(expect.arrayContaining(["elevator_play", "product_play", "usp_play"]));
+    const ids = listenPosts().map((c) => bodyOf(c).eventId);
+    expect(new Set(ids).size).toBe(ids.length); // distinct per play
+    // The Smart AI Lead card is not one of the four tracked listening metrics.
+    fireEvent.click(screen.getByTestId("pitch-smart_ai_lead_business_card"));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(listenPosts().map((c) => bodyOf(c).eventType)).not.toContain("smart_play");
+  });
+});

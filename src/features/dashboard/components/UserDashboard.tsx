@@ -8,6 +8,7 @@ import { Button } from "@/shared/ui/button";
 import { apiFetch } from "@/shared/lib/apiClient";
 import { useLivePoll } from "@/features/dashboard/hooks/useLivePoll";
 import { CallVolumeChart, FunnelChart } from "@/features/dashboard/components/charts";
+import { ListeningAnalytics } from "@/features/dashboard/components/ListeningAnalytics";
 
 /**
  * The USER dashboard: only what belongs to the signed-in person's own
@@ -401,6 +402,9 @@ export function UserDashboard() {
           </ul>
         )}
       </Card>
+
+      {/* ---- Per-user card listening analytics (requirement 14) ---- */}
+      <ListeningAnalytics />
     </div>
   );
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
-import { Clock, User, Mail, Phone, CheckCircle2, ArrowRight, Loader2, AlertTriangle, Globe } from "lucide-react";
+import { Clock, User, Mail, Phone, CheckCircle2, ArrowRight, Loader2, AlertTriangle, Globe, Mic } from "lucide-react";
 import { Dialog } from "@/shared/ui/dialog";
 import { Button } from "@/shared/ui/button";
 import { Skeleton } from "@/shared/ui/skeleton";
@@ -39,6 +39,12 @@ interface AppointmentModalProps {
    * never trapped: a skip control is always available. Absent/false (older
    * callers/tests), the modal opens directly on slot selection as before. */
   qualifyFirst?: boolean;
+  /** Starts the card's live AI conversation. When provided, the booking
+   * confirmation (step 3) offers an "AI Conversation" CTA that closes the
+   * modal and invokes this — the SAME approved startCall path the card's own
+   * "AI Conversation"/mic button uses (never a second Vapi implementation).
+   * Absent (older callers/tests): the CTA is not shown. */
+  onStartAiConversation?: () => void;
 }
 
 interface CalcomSlot {
@@ -79,6 +85,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   language,
   t,
   qualifyFirst,
+  onStartAiConversation,
 }) => {
   // Step 0 (voiceless data-point qualification) exists only when the caller
   // asked for it; otherwise the flow starts on slot selection as it always did.
@@ -772,9 +779,30 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                 </p>
               )}
             </div>
-            <Button variant="outline" onClick={handleReset} className="text-xs mt-4">
-              {t("appointment.done")}
-            </Button>
+            <div className="flex items-center justify-center gap-2 mt-4 flex-wrap">
+              {/* AI Conversation from the confirmation result (requirement 7B):
+                  the SAME approved live-conversation path as the card's own
+                  button — closes/resets the modal, then starts the call. Shown
+                  only when the caller lent us that path. Explicit user action;
+                  no Vapi/mic is touched until this click reaches startCall. */}
+              {onStartAiConversation && (
+                <Button
+                  variant="default"
+                  data-testid="confirmation-ai-conversation"
+                  onClick={() => {
+                    handleReset();
+                    onStartAiConversation();
+                  }}
+                  className="text-xs flex items-center gap-1.5"
+                >
+                  <Mic className="h-3.5 w-3.5" aria-hidden="true" />
+                  {t("mic.aiConversation")}
+                </Button>
+              )}
+              <Button variant="outline" onClick={handleReset} className="text-xs">
+                {t("appointment.done")}
+              </Button>
+            </div>
           </div>
         )}
       </div>

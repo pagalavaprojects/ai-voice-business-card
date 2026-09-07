@@ -204,6 +204,46 @@ export function PublicBusinessCard({
   // and voice the OLD pitch's fallback over it.
   const pitchSessionRef = useRef(0);
 
+  // --- Genuine listen-event telemetry (requirement 14) ------------------
+  // A stable per-visit id attributes genuine plays to one card visit without
+  // inventing a user. Lazy + sessionStorage-backed (a same-tab reload reuses
+  // it; a new tab is a new visit); never created for the background prefetch —
+  // only when recordListen actually fires on a real, user-initiated play.
+  const listenSessionRef = useRef<string | null>(null);
+  const getListenSession = useCallback(() => {
+    if (listenSessionRef.current) return listenSessionRef.current;
+    let id: string | null = null;
+    try {
+      id = sessionStorage.getItem("maylaanai.listenSession");
+    } catch {
+      /* private mode / blocked storage */
+    }
+    if (!id) {
+      id = globalThis.crypto?.randomUUID?.() ?? `s-${Date.now()}-${Math.round(Math.random() * 1e9)}`;
+      try {
+        sessionStorage.setItem("maylaanai.listenSession", id);
+      } catch {
+        /* ignore */
+      }
+    }
+    listenSessionRef.current = id;
+    return id;
+  }, []);
+  const recordListen = useCallback(
+    (eventType: "intro_play" | "elevator_play" | "product_play" | "usp_play") => {
+      const eventId = globalThis.crypto?.randomUUID?.() ?? `e-${Date.now()}-${Math.round(Math.random() * 1e9)}`;
+      // Fire-and-forget: analytics must never delay or break playback, and a
+      // failure (or the table not being applied yet) is silently ignored.
+      fetch(`/api/public/${companyId}/${employeeId}/listen`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        keepalive: true,
+        body: JSON.stringify({ sessionId: getListenSession(), eventId, eventType }),
+      }).catch(() => undefined);
+    },
+    [companyId, employeeId, getListenSession]
+  );
+
   const stopPitch = useCallback(() => {
     pitchSessionRef.current++;
     pitchAudioRef.current?.pause();
@@ -506,6 +546,16 @@ export function PublicBusinessCard({
     stopPitch();
     setPitchError(false);
     if (voiceStateRef.current !== "idle") endCall();
+
+    // Record the GENUINE user-initiated play (req 14): only here, past the
+    // pause-toggle and cancel early-returns above, so a pause or a re-click
+    // never counts — and the background prefetch (which never calls playPitch)
+    // is never recorded. The Smart AI Lead card is not one of the four tracked
+    // listening metrics.
+    if (type === "intro") recordListen("intro_play");
+    else if (type === "elevator") recordListen("elevator_play");
+    else if (type === "product") recordListen("product_play");
+    else if (type === "usp") recordListen("usp_play");
 
     // Captured AFTER stopPitch's bump: this value marks THIS pitch's
     // ownership of playback. Every async continuation below re-checks it —
@@ -1295,6 +1345,10 @@ export function PublicBusinessCard({
         // (the mic button / "AI Conversation") is a completely separate path
         // and is not lent to the booking flow any more.
         qualifyFirst
+        // Requirement 7B: after a booking confirmation, offer the SAME live AI
+        // conversation the card's own button starts — one shared startCall
+        // path, never a second Vapi implementation.
+        onStartAiConversation={startAiConversation}
       />
     </main>
   );
