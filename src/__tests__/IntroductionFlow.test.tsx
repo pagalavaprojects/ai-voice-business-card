@@ -141,7 +141,8 @@ describe("English introduction flow", () => {
     });
 
     expect(screen.getByTestId("intro-state-label")).toHaveTextContent("Playing Introduction");
-    expect(screen.getByTestId("intro-pause-resume")).toHaveTextContent("Pause");
+    expect(screen.getByTestId("intro-action")).toHaveAttribute("data-state", "playing");
+    expect(screen.getByTestId("intro-action")).toHaveAccessibleName("Introduction — Pause");
     expect(screen.queryByText("End call")).toBeNull();
     expect(screen.queryByText(/Listening|Thinking|Speaking…/)).toBeNull();
     expect(startCall).not.toHaveBeenCalled();
@@ -157,12 +158,13 @@ describe("English introduction flow", () => {
       FakeAudio.instances[0].onplaying?.();
     });
 
-    fireEvent.click(screen.getByTestId("intro-pause-resume"));
-    expect(screen.getByTestId("intro-pause-resume")).toHaveTextContent("Resume");
+    fireEvent.click(screen.getByTestId("intro-action"));
+    expect(screen.getByTestId("intro-action")).toHaveAttribute("data-state", "paused");
+    expect(screen.getByTestId("intro-action")).toHaveAccessibleName("Introduction — Resume");
     expect(FakeAudio.instances[0].paused).toBe(true);
 
-    fireEvent.click(screen.getByTestId("intro-pause-resume"));
-    expect(screen.getByTestId("intro-pause-resume")).toHaveTextContent("Pause");
+    fireEvent.click(screen.getByTestId("intro-action"));
+    expect(screen.getByTestId("intro-action")).toHaveAttribute("data-state", "playing");
     expect(FakeAudio.instances).toHaveLength(1); // resumed, never re-created
   });
 
@@ -178,7 +180,7 @@ describe("English introduction flow", () => {
     });
 
     expect(screen.getByTestId("intro-state-label")).toHaveTextContent("Tap to Speak");
-    expect(screen.queryByTestId("intro-pause-resume")).toBeNull();
+    expect(screen.getByTestId("intro-action")).toHaveAttribute("data-state", "done");
     expect(startCall).not.toHaveBeenCalled(); // finishing the intro must NOT auto-start the call
 
     fireEvent.click(screen.getByTestId("voice-mic-button"));
@@ -222,7 +224,7 @@ describe("Tamil introduction flow — identical machine, Tamil asset", () => {
       FakeAudio.instances[0].onplaying?.();
     });
     expect(screen.getByTestId("intro-state-label")).toHaveTextContent(taBundle.status.playingIntroduction);
-    expect(screen.getByTestId("intro-pause-resume")).toHaveTextContent(taBundle.buttons.pauseVoice);
+    expect(screen.getByTestId("intro-action")).toHaveAccessibleName(`${taBundle.buttons.introduction} — ${taBundle.buttons.pauseVoice}`);
     expect(startCall).not.toHaveBeenCalled();
 
     await act(async () => {
@@ -237,25 +239,25 @@ describe("Tamil introduction flow — identical machine, Tamil asset", () => {
 });
 
 describe("Replay — replays the recorded introduction, never Vapi/mic", () => {
-  it("is hidden before completion (idle AND while playing) and appears only after the intro finishes", async () => {
+  it("the Introduction control is always offered: Play while idle, Pause while playing, Replay once the intro finishes", async () => {
     const mic = await mountCard("en");
     await screen.findByText("Play Introduction");
-    // Idle: offered Play, no Replay yet.
-    expect(screen.queryByTestId("intro-replay")).toBeNull();
+    expect(screen.getByTestId("intro-action")).toHaveAttribute("data-state", "idle");
+    expect(screen.getByTestId("intro-action")).toHaveAccessibleName("Introduction — Play Introduction");
 
     fireEvent.click(mic);
     await act(async () => {
       FakeAudio.instances[0].onplaying?.();
     });
-    // Playing: Pause/Resume owns the controls, still no Replay.
-    expect(screen.queryByTestId("intro-replay")).toBeNull();
+    expect(screen.getByTestId("intro-action")).toHaveAttribute("data-state", "playing");
 
     await act(async () => {
       FakeAudio.instances[0].onended?.();
     });
-    // Complete: Tap to Speak + Replay, side by side.
+    // Complete: Tap to Speak + the control in its Replay state.
     expect(screen.getByTestId("intro-state-label")).toHaveTextContent("Tap to Speak");
-    expect(screen.getByTestId("intro-replay")).toHaveTextContent("Replay");
+    expect(screen.getByTestId("intro-action")).toHaveAttribute("data-state", "done");
+    expect(screen.getByTestId("intro-action")).toHaveAccessibleName("Introduction — Replay");
   });
 
   it("Replay re-plays the SAME cached intro asset (?type=intro), starts NO Vapi call, and shows the playing state again", async () => {
@@ -268,7 +270,7 @@ describe("Replay — replays the recorded introduction, never Vapi/mic", () => {
     });
     const countAfterFirstPlay = FakeAudio.instances.length; // 1
 
-    fireEvent.click(screen.getByTestId("intro-replay"));
+    fireEvent.click(screen.getByTestId("intro-action"));
     // Exactly one NEW audio element, for the same cached intro URL — not a new
     // type, and no TTS regeneration is implied (same asset the route caches).
     expect(FakeAudio.instances.length).toBe(countAfterFirstPlay + 1);
@@ -290,14 +292,17 @@ describe("Replay — replays the recorded introduction, never Vapi/mic", () => {
       FakeAudio.instances[0].onplaying?.();
       FakeAudio.instances[0].onended?.();
     });
-    fireEvent.click(screen.getByTestId("intro-replay"));
+    fireEvent.click(screen.getByTestId("intro-action"));
     await act(async () => {
       FakeAudio.instances[FakeAudio.instances.length - 1].onplaying?.();
     });
-    // Replaying now: Pause/Resume owns the state, Replay is gone — so a second
-    // tap cannot start a second, overlapping session.
-    expect(screen.queryByTestId("intro-replay")).toBeNull();
-    expect(screen.getByTestId("intro-pause-resume")).toBeInTheDocument();
+    // Replaying now: the same control is in its Pause state — a second tap
+    // pauses; it can never start a second, overlapping session.
+    expect(screen.getByTestId("intro-action")).toHaveAttribute("data-state", "playing");
+    const before = FakeAudio.instances.length;
+    fireEvent.click(screen.getByTestId("intro-action"));
+    expect(FakeAudio.instances.length).toBe(before);
+    expect(screen.getByTestId("intro-action")).toHaveAttribute("data-state", "paused");
     expect(startCall).not.toHaveBeenCalled();
   });
 
@@ -309,8 +314,9 @@ describe("Replay — replays the recorded introduction, never Vapi/mic", () => {
       FakeAudio.instances[0].onplaying?.();
       FakeAudio.instances[0].onended?.();
     });
-    const replay = screen.getByTestId("intro-replay");
-    expect(replay).toHaveTextContent(taBundle.buttons.replay);
+    const replay = screen.getByTestId("intro-action");
+    expect(replay).toHaveTextContent(taBundle.buttons.introduction);
+    expect(replay).toHaveAccessibleName(`${taBundle.buttons.introduction} — ${taBundle.buttons.replay}`);
     fireEvent.click(replay);
     const replayAudio = FakeAudio.instances[FakeAudio.instances.length - 1];
     expect(replayAudio.src).toContain("/pitch?type=intro&lang=ta");
@@ -329,21 +335,21 @@ describe("AI Conversation button — first-class, beside Replay, starts the shar
     });
   }
 
-  it("appears beside Replay only after the introduction completes, not before or during", async () => {
+  it("is visible from the start — idle, while the introduction plays, and after it completes — beside the Introduction control", async () => {
     const mic = await mountCard("en");
     await screen.findByText("Play Introduction");
-    expect(screen.queryByTestId("ai-conversation")).toBeNull(); // idle
+    expect(screen.getByTestId("ai-conversation")).toHaveTextContent("AI Conversation"); // idle
     fireEvent.click(mic);
     await act(async () => {
       FakeAudio.instances[0].onplaying?.();
     });
-    expect(screen.queryByTestId("ai-conversation")).toBeNull(); // playing
+    expect(screen.getByTestId("ai-conversation")).toBeInTheDocument(); // playing
     await act(async () => {
       FakeAudio.instances[0].onended?.();
     });
-    // Completed: AI Conversation and Replay side by side.
+    // Completed: AI Conversation and the Introduction (replay) control side by side.
     expect(screen.getByTestId("ai-conversation")).toHaveTextContent("AI Conversation");
-    expect(screen.getByTestId("intro-replay")).toBeInTheDocument();
+    expect(screen.getByTestId("intro-action")).toHaveAttribute("data-state", "done");
   });
 
   it("clicking AI Conversation starts the live AI conversation (startCall), with the approved post-intro opening", async () => {
@@ -366,7 +372,7 @@ describe("AI Conversation button — first-class, beside Replay, starts the shar
   it("Replay beside it still replays the introduction only — no startCall, no new audio type", async () => {
     await completeIntro("en");
     const before = FakeAudio.instances.length;
-    fireEvent.click(screen.getByTestId("intro-replay"));
+    fireEvent.click(screen.getByTestId("intro-action"));
     expect(startCall).not.toHaveBeenCalled();
     expect(FakeAudio.instances.length).toBe(before + 1);
     expect(FakeAudio.instances[FakeAudio.instances.length - 1].src).toContain("/pitch?type=intro&lang=en");
@@ -482,7 +488,7 @@ describe("Listen telemetry (req 14) — genuine plays only, never prefetch", () 
     await act(async () => {
       FakeAudio.instances[0].onended?.();
     });
-    fireEvent.click(await screen.findByTestId("intro-replay"));
+    fireEvent.click(await screen.findByTestId("intro-action"));
     await act(async () => {
       await Promise.resolve();
     });

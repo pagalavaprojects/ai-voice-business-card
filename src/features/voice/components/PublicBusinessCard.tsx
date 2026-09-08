@@ -458,13 +458,31 @@ export function PublicBusinessCard({
   // pre-generated audio asset (pitch route, type "intro" — the same
   // greeting content the phone path speaks), played through the existing
   // pitch player. INTRO_IDLE → (Play) → INTRO_PLAYING ⇄ INTRO_PAUSED →
-  // INTRO_COMPLETE → the mic button becomes "Tap to Speak" and only THEN
-  // can the interactive AI conversation start. No path exists from intro
+  // INTRO_COMPLETE → the mic button becomes "Tap to Speak". Since 2026-09-08
+  // the live AI conversation is ALSO one explicit tap away at any time via
+  // the [AI Conversation] action below; starting a call fully stops the
+  // introduction (see the isCallActive effect). No path exists from intro
   // playback into a Vapi session, and none of the AI statuses render while
   // it plays. Resets on language switch — each language has its own
   // recorded introduction.
   const [introDone, setIntroDone] = useState(false);
   const introActive = pitchPlaying === "intro" || pitchLoading === "intro";
+  // The single "Introduction" control's state, DERIVED from the existing
+  // player state (never a second state machine): loading → playing ⇄ paused
+  // → done (replay) → idle. Its accessible name carries the visible label
+  // plus the action a tap performs right now.
+  const introActionState: "idle" | "loading" | "playing" | "paused" | "done" =
+    pitchLoading === "intro" ? "loading" : pitchPlaying === "intro" ? (pitchPaused ? "paused" : "playing") : introDone ? "done" : "idle";
+  const introActionHint =
+    introActionState === "playing"
+      ? t("buttons.pauseVoice")
+      : introActionState === "paused"
+        ? t("buttons.resumeVoice")
+        : introActionState === "done"
+          ? t("buttons.replay")
+          : introActionState === "loading"
+            ? t("status.preparingVoice")
+            : t("mic.playIntroduction");
 
   // NO AUTOPLAY OF ANY KIND (2026-08-19 product decision, superseding the
   // earlier best-effort elevator-pitch autoplay that lived here): opening
@@ -526,10 +544,19 @@ export function PublicBusinessCard({
   // pitch; playPitch below does the reverse by ending an active call first.
   useEffect(() => {
     if (isCallActive) {
+      // A FULL stop, not just a pause: bump the session token so any pitch
+      // continuation still in flight (a late onplaying, the stream deadline,
+      // the browser-TTS fallback) is discarded, and silence browser TTS too —
+      // "AI Conversation" is reachable while the introduction is loading or
+      // narrating, and the live call must never share the air with it.
+      pitchSessionRef.current++;
       pitchAudioRef.current?.pause();
       pitchAudioRef.current = null;
+      stopBrowserTts();
+      pitchSourceRef.current = null;
       setPitchPlaying(null);
       setPitchLoading(null);
+      setPitchPaused(false);
     }
   }, [isCallActive]);
 
@@ -922,8 +949,9 @@ export function PublicBusinessCard({
               // been heard, this button PLAYS it; once it has finished, the
               // button becomes Tap to Speak and starts the AI call. While
               // the introduction is playing/paused the button is disabled —
-              // Pause/Resume below are the only playback controls, and
-              // there is no path from here into a Vapi session.
+              // the Introduction action below is the only playback control
+              // (pause/resume/replay), and there is no path from here into
+              // a Vapi session.
               onClick={
                 isCallActive
                   ? endCall
@@ -936,7 +964,8 @@ export function PublicBusinessCard({
               // scripted opening (see useVapiSession.ts) — disabling the
               // button too means no control on screen looks interactive but
               // does nothing. During recorded-intro playback the button is
-              // disabled for the same reason: Pause/Resume own that state.
+              // disabled for the same reason: the Introduction action owns
+              // that state.
               disabled={isPlayingIntro || introActive}
               ariaLabels={{
                 idle: introActive
@@ -953,10 +982,12 @@ export function PublicBusinessCard({
             />
 
             {/* Idle-state copy is the introduction state machine's: Play →
-                Playing Introduction (+Pause/Resume) → Tap to Speak. In-call
-                state copy is the AI conversation's — the two never mix. */}
+                Playing Introduction (the Introduction action pauses/resumes)
+                → Tap to Speak. In-call state copy is the AI conversation's —
+                the two never mix. Polite live region: the state change is
+                announced without stealing focus. */}
             {!isCallActive && (
-              <p className="text-sm text-slate-200 text-center font-semibold mt-4" data-testid="intro-state-label">
+              <p className="text-sm text-slate-200 text-center font-semibold mt-4" data-testid="intro-state-label" aria-live="polite">
                 {introActive
                   ? t("status.playingIntroduction")
                   : introDone
@@ -964,38 +995,21 @@ export function PublicBusinessCard({
                     : t("mic.playIntroduction")}
               </p>
             )}
-            {introActive && (
-              <div className="flex gap-2 mt-4">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={togglePitchPause}
-                  data-testid="intro-pause-resume"
-                  className="text-xs"
-                >
-                  {pitchPaused ? t("buttons.resumeVoice") : t("buttons.pauseVoice")}
-                </Button>
-              </div>
-            )}
-            {/* Replay: once the introduction has FINISHED, this sits beside
-                "Tap to Speak" and plays the SAME recorded introduction again.
-                playPitch("intro") reuses the already-cached ?type=intro asset
-                (no new TTS render) and NEVER starts Vapi or the microphone —
-                it only plays the recorded audio (ending any live call first),
-                and is idempotent (a second tap while it is loading cancels,
-                and while it is playing toggles pause — never an overlapping
-                session). Hidden while the intro is playing/paused (Pause/Resume
-                owns that state) and during a live AI call. */}
-            {/* Post-introduction action row: two first-class controls side by
-                side — "AI Conversation" starts the live AI conversation (the
-                shared startAiConversation path; Vapi/mic only on this explicit
-                click), and "Replay" plays the recorded introduction again
-                (playPitch("intro") — never Vapi, never mic). One row, no
-                horizontal overflow at 390px (flex-wrap + min-w-0), touch-sized
-                targets, and rendered in a fixed-height slot so states swapping
-                in and out cause no layout jump. */}
-            {introDone && !introActive && !isCallActive && (
-              <div className="flex flex-wrap items-center justify-center gap-2 mt-4 w-full">
+            {/* Introduction actions (2026-09-08): the two primary choices are
+                always visible while no live call is running.
+                "AI Conversation" starts the live AI conversation through the
+                ONE shared startAiConversation path (Vapi/mic are touched only
+                on this explicit click; the re-entrancy guard makes a double
+                tap one call). "Introduction" is the ONE recorded-introduction
+                control: idle → play, playing → pause, paused → resume, done →
+                replay — all via playPitch("intro"): the same cached
+                ?type=intro asset, the same provider/voice/fallback, never
+                Vapi, never the microphone, and a genuine listen event only on
+                a real play (intro_play, then intro_replay). One row, flex-wrap
+                + min-w so nothing overflows at 390px, 44px targets. The mic
+                button above keeps its own introduction-first behaviour. */}
+            {!isCallActive && (
+              <div className="flex flex-wrap items-center justify-center gap-2 mt-4 w-full" data-testid="intro-actions">
                 <Button
                   variant="default"
                   size="sm"
@@ -1011,12 +1025,22 @@ export function PublicBusinessCard({
                   variant="outline"
                   size="sm"
                   onClick={() => playPitch("intro")}
-                  data-testid="intro-replay"
-                  aria-label={t("buttons.replay")}
+                  data-testid="intro-action"
+                  data-state={introActionState}
+                  aria-busy={introActionState === "loading" || undefined}
+                  aria-label={`${t("buttons.introduction")} — ${introActionHint}`}
                   className="text-xs font-semibold flex items-center justify-center gap-1.5 flex-1 min-w-[120px] min-h-[44px]"
                 >
-                  <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
-                  {t("buttons.replay")}
+                  {introActionState === "loading" ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                  ) : introActionState === "playing" ? (
+                    <PauseIcon className="h-3.5 w-3.5" aria-hidden="true" />
+                  ) : introActionState === "done" ? (
+                    <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+                  ) : (
+                    <Play className="h-3.5 w-3.5" aria-hidden="true" />
+                  )}
+                  {t("buttons.introduction")}
                 </Button>
               </div>
             )}

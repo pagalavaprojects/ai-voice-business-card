@@ -17,7 +17,7 @@
     "talkWithAI": "{name}-ന്റെ AI-യുമായി സംസാരിക്കൂ",
     "tapToBegin": "ആരംഭിക്കാൻ ടാപ്പ് ചെയ്യുക",
     "tapToSpeak": "സംസാരിക്കാൻ ടാപ്പ് ചെയ്യുക",
-    "aiConversation": "AI Conversation",
+    "aiConversation": "AI സംഭാഷണം",
     "introHelper": "ആമുഖം പൂർത്തിയാകുന്നതുവരെ കാത്തിരിക്കുക.",
     "connectingHelper": "സുരക്ഷിത വോയ്സ് കണക്ഷൻ സ്ഥാപിക്കുന്നു…",
     "thinkingHelper": "മറുപടി തയ്യാറാക്കുന്നു…",
@@ -42,7 +42,8 @@
     "close": "അടയ്ക്കുക",
     "pauseVoice": "താൽക്കാലികമായി നിർത്തൂ",
     "resumeVoice": "തുടരൂ",
-    "replay": "വീണ്ടും കേൾക്കുക"
+    "replay": "വീണ്ടും കേൾക്കുക",
+    "introduction": "ആമുഖം"
   },
   "sections": {
     "tryAsking": "ചോദിച്ചു നോക്കൂ",

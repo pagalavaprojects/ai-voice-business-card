@@ -42,7 +42,8 @@
     "close": "Close",
     "pauseVoice": "Pause",
     "resumeVoice": "Resume",
-    "replay": "Replay"
+    "replay": "Replay",
+    "introduction": "Introduction"
   },
   "sections": {
     "tryAsking": "Try asking",

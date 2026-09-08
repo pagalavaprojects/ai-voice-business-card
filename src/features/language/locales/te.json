@@ -17,7 +17,7 @@
     "talkWithAI": "{name} యొక్క AI తో మాట్లాడండి",
     "tapToBegin": "ప్రారంభించడానికి నొక్కండి",
     "tapToSpeak": "మాట్లాడటానికి నొక్కండి",
-    "aiConversation": "AI Conversation",
+    "aiConversation": "AI సంభాషణ",
     "introHelper": "పరిచయం పూర్తయ్యే వరకు వేచి ఉండండి.",
     "connectingHelper": "సురక్షిత కనెక్షన్‌ని ఏర్పాటు చేస్తోంది…",
     "thinkingHelper": "మీ సమాధానంపై పని చేస్తోంది…",
@@ -42,7 +42,8 @@
     "close": "మూసివేయి",
     "pauseVoice": "ఆపండి",
     "resumeVoice": "కొనసాగించండి",
-    "replay": "మళ్లీ వినండి"
+    "replay": "మళ్లీ వినండి",
+    "introduction": "పరిచయం"
   },
   "sections": {
     "tryAsking": "అడిగి చూడండి",

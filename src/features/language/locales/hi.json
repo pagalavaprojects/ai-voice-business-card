@@ -17,7 +17,7 @@
     "talkWithAI": "{name} के AI से बात करें",
     "tapToBegin": "शुरू करने के लिए टैप करें",
     "tapToSpeak": "बोलने के लिए टैप करें",
-    "aiConversation": "AI Conversation",
+    "aiConversation": "AI बातचीत",
     "introHelper": "कृपया परिचय समाप्त होने तक प्रतीक्षा करें — इसके तुरंत बाद माइक्रोफ़ोन अपने आप चालू हो जाएगा।",
     "connectingHelper": "सुरक्षित वॉइस कनेक्शन सेट किया जा रहा है…",
     "thinkingHelper": "आपके उत्तर पर काम कर रहा है…",
@@ -42,7 +42,8 @@
     "close": "बंद करें",
     "pauseVoice": "रोकें",
     "resumeVoice": "जारी रखें",
-    "replay": "फिर से सुनें"
+    "replay": "फिर से सुनें",
+    "introduction": "परिचय"
   },
   "sections": {
     "tryAsking": "यह पूछ कर देखें",
