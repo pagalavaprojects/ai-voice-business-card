@@ -41,7 +41,12 @@ function builder(table: string) {
 
 jest.mock("@/shared/lib/dashboardScope", () => ({ requireOwnCompanyScope: (...a: unknown[]) => requireOwnCompanyScope(...a) }));
 jest.mock("@/shared/lib/supabase", () => ({ supabaseAdmin: { from: (t: string) => builder(t) } }));
-jest.mock("@/shared/lib/security", () => ({ formatApiResponse: (data: unknown, status: number, message: string) => ({ status, json: async () => ({ data, message }) }) }));
+jest.mock("@/shared/lib/security", () => ({
+  formatApiResponse: (data: unknown, status: number, message: string) => {
+    const headers = new Map<string, string>();
+    return { status, headers, json: async () => ({ data, message }) };
+  },
+}));
 jest.mock("@/shared/lib/apiHandler", () => ({ handleApiError: () => ({ status: 500, json: async () => ({}) }) }));
 
 import { NextRequest } from "next/server";
@@ -353,5 +358,13 @@ describe("range contract — Today | 7 Days (viewer's local calendar days)", () 
     const d = await body(qs());
     expect(d.range).toBe("7d");
     expect((await GET(req(`?todayStart=${encodeURIComponent(new Date(Date.now() + 3 * DAY).toISOString())}`))).status).toBe(400);
+  });
+});
+
+describe("response caching", () => {
+  it("marks the per-user payload private and non-cacheable (never a shared-cache candidate)", async () => {
+    const res = await GET(req());
+    expect(res.status).toBe(200);
+    expect((res as unknown as { headers: Map<string, string> }).headers.get("Cache-Control")).toBe("private, no-store");
   });
 });

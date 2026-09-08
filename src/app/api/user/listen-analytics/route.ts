@@ -295,7 +295,7 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    return formatApiResponse(
+    const res = formatApiResponse(
       {
         range,
         windows: { todayStart: new Date(todayStart).toISOString(), weekStart: new Date(weekStart).toISOString(), rangeStart: new Date(rangeStart).toISOString() },
@@ -322,6 +322,9 @@ export async function GET(req: NextRequest) {
       200,
       "Listening analytics retrieved"
     );
+    // Per-user, session-scoped data: never cacheable by a shared cache.
+    res.headers.set("Cache-Control", "private, no-store");
+    return res;
   } catch (error) {
     return handleApiError(error);
   }
