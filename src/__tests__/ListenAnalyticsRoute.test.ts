@@ -112,7 +112,12 @@ describe("aggregation", () => {
     expect(body.trend[6].plays).toBe(2); // today
     expect(body.trend[3].plays).toBe(1); // three days ago
     expect(body.trend.reduce((n: number, t: { plays: number }) => n + t.plays, 0)).toBe(3);
-    // Days are consecutive ISO dates ending today.
+    // Buckets are consecutive 24h windows ending today, keyed by their START
+    // INSTANT — the viewer's local midnight — never by a UTC calendar date
+    // (which is the previous day for anyone east of UTC).
+    const localMidnight = new Date();
+    localMidnight.setHours(0, 0, 0, 0);
+    expect(body.trend[6].day).toBe(localMidnight.toISOString());
     for (let i = 1; i < 7; i++) expect(Date.parse(body.trend[i].day) - Date.parse(body.trend[i - 1].day)).toBe(24 * 3600_000);
   });
 

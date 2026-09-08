@@ -41,9 +41,10 @@ function Tile({ label, value, testId }: { label: string; value: number; testId?:
   );
 }
 
-/** "Mon 7 Sep" from an ISO day, in the viewer's locale; falls back to the raw day. */
+/** "Mon 7 Sep" for a bucket's start instant (the viewer's local midnight),
+ * formatted in the viewer's own zone; falls back to the raw value. */
 function dayLabel(day: string): string {
-  const d = new Date(`${day}T12:00:00`);
+  const d = new Date(day);
   return Number.isNaN(d.getTime()) ? day : d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
 }
 

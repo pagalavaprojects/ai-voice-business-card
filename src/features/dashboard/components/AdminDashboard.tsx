@@ -12,6 +12,7 @@ import { useLivePoll } from "@/features/dashboard/hooks/useLivePoll";
 import { useToast } from "@/shared/ui/toast";
 import { toCsv, downloadCsv } from "@/shared/lib/csv";
 import { CallVolumeChart } from "@/features/dashboard/components/charts";
+import { ListeningAnalytics } from "@/features/dashboard/components/ListeningAnalytics";
 
 interface RecentLead {
   id: string;
@@ -939,6 +940,12 @@ export function AdminDashboard() {
           </div>
         </>
       ) : null}
+
+      {/* ---- Card listening analytics (requirement 14). The owner/admin
+          experience needs the aggregate view as much as a staff member does;
+          the section fetches its own scoped endpoint and never touches the
+          live-poll numbers above. ---- */}
+      <ListeningAnalytics />
     </div>
   );
 }

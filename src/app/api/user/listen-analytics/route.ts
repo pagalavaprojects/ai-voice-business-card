@@ -102,7 +102,11 @@ export async function GET(req: NextRequest) {
       s[k] += 1;
       s.total += 1;
     }
-    const trend = trendCounts.map((plays, i) => ({ day: new Date(trendStart + i * DAY_MS).toISOString().slice(0, 10), plays }));
+    // Each bucket is keyed by its START INSTANT (the viewer's local midnight
+    // that day), never by a UTC calendar date: for a viewer east of UTC the
+    // UTC date of local midnight is the PREVIOUS day, which mislabels every
+    // bucket. The dashboard formats the instant in the viewer's own zone.
+    const trend = trendCounts.map((plays, i) => ({ day: new Date(trendStart + i * DAY_MS).toISOString(), plays }));
 
     // --- Data points answered per lead (from existing qualification_notes) ---
     let leadQuery = supabaseAdmin
