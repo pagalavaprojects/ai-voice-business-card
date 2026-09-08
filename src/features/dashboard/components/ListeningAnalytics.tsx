@@ -38,6 +38,7 @@ interface UserRow {
   key: string;
   label: string;
   kind: "lead" | "visitor";
+  identified: boolean;
   leadId: string | null;
   email: string | null;
   plays: Plays;
@@ -266,7 +267,7 @@ export function ListeningAnalytics({ variant = "summary" }: { variant?: "summary
                             <tr key={u.key} data-testid={`listen-user-${u.key}`}>
                               <th scope="row" className="text-left px-3 py-2 font-medium whitespace-nowrap">
                                 {u.label}
-                                {u.kind === "visitor" && <span className="ml-1 text-[10px] text-slate-500">(not yet identified)</span>}
+                                {!u.identified && <span className="ml-1 text-[10px] text-slate-500">(not yet identified)</span>}
                               </th>
                               {CLIPS.map((c) => (
                                 <td key={c.key} className="text-right px-3 py-2 tabular-nums">
@@ -319,6 +320,7 @@ export function ListeningAnalytics({ variant = "summary" }: { variant?: "summary
                             <tr key={u.key} data-testid={`dp-user-${u.key}`}>
                               <th scope="row" className="text-left px-3 py-2 font-medium whitespace-nowrap">
                                 {u.label}
+                                {!u.identified && <span className="ml-1 text-[10px] text-slate-500">(not yet identified)</span>}
                               </th>
                               {u.dataPoints.map((c, i) => (
                                 <td key={i} className={`text-center px-3 py-2 ${c ? DP_CLASS[c] : "text-slate-600"}`}>

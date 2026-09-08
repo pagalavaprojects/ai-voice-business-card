@@ -29,6 +29,7 @@ const user = (over: Record<string, unknown>) => ({
   key: "visitor:sessXXXX",
   label: "Visitor sessXXXX",
   kind: "visitor",
+  identified: false,
   leadId: null,
   email: null,
   plays: { intro: 0, replay: 0, elevator: 0, product: 0, usp: 0, smart: 0, total: 0 },

@@ -91,15 +91,43 @@ describe("per-user listening + data points", () => {
     const d = await body();
     expect(d.listenStatus).toBe("ok");
     const asha = d.users.find((u: { key: string }) => u.key === "lead:lead-1");
-    expect(asha).toMatchObject({ label: "Asha", kind: "lead", email: "asha@example.com", answered: 3, completed: false });
+    expect(asha).toMatchObject({ label: "Asha", kind: "lead", identified: true, email: "asha@example.com", answered: 3, completed: false });
     expect(asha.plays).toEqual({ intro: 1, replay: 1, elevator: 1, product: 0, usp: 0, smart: 1, total: 4 });
     expect(asha.dataPoints).toEqual(["YES", "NO", "MAYBE", null, null, null]);
     const visitor = d.users.find((u: { key: string }) => u.key === "visitor:sessBBBBBB");
-    expect(visitor).toMatchObject({ label: "Visitor sessBBBB", kind: "visitor", answered: 0 });
+    expect(visitor).toMatchObject({ label: "Visitor sessBBBB", kind: "visitor", identified: false, answered: 0 });
     expect(visitor.plays).toMatchObject({ usp: 1, product: 1, total: 2 });
     // Two users, not three: the linked visit and its lead are ONE user.
     expect(d.users).toHaveLength(2);
     expect(d.totals.todayUsers).toBe(2);
+  });
+
+  it("labels a placeholder lead (qualification tool's 'Voice qualification visitor' + internal address) as an unidentified 'Lead <id>', never as a named person", async () => {
+    const now = iso(0);
+    listenResult = { data: [{ event_type: "usp_play", session_id: "sessQQQQQQ", lead_id: "abcdef12-0000-0000-0000-000000000000", created_at: now }], error: null };
+    leadsResult = {
+      data: [{ id: "abcdef12-0000-0000-0000-000000000000", name: "Voice qualification visitor", email: "qualifying-x@placeholder.maylaanai.internal", qualification_notes: dp(1, "YES", now), created_at: now }],
+      error: null,
+    };
+    const d = await body();
+    expect(d.users).toHaveLength(1);
+    expect(d.users[0]).toMatchObject({ label: "Lead abcdef12", kind: "lead", identified: false, email: null, answered: 1 });
+    expect(d.users[0].plays.usp).toBe(1);
+  });
+
+  it("keeps long custom visit ids distinguishable in the visitor label", async () => {
+    const now = iso(0);
+    listenResult = {
+      data: [
+        { event_type: "intro_play", session_id: "zle-post-deploy-1788800000", lead_id: null, created_at: now },
+        { event_type: "intro_play", session_id: "zle-post-deploy-1788800999", lead_id: null, created_at: now },
+      ],
+      error: null,
+    };
+    const d = await body();
+    const labels = d.users.map((u: { label: string }) => u.label);
+    expect(new Set(labels).size).toBe(2);
+    expect(labels).toEqual(expect.arrayContaining(["Visitor zle-post…0000", "Visitor zle-post…0999"]));
   });
 
   it("lists a lead that answered data points but never listened, with 0 plays and 6/6 completion", async () => {

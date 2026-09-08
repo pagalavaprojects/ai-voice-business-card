@@ -59,6 +59,9 @@ interface UserRow {
   key: string;
   label: string;
   kind: "lead" | "visitor";
+  /** False until the visitor gave real contact details (a bare visit, or a
+   * placeholder lead created by the qualification tool). */
+  identified: boolean;
   leadId: string | null;
   email: string | null;
   plays: Plays;
@@ -83,6 +86,24 @@ interface ListenRow {
 }
 
 const emptyPlays = (): Plays => ({ intro: 0, replay: 0, elevator: 0, product: 0, usp: 0, smart: 0, total: 0 });
+
+/** The qualification tool creates a placeholder lead ("Voice qualification
+ * visitor" with an @placeholder.maylaanai.internal address) until the visitor
+ * gives real contact details. Such a lead is a real user but not yet
+ * identified — it must not be labelled as if it were a named person. */
+const PLACEHOLDER_NAME = /^voice qualification visitor$/i;
+const PLACEHOLDER_EMAIL = /@placeholder\.maylaanai\.internal$/i;
+function identityOf(lead: LeadRow | undefined, leadId: string): { label: string; email: string | null; identified: boolean } {
+  const name = lead?.name?.trim() ?? "";
+  const email = lead?.email?.trim() ?? "";
+  const realName = name && !PLACEHOLDER_NAME.test(name) ? name : "";
+  const realEmail = email && !PLACEHOLDER_EMAIL.test(email) ? email : "";
+  if (realName || realEmail) return { label: realName || realEmail, email: realEmail || null, identified: true };
+  return { label: `Lead ${leadId.slice(0, 8)}`, email: null, identified: false };
+}
+/** A visit id that is not a UUID (e.g. a long custom id) keeps its tail too,
+ * so two visits never share a label. */
+const shortId = (s: string) => (s.length > 12 ? `${s.slice(0, 8)}…${s.slice(-4)}` : s.slice(0, 8));
 
 /** The persisted data-point record: one line per answered data point,
  * first record per number wins (the tool never overwrites). Only DP1–DP6
@@ -182,13 +203,14 @@ export async function GET(req: NextRequest) {
       let u = users.get(key);
       if (u) return u;
       const leadId = key.startsWith("lead:") ? key.slice(5) : null;
-      const lead = leadId ? leadRows.get(leadId) : undefined;
+      const identity = leadId ? identityOf(leadRows.get(leadId), leadId) : { label: `Visitor ${shortId(session ?? "")}`, email: null, identified: false };
       u = {
         key,
-        label: leadId ? lead?.name?.trim() || lead?.email || "Lead" : `Visitor ${(session ?? "").slice(0, 8)}`,
+        label: identity.label,
         kind: leadId ? "lead" : "visitor",
+        identified: identity.identified,
         leadId,
-        email: lead?.email ?? null,
+        email: identity.email,
         plays: emptyPlays(),
         dataPoints: [null, null, null, null, null, null],
         answered: 0,
