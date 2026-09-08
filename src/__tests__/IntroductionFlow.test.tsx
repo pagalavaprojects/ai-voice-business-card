@@ -469,6 +469,28 @@ describe("Listen telemetry (req 14) — genuine plays only, never prefetch", () 
     expect(typeof body.eventId).toBe("string");
   });
 
+  it("records a second Introduction play in the same visit as intro_replay (Replay button), not another intro_play", async () => {
+    const mic = await mountCard("en");
+    await screen.findByText("Play Introduction");
+    fireEvent.click(mic);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(listenPosts().map((c) => bodyOf(c).eventType)).toEqual(["intro_play"]);
+
+    // The Introduction finishes; the Replay button is offered.
+    await act(async () => {
+      FakeAudio.instances[0].onended?.();
+    });
+    fireEvent.click(await screen.findByTestId("intro-replay"));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(listenPosts().map((c) => bodyOf(c).eventType)).toEqual(["intro_play", "intro_replay"]);
+    const ids = listenPosts().map((c) => bodyOf(c).eventId);
+    expect(new Set(ids).size).toBe(2); // a fresh event id per play
+  });
+
   it("records the matching event type for each Listen pitch, and a distinct event id per play", async () => {
     await mountCard("en");
     await screen.findByText("Play Introduction");
@@ -482,11 +504,11 @@ describe("Listen telemetry (req 14) — genuine plays only, never prefetch", () 
     expect(types).toEqual(expect.arrayContaining(["elevator_play", "product_play", "usp_play"]));
     const ids = listenPosts().map((c) => bodyOf(c).eventId);
     expect(new Set(ids).size).toBe(ids.length); // distinct per play
-    // The Smart AI Lead card is not one of the four tracked listening metrics.
+    // The Smart AI Lead card has its own metric on the dashboard.
     fireEvent.click(screen.getByTestId("pitch-smart_ai_lead_business_card"));
     await act(async () => {
       await Promise.resolve();
     });
-    expect(listenPosts().map((c) => bodyOf(c).eventType)).not.toContain("smart_play");
+    expect(listenPosts().map((c) => bodyOf(c).eventType)).toContain("smart_play");
   });
 });

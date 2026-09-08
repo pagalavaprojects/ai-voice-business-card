@@ -42,12 +42,12 @@ describe("validation + canonical event model", () => {
     expect(opts).toMatchObject({ onConflict: "event_id", ignoreDuplicates: true });
   });
 
-  it.each(["elevator_play", "product_play", "usp_play"])("accepts %s", async (eventType) => {
+  it.each(["intro_replay", "elevator_play", "product_play", "usp_play", "smart_play"])("accepts %s", async (eventType) => {
     expect((await POST(post({ ...good, eventType }), PARAMS)).status).toBe(200);
   });
 
   it("rejects an unknown event type (no arbitrary events)", async () => {
-    expect((await POST(post({ ...good, eventType: "smart_play" }), PARAMS)).status).toBe(400);
+    expect((await POST(post({ ...good, eventType: "prefetch_play" }), PARAMS)).status).toBe(400);
     expect((await POST(post({ ...good, eventType: "hack" }), PARAMS)).status).toBe(400);
     expect(upsert).not.toHaveBeenCalled();
   });

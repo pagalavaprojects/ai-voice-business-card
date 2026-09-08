@@ -14,19 +14,29 @@ export const dynamic = "force-dynamic";
  * employee-scoped exactly like the rest of the dashboard: an OWNER/ADMIN sees
  * the whole company, a staff member only their own employee's rows.
  *
- * Fail-open: while the listen_events table is pending its authorized apply, the
- * listen section reports telemetryEnabled:false with empty counts instead of
- * erroring — the data-point-per-lead view (from existing qualification_notes)
- * still works, since it needs no new table.
+ * Reports, per the business ask: plays per clip (Introduction, Introduction
+ * replays, Elevator, Service, Why Us, Smart AI Lead), users who listened
+ * today / this week, total plays today / this week, a 7-day daily trend,
+ * per-visitor breakdown, data points answered per lead (from the existing
+ * qualification record) and appointments booked (from the appointments table).
+ *
+ * Fail-open: if the listen_events table is ever unavailable, the listen
+ * section reports telemetryEnabled:false with empty counts instead of
+ * erroring — the data-point and appointment views need no new table.
  */
-const TYPES = ["intro_play", "elevator_play", "product_play", "usp_play"] as const;
+const TYPES = ["intro_play", "intro_replay", "elevator_play", "product_play", "usp_play", "smart_play"] as const;
 type EventType = (typeof TYPES)[number];
-const KEY: Record<EventType, "intro" | "elevator" | "product" | "usp"> = {
+type TypeKey = "intro" | "replay" | "elevator" | "product" | "usp" | "smart";
+const KEY: Record<EventType, TypeKey> = {
   intro_play: "intro",
+  intro_replay: "replay",
   elevator_play: "elevator",
   product_play: "product",
   usp_play: "usp",
+  smart_play: "smart",
 };
+const DAY_MS = 24 * 3600_000;
+const TREND_DAYS = 7;
 
 export async function GET(req: NextRequest) {
   try {
@@ -36,16 +46,22 @@ export async function GET(req: NextRequest) {
     const ownEmployeeId = scope.employeeId ?? "00000000-0000-0000-0000-000000000000";
 
     const now = Date.now();
+    // The dashboard passes its LOCAL midnight so "today" and the daily trend
+    // buckets follow the viewer's calendar, not the server's UTC day.
     const todayStartParam = req.nextUrl.searchParams.get("todayStart");
     const todayStart = todayStartParam && !Number.isNaN(Date.parse(todayStartParam)) ? Date.parse(todayStartParam) : new Date(new Date(now).toISOString().slice(0, 10)).getTime();
-    const weekStart = now - 7 * 24 * 3600_000;
+    // The trend window: the 7 local days ending today. The listen query is
+    // bounded by it (a superset of the rolling 7x24h "this week" window).
+    const trendStart = todayStart - (TREND_DAYS - 1) * DAY_MS;
+    const weekStart = now - 7 * DAY_MS;
+    const queryStart = Math.min(trendStart, weekStart);
 
     // --- Listen events (fail-open on a missing table) ---
     let listenQuery = supabaseAdmin
       .from("listen_events")
       .select("event_type, session_id, created_at")
       .eq("company_id", companyId)
-      .gte("created_at", new Date(weekStart).toISOString())
+      .gte("created_at", new Date(queryStart).toISOString())
       .order("created_at", { ascending: false })
       .limit(5000);
     if (employeeScoped) listenQuery = listenQuery.eq("employee_id", ownEmployeeId);
@@ -54,24 +70,39 @@ export async function GET(req: NextRequest) {
     const telemetryEnabled = !(listen.error && listen.error.code === "42P01");
     const rows = (telemetryEnabled ? (listen.data ?? []) : []) as Array<{ event_type: string; session_id: string; created_at: string }>;
 
-    const byType = { intro: 0, elevator: 0, product: 0, usp: 0 };
+    const byType: Record<TypeKey, number> = { intro: 0, replay: 0, elevator: 0, product: 0, usp: 0, smart: 0 };
     const todaySessions = new Set<string>();
     const weekSessions = new Set<string>();
-    const perSession = new Map<string, { session: string; intro: number; elevator: number; product: number; usp: number; total: number; lastAt: string }>();
+    let todayPlays = 0;
+    let weekPlays = 0;
+    const trendCounts = new Array<number>(TREND_DAYS).fill(0);
+    const perSession = new Map<string, { session: string; intro: number; replay: number; elevator: number; product: number; usp: number; smart: number; total: number; lastAt: string }>();
     for (const r of rows) {
       const k = KEY[r.event_type as EventType];
       if (!k) continue;
-      byType[k] += 1;
-      weekSessions.add(r.session_id);
-      if (Date.parse(r.created_at) >= todayStart) todaySessions.add(r.session_id);
+      const at = Date.parse(r.created_at);
+      const inWeek = at >= weekStart;
+      if (inWeek) {
+        byType[k] += 1;
+        weekPlays += 1;
+        weekSessions.add(r.session_id);
+      }
+      if (at >= todayStart) {
+        todayPlays += 1;
+        todaySessions.add(r.session_id);
+      }
+      const dayIdx = Math.floor((at - trendStart) / DAY_MS);
+      if (dayIdx >= 0 && dayIdx < TREND_DAYS) trendCounts[dayIdx] += 1;
+      if (!inWeek) continue;
       let s = perSession.get(r.session_id);
       if (!s) {
-        s = { session: r.session_id.slice(0, 8), intro: 0, elevator: 0, product: 0, usp: 0, total: 0, lastAt: r.created_at };
+        s = { session: r.session_id.slice(0, 8), intro: 0, replay: 0, elevator: 0, product: 0, usp: 0, smart: 0, total: 0, lastAt: r.created_at };
         perSession.set(r.session_id, s);
       }
       s[k] += 1;
       s.total += 1;
     }
+    const trend = trendCounts.map((plays, i) => ({ day: new Date(trendStart + i * DAY_MS).toISOString().slice(0, 10), plays }));
 
     // --- Data points answered per lead (from existing qualification_notes) ---
     let leadQuery = supabaseAdmin
@@ -96,13 +127,31 @@ export async function GET(req: NextRequest) {
       .filter((d: { answered: number }) => d.answered > 0)
       .slice(0, 20);
 
+    // --- Appointments booked (same scope; BOOKED = confirmed by the calendar,
+    // REQUESTED = awaiting confirmation — never conflated) ---
+    let apptQuery = supabaseAdmin.from("appointments").select("status, created_at").eq("company_id", companyId).order("created_at", { ascending: false }).limit(5000);
+    if (employeeScoped) apptQuery = apptQuery.eq("employee_id", ownEmployeeId);
+    const appts = await apptQuery;
+    const apptRows = (appts.error ? [] : (appts.data ?? [])) as Array<{ status?: string; created_at?: string }>;
+    const appointments = { bookedWeek: 0, bookedTotal: 0, requestedTotal: 0 };
+    for (const a of apptRows) {
+      if (a.status === "BOOKED") {
+        appointments.bookedTotal += 1;
+        if (a.created_at && Date.parse(a.created_at) >= weekStart) appointments.bookedWeek += 1;
+      } else if (a.status === "REQUESTED") {
+        appointments.requestedTotal += 1;
+      }
+    }
+
     return formatApiResponse(
       {
         telemetryEnabled,
-        totals: { todayUsers: todaySessions.size, weekUsers: weekSessions.size },
+        totals: { todayUsers: todaySessions.size, weekUsers: weekSessions.size, todayPlays, weekPlays },
         byType,
+        trend,
         perSession: [...perSession.values()].sort((a, b) => b.total - a.total).slice(0, 20),
         dataPointsByLead,
+        appointments,
       },
       200,
       "Listening analytics retrieved"

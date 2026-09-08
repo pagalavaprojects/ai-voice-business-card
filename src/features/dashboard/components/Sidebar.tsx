@@ -30,7 +30,13 @@ import { cn } from "@/shared/ui/button";
 import { useCompany } from "@/features/dashboard/context/CompanyContext";
 import { useSidebarDrawer } from "@/features/dashboard/components/SidebarDrawerContext";
 
-const navItems = [
+/** The Enterprise CMS pages are separate, not-yet-shipped work: their routes
+ * 404 in production until that work lands. Their nav entries stay hidden until
+ * the deployment that ships the pages sets NEXT_PUBLIC_CMS_ENABLED=true, so
+ * the sidebar never advertises a link that dead-ends. */
+const CMS_NAV_ENABLED = process.env.NEXT_PUBLIC_CMS_ENABLED === "true";
+
+const navItems: Array<{ label: string; href: string; icon: React.ComponentType<{ className?: string }>; cms?: boolean }> = [
   { label: "Overview", href: "/dashboard", icon: LayoutDashboard },
   { label: "Analytics", href: "/dashboard/analytics", icon: BarChart3 },
   { label: "Leads", href: "/dashboard/leads", icon: Users },
@@ -38,16 +44,17 @@ const navItems = [
   { label: "Employees", href: "/dashboard/employees", icon: IdCard },
   { label: "Products", href: "/dashboard/products", icon: Package },
   { label: "Services", href: "/dashboard/services", icon: Wrench },
-  { label: "CMS Profile", href: "/dashboard/cms/profile", icon: Building2 },
-  { label: "CMS Offices", href: "/dashboard/cms/offices", icon: Globe },
-  { label: "CMS AI Solutions", href: "/dashboard/cms/solutions", icon: Layers },
-  { label: "Media Library", href: "/dashboard/cms/media", icon: FileImage },
-  { label: "SEO Manager", href: "/dashboard/cms/seo", icon: Search },
+  { label: "CMS Profile", href: "/dashboard/cms/profile", icon: Building2, cms: true },
+  { label: "CMS Offices", href: "/dashboard/cms/offices", icon: Globe, cms: true },
+  { label: "CMS AI Solutions", href: "/dashboard/cms/solutions", icon: Layers, cms: true },
+  { label: "Media Library", href: "/dashboard/cms/media", icon: FileImage, cms: true },
+  { label: "SEO Manager", href: "/dashboard/cms/seo", icon: Search, cms: true },
   { label: "Knowledge Base", href: "/dashboard/knowledge", icon: BookOpen },
   { label: "Prompt Editor", href: "/dashboard/prompts", icon: FileCode },
   { label: "Appointments", href: "/dashboard/appointments", icon: Calendar },
   { label: "Settings", href: "/dashboard/settings", icon: Settings },
 ];
+const visibleNavItems = navItems.filter((item) => !item.cms || CMS_NAV_ENABLED);
 
 export const Sidebar: React.FC = () => {
   const pathname = usePathname();
@@ -169,7 +176,7 @@ export const Sidebar: React.FC = () => {
 
         {/* Navigation Items */}
         <nav className="space-y-1">
-          {navItems.map((item) => {
+          {visibleNavItems.map((item) => {
             const Icon = item.icon;
             const isActive = pathname === item.href;
             return (

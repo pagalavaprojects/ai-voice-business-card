@@ -210,6 +210,10 @@ export function PublicBusinessCard({
   // it; a new tab is a new visit); never created for the background prefetch —
   // only when recordListen actually fires on a real, user-initiated play.
   const listenSessionRef = useRef<string | null>(null);
+  // Whether this visit has already had a genuine Introduction play: the next
+  // one (Replay button, or tapping Play Introduction again) is a REPLAY, which
+  // the dashboard reports separately from first plays.
+  const introPlayedRef = useRef(false);
   const getListenSession = useCallback(() => {
     if (listenSessionRef.current) return listenSessionRef.current;
     let id: string | null = null;
@@ -230,7 +234,7 @@ export function PublicBusinessCard({
     return id;
   }, []);
   const recordListen = useCallback(
-    (eventType: "intro_play" | "elevator_play" | "product_play" | "usp_play") => {
+    (eventType: "intro_play" | "intro_replay" | "elevator_play" | "product_play" | "usp_play" | "smart_play") => {
       const eventId = globalThis.crypto?.randomUUID?.() ?? `e-${Date.now()}-${Math.round(Math.random() * 1e9)}`;
       // Fire-and-forget: analytics must never delay or break playback, and a
       // failure (or the table not being applied yet) is silently ignored.
@@ -550,12 +554,15 @@ export function PublicBusinessCard({
     // Record the GENUINE user-initiated play (req 14): only here, past the
     // pause-toggle and cancel early-returns above, so a pause or a re-click
     // never counts — and the background prefetch (which never calls playPitch)
-    // is never recorded. The Smart AI Lead card is not one of the four tracked
-    // listening metrics.
-    if (type === "intro") recordListen("intro_play");
-    else if (type === "elevator") recordListen("elevator_play");
+    // is never recorded. A second Introduction play in the same visit is a
+    // replay (reported separately); the Smart AI Lead card has its own metric.
+    if (type === "intro") {
+      recordListen(introPlayedRef.current ? "intro_replay" : "intro_play");
+      introPlayedRef.current = true;
+    } else if (type === "elevator") recordListen("elevator_play");
     else if (type === "product") recordListen("product_play");
     else if (type === "usp") recordListen("usp_play");
+    else if (type === "smart_ai_lead_business_card") recordListen("smart_play");
 
     // Captured AFTER stopPitch's bump: this value marks THIS pitch's
     // ownership of playback. Every async continuation below re-checks it —

@@ -24,7 +24,10 @@ export const dynamic = "force-dynamic";
  * silent no-op (recorded:false) rather than 500ing — the card is never
  * affected by analytics being off.
  */
-const EVENT_TYPES = ["intro_play", "elevator_play", "product_play", "usp_play"] as const;
+// intro_replay = the visitor played the Introduction again (Replay button or a
+// second tap) — reported separately from the first genuine play; smart_play =
+// the Smart AI Lead Business Card pitch.
+const EVENT_TYPES = ["intro_play", "intro_replay", "elevator_play", "product_play", "usp_play", "smart_play"] as const;
 
 const BodySchema = z.object({
   sessionId: z.string().trim().min(8).max(128),
