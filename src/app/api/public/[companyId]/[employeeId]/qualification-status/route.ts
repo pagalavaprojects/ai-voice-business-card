@@ -39,13 +39,29 @@ async function readAnswers(companyId: string, employeeId: string, callId: string
 
   const { data: lead } = await supabaseAdmin
     .from("leads")
-    .select("qualification_notes")
+    .select("id, qualification_notes")
     .eq("conversation_id", conversation.id)
     .eq("company_id", companyId)
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
-  return { conversationId: conversation.id as string, answers: parseAnswers(lead?.qualification_notes) };
+  return { conversationId: conversation.id as string, leadId: (lead?.id as string | undefined) ?? null, answers: parseAnswers(lead?.qualification_notes) };
+}
+
+/**
+ * Durable attribution for the listening analytics (req 14): the card visit
+ * that played the clips is the same visitor now answering data points, so
+ * that visit's genuine listen events are linked to the lead the answers
+ * belong to. Best-effort and fail-open — analytics never delays or fails an
+ * answer, and rows already attributed are left alone.
+ */
+async function linkVisitListeningToLead(companyId: string, visitId: string, leadId: string): Promise<void> {
+  try {
+    const { error } = await supabaseAdmin.from("listen_events").update({ lead_id: leadId }).eq("session_id", visitId).eq("company_id", companyId).is("lead_id", null);
+    if (error && error.code !== "42P01") Logger.warn("qualification-answer: listen attribution failed", { code: error.code });
+  } catch (err) {
+    Logger.warn("qualification-answer: listen attribution threw", { error: err instanceof Error ? err.message : String(err) });
+  }
 }
 
 /**
@@ -156,6 +172,10 @@ export async function POST(req: NextRequest, { params }: { params: { companyId: 
   const questionNumber = Number(body?.questionNumber);
   const answer = typeof body?.answer === "string" ? body.answer : "";
   const language = isSupportedLanguage(body?.language) ? body.language : undefined;
+  // Optional card-visit id (see linkVisitListeningToLead). Anything but a
+  // plausible id is ignored rather than rejected — attribution is a bonus,
+  // never a precondition for recording an answer.
+  const visitId = typeof body?.visitId === "string" && body.visitId.length >= 8 && body.visitId.length <= 128 ? body.visitId : null;
 
   if (sessionId.length < 8 || sessionId.length > 128) {
     return NextResponse.json({ message: "sessionId required" }, { status: 400 });
@@ -188,7 +208,8 @@ export async function POST(req: NextRequest, { params }: { params: { companyId: 
     // authoritative record so the UI advances from server truth, not a client
     // guess. `accepted` is false only when the tap somehow failed to classify
     // (impossible for the three canonical labels, but reported honestly).
-    const { answers } = await readAnswers(params.companyId, params.employeeId, sessionId);
+    const { answers, leadId } = await readAnswers(params.companyId, params.employeeId, sessionId);
+    if (visitId && leadId) await linkVisitListeningToLead(params.companyId, visitId, leadId);
     const qualified = answers.some((a) => a.n === 6);
     return NextResponse.json(
       { qualified, answers, accepted: result?.action !== "reprompt" },

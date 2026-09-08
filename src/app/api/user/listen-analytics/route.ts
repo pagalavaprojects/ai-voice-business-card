@@ -7,27 +7,37 @@ import { supabaseAdmin } from "@/shared/lib/supabase";
 export const dynamic = "force-dynamic";
 
 /**
- * Per-user card-listening analytics for the dashboard (requirement 14).
+ * Item 14 — the ONE analytics request behind the Listening & Data Point page
+ * (and the compact summary on the dashboards).
  *
- * REAL data only, from listen_events (genuine user-initiated plays, deduped by
- * event id — background prefetch/warm-up is never recorded). Tenant- and
- * employee-scoped exactly like the rest of the dashboard: an OWNER/ADMIN sees
- * the whole company, a staff member only their own employee's rows.
+ * Everything here is real, server-aggregated data:
+ *  - listen_events: genuine, user-initiated plays only (the card never
+ *    records prefetch / warm-up / load), deduped by event id at the DB.
+ *  - leads.qualification_notes: the server-authoritative data-point record
+ *    (`Q<n> [YES|NO|MAYBE] (<iso>): <answer>`), first record per number.
  *
- * Reports, per the business ask: plays per clip (Introduction, Introduction
- * replays, Elevator, Service, Why Us, Smart AI Lead), users who listened
- * today / this week, total plays today / this week, a 7-day daily trend,
- * per-visitor breakdown, data points answered per lead (from the existing
- * qualification record) and appointments booked (from the appointments table).
+ * "User" = one visitor. Listening is attributed to the card visit's own id
+ * (session_id); once that visit answers data points the answer path links
+ * its events to the lead (listen_events.lead_id), so a lead's listening and
+ * data points appear as ONE row, and a lead with several visits is one user.
  *
- * Fail-open: if the listen_events table is ever unavailable, the listen
- * section reports telemetryEnabled:false with empty counts instead of
- * erroring — the data-point and appointment views need no new table.
+ * Time is the VIEWER's: the dashboard passes its local midnight
+ * (`todayStart`); "today" runs from it, "7d" is the 7 local calendar days
+ * ending today, and the trend buckets are those local days (keyed by their
+ * start instant, never by a UTC date).
+ *
+ * Scope is the signed-in identity's, never a query parameter: OWNER/ADMIN see
+ * the company, staff see their own employee. Fixed query count (no N+1):
+ * one listen query, one or two lead queries, one appointment query.
+ *
+ * Status is honest: `listenStatus` distinguishes ok / not_applied (table
+ * missing) / unavailable (query error) so the page never paints zeros for
+ * data it could not read.
  */
 const TYPES = ["intro_play", "intro_replay", "elevator_play", "product_play", "usp_play", "smart_play"] as const;
 type EventType = (typeof TYPES)[number];
-type TypeKey = "intro" | "replay" | "elevator" | "product" | "usp" | "smart";
-const KEY: Record<EventType, TypeKey> = {
+type ClipKey = "intro" | "replay" | "elevator" | "product" | "usp" | "smart";
+const KEY: Record<EventType, ClipKey> = {
   intro_play: "intro",
   intro_replay: "replay",
   elevator_play: "elevator",
@@ -36,109 +46,206 @@ const KEY: Record<EventType, TypeKey> = {
   smart_play: "smart",
 };
 const DAY_MS = 24 * 3600_000;
-const TREND_DAYS = 7;
+const WINDOW_DAYS = 7;
+const MAX_USERS = 100;
+const NIL_EMPLOYEE = "00000000-0000-0000-0000-000000000000";
+/** todayStart must be a real "today": a crafted far-off value cannot widen
+ * the window or fabricate an empty one. */
+const MAX_TODAY_SKEW_MS = 36 * 3600_000;
+
+type Classification = "YES" | "NO" | "MAYBE";
+type Plays = Record<ClipKey, number> & { total: number };
+interface UserRow {
+  key: string;
+  label: string;
+  kind: "lead" | "visitor";
+  leadId: string | null;
+  email: string | null;
+  plays: Plays;
+  /** DP1..DP6 in order; null = not answered (never inferred). */
+  dataPoints: Array<Classification | null>;
+  answered: number;
+  completed: boolean;
+  lastAt: string | null;
+}
+interface LeadRow {
+  id: string;
+  name: string | null;
+  email: string | null;
+  qualification_notes: string | null;
+  created_at: string;
+}
+interface ListenRow {
+  event_type: string;
+  session_id: string;
+  lead_id: string | null;
+  created_at: string;
+}
+
+const emptyPlays = (): Plays => ({ intro: 0, replay: 0, elevator: 0, product: 0, usp: 0, smart: 0, total: 0 });
+
+/** The persisted data-point record: one line per answered data point,
+ * first record per number wins (the tool never overwrites). Only DP1–DP6
+ * exist; anything else is ignored, never surfaced. */
+function parseDataPoints(notes: string | null | undefined): Array<{ n: number; c: Classification; at: number }> {
+  const seen = new Set<number>();
+  const out: Array<{ n: number; c: Classification; at: number }> = [];
+  for (const raw of (notes ?? "").split("\n")) {
+    const m = /^Q([1-6]) \[(YES|NO|MAYBE)\] \(([^)]*)\): /.exec(raw.trim());
+    if (!m) continue;
+    const n = Number(m[1]);
+    if (seen.has(n)) continue;
+    seen.add(n);
+    const at = Date.parse(m[3]);
+    out.push({ n, c: m[2] as Classification, at: Number.isNaN(at) ? 0 : at });
+  }
+  return out;
+}
 
 export async function GET(req: NextRequest) {
   try {
     const scope = await requireOwnCompanyScope(req);
     const companyId = scope.companyId;
     const employeeScoped = scope.breadth === "employee";
-    const ownEmployeeId = scope.employeeId ?? "00000000-0000-0000-0000-000000000000";
+    const ownEmployeeId = scope.employeeId ?? NIL_EMPLOYEE;
 
     const now = Date.now();
-    // The dashboard passes its LOCAL midnight so "today" and the daily trend
-    // buckets follow the viewer's calendar, not the server's UTC day.
-    const todayStartParam = req.nextUrl.searchParams.get("todayStart");
-    const todayStart = todayStartParam && !Number.isNaN(Date.parse(todayStartParam)) ? Date.parse(todayStartParam) : new Date(new Date(now).toISOString().slice(0, 10)).getTime();
-    // The trend window: the 7 local days ending today. The listen query is
-    // bounded by it (a superset of the rolling 7x24h "this week" window).
-    const trendStart = todayStart - (TREND_DAYS - 1) * DAY_MS;
-    const weekStart = now - 7 * DAY_MS;
-    const queryStart = Math.min(trendStart, weekStart);
+    const sp = req.nextUrl.searchParams;
+    const rangeParam = sp.get("range");
+    if (rangeParam !== null && rangeParam !== "today" && rangeParam !== "7d") {
+      return formatApiResponse({}, 400, "range must be 'today' or '7d'");
+    }
+    const range: "today" | "7d" = rangeParam === "today" ? "today" : "7d";
+    const todayStartParam = sp.get("todayStart");
+    let todayStart: number;
+    if (todayStartParam !== null) {
+      const parsed = Date.parse(todayStartParam);
+      if (Number.isNaN(parsed) || Math.abs(now - parsed) > MAX_TODAY_SKEW_MS) {
+        return formatApiResponse({}, 400, "todayStart must be the viewer's local midnight as an ISO timestamp");
+      }
+      todayStart = parsed;
+    } else {
+      todayStart = Date.parse(new Date(now).toISOString().slice(0, 10));
+    }
+    const weekStart = todayStart - (WINDOW_DAYS - 1) * DAY_MS;
+    const rangeStart = range === "today" ? todayStart : weekStart;
 
-    // --- Listen events (fail-open on a missing table) ---
+    // ---- 1) Listen events: one bounded query, narrow columns ----
     let listenQuery = supabaseAdmin
       .from("listen_events")
-      .select("event_type, session_id, created_at")
+      .select("event_type, session_id, lead_id, created_at")
       .eq("company_id", companyId)
-      .gte("created_at", new Date(queryStart).toISOString())
+      .gte("created_at", new Date(weekStart).toISOString())
       .order("created_at", { ascending: false })
       .limit(5000);
     if (employeeScoped) listenQuery = listenQuery.eq("employee_id", ownEmployeeId);
     const listen = await listenQuery;
+    const listenStatus: "ok" | "not_applied" | "unavailable" = !listen.error ? "ok" : listen.error.code === "42P01" ? "not_applied" : "unavailable";
+    const rows = (listenStatus === "ok" ? (listen.data ?? []) : []) as ListenRow[];
 
-    const telemetryEnabled = !(listen.error && listen.error.code === "42P01");
-    const rows = (telemetryEnabled ? (listen.data ?? []) : []) as Array<{ event_type: string; session_id: string; created_at: string }>;
+    // ---- 2) Leads with data points: created in/near the window, plus any
+    // lead a visit is linked to (at most one extra query) ----
+    const leadColumns = "id, name, email, qualification_notes, created_at";
+    let leadQuery = supabaseAdmin
+      .from("leads")
+      .select(leadColumns)
+      .eq("company_id", companyId)
+      .gte("created_at", new Date(weekStart - DAY_MS).toISOString())
+      .order("created_at", { ascending: false })
+      .limit(300);
+    if (employeeScoped) leadQuery = leadQuery.eq("employee_id", ownEmployeeId);
+    const leads = await leadQuery;
+    const leadStatus: "ok" | "unavailable" = leads.error ? "unavailable" : "ok";
+    const leadRows = new Map<string, LeadRow>();
+    for (const l of (leads.data ?? []) as LeadRow[]) leadRows.set(l.id, l);
+    const linkedMissing = [...new Set(rows.map((r) => r.lead_id).filter((x): x is string => Boolean(x)))].filter((id) => !leadRows.has(id)).slice(0, 200);
+    if (linkedMissing.length > 0) {
+      let extra = supabaseAdmin.from("leads").select(leadColumns).eq("company_id", companyId).in("id", linkedMissing);
+      if (employeeScoped) extra = extra.eq("employee_id", ownEmployeeId);
+      const ex = await extra;
+      for (const l of (ex.data ?? []) as LeadRow[]) leadRows.set(l.id, l);
+    }
 
-    const byType: Record<TypeKey, number> = { intro: 0, replay: 0, elevator: 0, product: 0, usp: 0, smart: 0 };
-    const todaySessions = new Set<string>();
-    const weekSessions = new Set<string>();
+    // ---- 3) Aggregate ----
+    const byType = emptyPlays();
+    const trendCounts = new Array<number>(WINDOW_DAYS).fill(0);
+    const todayUsers = new Set<string>();
+    const weekUsers = new Set<string>();
     let todayPlays = 0;
     let weekPlays = 0;
-    const trendCounts = new Array<number>(TREND_DAYS).fill(0);
-    const perSession = new Map<string, { session: string; intro: number; replay: number; elevator: number; product: number; usp: number; smart: number; total: number; lastAt: string }>();
+    // A visit is attributed to a lead if ANY of its events carries the link.
+    const sessionLead = new Map<string, string>();
+    for (const r of rows) if (r.lead_id) sessionLead.set(r.session_id, r.lead_id);
+    const userKeyOf = (session: string) => (sessionLead.has(session) ? `lead:${sessionLead.get(session)}` : `visitor:${session}`);
+    const users = new Map<string, UserRow>();
+    const ensureUser = (key: string, session: string | null): UserRow => {
+      let u = users.get(key);
+      if (u) return u;
+      const leadId = key.startsWith("lead:") ? key.slice(5) : null;
+      const lead = leadId ? leadRows.get(leadId) : undefined;
+      u = {
+        key,
+        label: leadId ? lead?.name?.trim() || lead?.email || "Lead" : `Visitor ${(session ?? "").slice(0, 8)}`,
+        kind: leadId ? "lead" : "visitor",
+        leadId,
+        email: lead?.email ?? null,
+        plays: emptyPlays(),
+        dataPoints: [null, null, null, null, null, null],
+        answered: 0,
+        completed: false,
+        lastAt: null,
+      };
+      users.set(key, u);
+      return u;
+    };
+
     for (const r of rows) {
       const k = KEY[r.event_type as EventType];
       if (!k) continue;
       const at = Date.parse(r.created_at);
-      const inWeek = at >= weekStart;
-      if (inWeek) {
-        byType[k] += 1;
-        weekPlays += 1;
-        weekSessions.add(r.session_id);
-      }
+      if (Number.isNaN(at) || at < weekStart) continue;
+      const ukey = userKeyOf(r.session_id);
+      weekPlays += 1;
+      weekUsers.add(ukey);
       if (at >= todayStart) {
         todayPlays += 1;
-        todaySessions.add(r.session_id);
+        todayUsers.add(ukey);
       }
-      const dayIdx = Math.floor((at - trendStart) / DAY_MS);
-      if (dayIdx >= 0 && dayIdx < TREND_DAYS) trendCounts[dayIdx] += 1;
-      if (!inWeek) continue;
-      let s = perSession.get(r.session_id);
-      if (!s) {
-        s = { session: r.session_id.slice(0, 8), intro: 0, replay: 0, elevator: 0, product: 0, usp: 0, smart: 0, total: 0, lastAt: r.created_at };
-        perSession.set(r.session_id, s);
-      }
-      s[k] += 1;
-      s.total += 1;
+      const dayIdx = Math.floor((at - weekStart) / DAY_MS);
+      if (dayIdx >= 0 && dayIdx < WINDOW_DAYS) trendCounts[dayIdx] += 1;
+      if (at < rangeStart) continue;
+      byType[k] += 1;
+      byType.total += 1;
+      const u = ensureUser(ukey, r.session_id);
+      u.plays[k] += 1;
+      u.plays.total += 1;
+      if (!u.lastAt || at > Date.parse(u.lastAt)) u.lastAt = r.created_at;
     }
-    // Each bucket is keyed by its START INSTANT (the viewer's local midnight
-    // that day), never by a UTC calendar date: for a viewer east of UTC the
-    // UTC date of local midnight is the PREVIOUS day, which mislabels every
-    // bucket. The dashboard formats the instant in the viewer's own zone.
-    const trend = trendCounts.map((plays, i) => ({ day: new Date(trendStart + i * DAY_MS).toISOString(), plays }));
 
-    // --- Data points answered per lead (from existing qualification_notes) ---
-    let leadQuery = supabaseAdmin
-      .from("leads")
-      .select("id, name, qualification_notes, created_at")
-      .eq("company_id", companyId)
-      .order("created_at", { ascending: false })
-      .limit(50);
-    if (employeeScoped) leadQuery = leadQuery.eq("employee_id", ownEmployeeId);
-    const leads = await leadQuery;
-    const dataPointsByLead = (leads.error ? [] : (leads.data ?? []))
-      .map((l: { id: string; name: string | null; qualification_notes: string | null }) => {
-        const answered = new Set(
-          (l.qualification_notes ?? "")
-            .split("\n")
-            .map((line) => /^Q([1-6]) \[(?:YES|NO|MAYBE)\]/.exec(line.trim()))
-            .filter((m): m is RegExpExecArray => m !== null)
-            .map((m) => m[1])
-        ).size;
-        return { lead: l.name || "Lead", answered };
-      })
-      .filter((d: { answered: number }) => d.answered > 0)
-      .slice(0, 20);
+    // Data points: a lead is listed when it answered inside the range or
+    // listened inside the range; all its persisted answers are shown.
+    for (const l of leadRows.values()) {
+      const dps = parseDataPoints(l.qualification_notes);
+      const key = `lead:${l.id}`;
+      if (!users.has(key) && !dps.some((d) => d.at >= rangeStart)) continue;
+      const u = ensureUser(key, null);
+      for (const d of dps) u.dataPoints[d.n - 1] = d.c;
+      u.answered = dps.length;
+      u.completed = dps.length === 6;
+      if (!u.lastAt && dps.length > 0) u.lastAt = new Date(Math.max(...dps.map((d) => d.at))).toISOString();
+    }
 
-    // --- Appointments booked (same scope; BOOKED = confirmed by the calendar,
-    // REQUESTED = awaiting confirmation — never conflated) ---
+    const userList = [...users.values()]
+      .sort((a, b) => b.plays.total - a.plays.total || b.answered - a.answered || Date.parse(b.lastAt ?? "1970-01-01") - Date.parse(a.lastAt ?? "1970-01-01"))
+      .slice(0, MAX_USERS);
+    const trend = trendCounts.map((plays, i) => ({ day: new Date(weekStart + i * DAY_MS).toISOString(), plays }));
+
+    // ---- 4) Appointments (the dashboards' compact summary only) ----
     let apptQuery = supabaseAdmin.from("appointments").select("status, created_at").eq("company_id", companyId).order("created_at", { ascending: false }).limit(5000);
     if (employeeScoped) apptQuery = apptQuery.eq("employee_id", ownEmployeeId);
     const appts = await apptQuery;
-    const apptRows = (appts.error ? [] : (appts.data ?? [])) as Array<{ status?: string; created_at?: string }>;
     const appointments = { bookedWeek: 0, bookedTotal: 0, requestedTotal: 0 };
-    for (const a of apptRows) {
+    for (const a of (appts.error ? [] : (appts.data ?? [])) as Array<{ status?: string; created_at?: string }>) {
       if (a.status === "BOOKED") {
         appointments.bookedTotal += 1;
         if (a.created_at && Date.parse(a.created_at) >= weekStart) appointments.bookedWeek += 1;
@@ -149,13 +256,23 @@ export async function GET(req: NextRequest) {
 
     return formatApiResponse(
       {
-        telemetryEnabled,
-        totals: { todayUsers: todaySessions.size, weekUsers: weekSessions.size, todayPlays, weekPlays },
+        range,
+        windows: { todayStart: new Date(todayStart).toISOString(), weekStart: new Date(weekStart).toISOString() },
+        listenStatus,
+        leadStatus,
+        telemetryEnabled: listenStatus !== "not_applied",
+        totals: { todayUsers: todayUsers.size, weekUsers: weekUsers.size, todayPlays, weekPlays },
         byType,
         trend,
-        perSession: [...perSession.values()].sort((a, b) => b.total - a.total).slice(0, 20),
-        dataPointsByLead,
+        users: userList,
+        usersTotal: users.size,
         appointments,
+        definitions: {
+          user: "One visitor: a card visit (per-tab session) with at least one genuine play or data-point answer; merged into the lead once they answer.",
+          today: "From the viewer's local midnight.",
+          week: "The last 7 local calendar days, including today.",
+          plays: "Genuine user-initiated plays only — never prefetch, warm-up or page load.",
+        },
       },
       200,
       "Listening analytics retrieved"

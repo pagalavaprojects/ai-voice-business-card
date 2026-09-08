@@ -15,15 +15,37 @@ const checkRateLimitDistributed = jest.fn(async (..._a: unknown[]) => ({ allowed
 let conversationRow: unknown = { id: "conv-1" };
 let leadRow: unknown = { qualification_notes: "Q1 [YES] (2027-01-01T00:00:00.000Z): Yes" };
 
-function builder(kind: "conversations" | "leads") {
+// Listen attribution (req 14): every UPDATE issued against listen_events is
+// recorded so tests can assert exactly what was linked; a test can make it fail.
+const listenUpdates: Array<{ values: Record<string, unknown>; filters: Array<[string, string, unknown]> }> = [];
+let listenUpdateError: { code: string } | null = null;
+
+function builder(kind: string) {
   const b: Record<string, unknown> = {};
-  for (const m of ["select", "eq", "order", "limit"]) b[m] = () => b;
+  for (const m of ["select", "eq", "order", "limit", "is", "in"]) b[m] = () => b;
   b.maybeSingle = async () => ({ data: kind === "conversations" ? conversationRow : leadRow, error: null });
+  if (kind === "listen_events") {
+    const rec = { values: {} as Record<string, unknown>, filters: [] as Array<[string, string, unknown]> };
+    b.update = (values: Record<string, unknown>) => {
+      rec.values = values;
+      listenUpdates.push(rec);
+      return b;
+    };
+    b.eq = (col: string, v: unknown) => {
+      rec.filters.push(["eq", col, v]);
+      return b;
+    };
+    b.is = (col: string, v: unknown) => {
+      rec.filters.push(["is", col, v]);
+      return b;
+    };
+    (b as { then: unknown }).then = (resolve: (v: unknown) => void) => resolve({ error: listenUpdateError });
+  }
   return b;
 }
 
 jest.mock("@/shared/lib/supabase", () => ({
-  supabaseAdmin: { from: (table: string) => builder(table as "conversations" | "leads") },
+  supabaseAdmin: { from: (table: string) => builder(table) },
 }));
 jest.mock("@/core/infrastructure/bootstrap/assistantRuntime", () => ({
   toolRegistry: { getTool: (...a: unknown[]) => getTool(...a) },
@@ -52,7 +74,9 @@ beforeEach(() => {
   checkRateLimitDistributed.mockResolvedValue({ allowed: true });
   getTool.mockReturnValue({ execute });
   conversationRow = { id: "conv-1" };
-  leadRow = { qualification_notes: "Q1 [YES] (2027-01-01T00:00:00.000Z): Yes" };
+  leadRow = { id: "lead-1", qualification_notes: "Q1 [YES] (2027-01-01T00:00:00.000Z): Yes" };
+  listenUpdates.length = 0;
+  listenUpdateError = null;
 });
 
 describe("validation", () => {
@@ -106,5 +130,47 @@ describe("happy path — drives the sequencing tool, returns authoritative answe
     const res = await POST(post({ sessionId: "web-session-1234", questionNumber: 1, answer: "huh?" }), PARAMS);
     const body = await res.json();
     expect(body.accepted).toBe(false);
+  });
+});
+
+describe("listen attribution (req 14) — the visit's genuine plays are linked to the lead the answers create", () => {
+  const good = { sessionId: "web-abcdefgh-1234", questionNumber: 1, answer: "Yes", language: "en" };
+
+  it("links listen_events rows of the card visit to the lead — only rows not yet attributed, only this company", async () => {
+    const res = await POST(post({ ...good, visitId: "visit-0123456789ab" }), PARAMS);
+    expect(res.status).toBe(200);
+    expect(listenUpdates).toHaveLength(1);
+    expect(listenUpdates[0].values).toEqual({ lead_id: "lead-1" });
+    expect(listenUpdates[0].filters).toEqual(
+      expect.arrayContaining([
+        ["eq", "session_id", "visit-0123456789ab"],
+        ["eq", "company_id", "c1"],
+        ["is", "lead_id", null],
+      ])
+    );
+  });
+
+  it("does nothing without a visit id, and ignores an implausible one (the answer is still recorded)", async () => {
+    expect((await POST(post(good), PARAMS)).status).toBe(200);
+    expect((await POST(post({ ...good, visitId: "x" }), PARAMS)).status).toBe(200);
+    expect((await POST(post({ ...good, visitId: 42 }), PARAMS)).status).toBe(200);
+    expect(listenUpdates).toHaveLength(0);
+    expect(execute).toHaveBeenCalledTimes(3);
+  });
+
+  it("never fails an answer because attribution failed (missing table or any DB error)", async () => {
+    listenUpdateError = { code: "42P01" };
+    expect((await POST(post({ ...good, visitId: "visit-0123456789ab" }), PARAMS)).status).toBe(200);
+    listenUpdateError = { code: "XX000" };
+    const res = await POST(post({ ...good, visitId: "visit-0123456789ab" }), PARAMS);
+    expect(res.status).toBe(200);
+    expect((await res.json()).answers).toHaveLength(1);
+  });
+
+  it("skips attribution when no lead exists yet for the conversation", async () => {
+    leadRow = null;
+    const res = await POST(post({ ...good, visitId: "visit-0123456789ab" }), PARAMS);
+    expect(res.status).toBe(200);
+    expect(listenUpdates).toHaveLength(0);
   });
 });

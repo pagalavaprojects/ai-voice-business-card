@@ -1352,6 +1352,10 @@ export function PublicBusinessCard({
         // (the mic button / "AI Conversation") is a completely separate path
         // and is not lent to the booking flow any more.
         qualifyFirst
+        // The same per-visit id the genuine listen events carry, so the
+        // dashboard can attribute this visit's listening to the lead the
+        // data-point answers create (req 14).
+        getVisitId={getListenSession}
         // Requirement 7B: after a booking confirmation, offer the SAME live AI
         // conversation the card's own button starts — one shared startCall
         // path, never a second Vapi implementation.

@@ -40,6 +40,12 @@ interface AppointmentModalProps {
    * never trapped: a skip control is always available. Absent/false (older
    * callers/tests), the modal opens directly on slot selection as before. */
   qualifyFirst?: boolean;
+  /** Returns the card's durable per-visit id (the one its genuine listen
+   * events carry). Read when qualification BEGINS — a visitor action — and
+   * sent with each answer so the server can attribute that visit's listening
+   * to the lead the answers create (req 14: one user's listening AND data
+   * points). Optional: without it, answers are recorded exactly as before. */
+  getVisitId?: () => string;
   /** Starts the card's live AI conversation. When provided, the booking
    * confirmation (step 3) offers an "AI Conversation" CTA that closes the
    * modal and invokes this — the SAME approved startCall path the card's own
@@ -87,6 +93,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   t,
   qualifyFirst,
   onStartAiConversation,
+  getVisitId,
 }) => {
   // Step 0 (voiceless data-point qualification) exists only when the caller
   // asked for it; otherwise the flow starts on slot selection as it always did.
@@ -134,6 +141,8 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   // clean session. Kept in a ref (never triggers a render) and read
   // synchronously by the answer submitter and its in-flight guard.
   const qualSessionRef = useRef<string | null>(null);
+  // The card visit this qualification belongs to (see getVisitId).
+  const visitIdRef = useRef<string | null>(null);
   // Bumped on begin/close so a POST that resolves after the visitor moved on
   // (skipped, closed, restarted) can recognize itself as stale and not write
   // its result onto the new session's state.
@@ -294,6 +303,11 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
     qualRunRef.current++;
     qualSessionRef.current =
       typeof crypto !== "undefined" && crypto.randomUUID ? `web-${crypto.randomUUID()}` : `web-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    try {
+      visitIdRef.current = getVisitId?.() ?? null;
+    } catch {
+      visitIdRef.current = null;
+    }
     setQualAnswers([]);
     setQualComplete(false);
     setQuickReply(null);
@@ -324,7 +338,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
     fetch(`/api/public/${companyId}/${employeeId}/qualification-status`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sessionId, questionNumber, answer: label, language }),
+      body: JSON.stringify({ sessionId, questionNumber, answer: label, language, ...(visitIdRef.current ? { visitId: visitIdRef.current } : {}) }),
     })
       .then((res) => (res.ok ? (res.json() as Promise<{ qualified?: boolean; answers?: Array<{ n: number; c: string; a: string }> }>) : Promise.reject(new Error(`status ${res.status}`))))
       .then((data) => {

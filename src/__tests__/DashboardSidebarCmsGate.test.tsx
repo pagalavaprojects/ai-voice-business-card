@@ -22,7 +22,7 @@ jest.mock("@/features/dashboard/context/CompanyContext", () => ({
 jest.mock("@/features/auth/components/SignOutButton", () => ({ SignOutButton: () => null }));
 
 const CMS_HREFS = ["/dashboard/cms/profile", "/dashboard/cms/offices", "/dashboard/cms/solutions", "/dashboard/cms/media", "/dashboard/cms/seo"];
-const SHIPPED_HREFS = ["/dashboard", "/dashboard/analytics", "/dashboard/leads", "/dashboard/appointments", "/dashboard/settings"];
+const SHIPPED_HREFS = ["/dashboard", "/dashboard/analytics", "/dashboard/listening", "/dashboard/leads", "/dashboard/appointments", "/dashboard/settings"];
 
 /** The gate is read at module load, so each case renders from a fresh module
  * registry — React, react-dom and the Sidebar loaded together inside it so

@@ -206,3 +206,25 @@ describe("where the options may appear", () => {
     expect(urls.some((u) => /vapi|daily|tts|audio/i.test(u))).toBe(false);
   });
 });
+
+describe("visit attribution (req 14)", () => {
+  it("sends the card's visit id with each answer when the card provides one — the qualification session stays its own id", async () => {
+    render(<AppointmentModal {...props("en", { getVisitId: () => "visit-abcdefgh-1234" })} />);
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("start-qualification"));
+    });
+    fireEvent.click(screen.getByTestId("quick-reply-yes"));
+    await waitFor(() => expect(postCount()).toBe(1));
+    const body = JSON.parse(String((global.fetch as jest.Mock).mock.calls.find((c) => c[1]?.method === "POST")![1].body));
+    expect(body.visitId).toBe("visit-abcdefgh-1234");
+    expect(body.sessionId).not.toBe(body.visitId);
+  });
+
+  it("omits visitId when the card does not provide one", async () => {
+    await renderQualification("en");
+    fireEvent.click(screen.getByTestId("quick-reply-yes"));
+    await waitFor(() => expect(postCount()).toBe(1));
+    const body = JSON.parse(String((global.fetch as jest.Mock).mock.calls.find((c) => c[1]?.method === "POST")![1].body));
+    expect(body).not.toHaveProperty("visitId");
+  });
+});

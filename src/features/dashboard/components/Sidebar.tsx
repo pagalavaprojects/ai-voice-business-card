@@ -25,6 +25,7 @@ import {
   Newspaper,
   Palette,
   Layers,
+  Headphones,
 } from "lucide-react";
 import { cn } from "@/shared/ui/button";
 import { useCompany } from "@/features/dashboard/context/CompanyContext";
@@ -39,6 +40,7 @@ const CMS_NAV_ENABLED = process.env.NEXT_PUBLIC_CMS_ENABLED === "true";
 const navItems: Array<{ label: string; href: string; icon: React.ComponentType<{ className?: string }>; cms?: boolean }> = [
   { label: "Overview", href: "/dashboard", icon: LayoutDashboard },
   { label: "Analytics", href: "/dashboard/analytics", icon: BarChart3 },
+  { label: "Listening", href: "/dashboard/listening", icon: Headphones },
   { label: "Leads", href: "/dashboard/leads", icon: Users },
   { label: "AI Agents", href: "/dashboard/agents", icon: Bot },
   { label: "Employees", href: "/dashboard/employees", icon: IdCard },
