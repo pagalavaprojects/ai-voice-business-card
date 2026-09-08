@@ -45,7 +45,8 @@ const KEY: Record<EventType, ClipKey> = {
   usp_play: "usp",
   smart_play: "smart",
 };
-const DAY_MS = 24 * 3600_000;
+const HOUR_MS = 3600_000;
+const DAY_MS = 24 * HOUR_MS;
 const WINDOW_DAYS = 7;
 const MAX_USERS = 100;
 const NIL_EMPLOYEE = "00000000-0000-0000-0000-000000000000";
@@ -260,7 +261,25 @@ export async function GET(req: NextRequest) {
     const userList = [...users.values()]
       .sort((a, b) => b.plays.total - a.plays.total || b.answered - a.answered || Date.parse(b.lastAt ?? "1970-01-01") - Date.parse(a.lastAt ?? "1970-01-01"))
       .slice(0, MAX_USERS);
-    const trend = trendCounts.map((plays, i) => ({ day: new Date(weekStart + i * DAY_MS).toISOString(), plays }));
+    // The trend follows the selected range: 7 Days = one bucket per local
+    // calendar day (six previous days + today, zero days included); Today =
+    // one bucket per local hour from midnight up to the current hour.
+    const trendGranularity: "day" | "hour" = range === "today" ? "hour" : "day";
+    let trend: Array<{ day: string; plays: number }>;
+    if (trendGranularity === "hour") {
+      const hours = Math.min(24, Math.max(1, Math.floor((now - todayStart) / HOUR_MS) + 1));
+      const hourCounts = new Array<number>(hours).fill(0);
+      for (const r of rows) {
+        if (!KEY[r.event_type as EventType]) continue;
+        const at = Date.parse(r.created_at);
+        if (Number.isNaN(at) || at < todayStart) continue;
+        const idx = Math.floor((at - todayStart) / HOUR_MS);
+        if (idx >= 0 && idx < hours) hourCounts[idx] += 1;
+      }
+      trend = hourCounts.map((plays, i) => ({ day: new Date(todayStart + i * HOUR_MS).toISOString(), plays }));
+    } else {
+      trend = trendCounts.map((plays, i) => ({ day: new Date(weekStart + i * DAY_MS).toISOString(), plays }));
+    }
 
     // ---- 4) Appointments (the dashboards' compact summary only) ----
     let apptQuery = supabaseAdmin.from("appointments").select("status, created_at").eq("company_id", companyId).order("created_at", { ascending: false }).limit(5000);
@@ -279,20 +298,24 @@ export async function GET(req: NextRequest) {
     return formatApiResponse(
       {
         range,
-        windows: { todayStart: new Date(todayStart).toISOString(), weekStart: new Date(weekStart).toISOString() },
+        windows: { todayStart: new Date(todayStart).toISOString(), weekStart: new Date(weekStart).toISOString(), rangeStart: new Date(rangeStart).toISOString() },
         listenStatus,
         leadStatus,
         telemetryEnabled: listenStatus !== "not_applied",
         totals: { todayUsers: todayUsers.size, weekUsers: weekUsers.size, todayPlays, weekPlays },
+        // The selected range's own figures: unique users are de-duplicated
+        // across the WHOLE range (never a sum of daily uniques).
+        rangeTotals: range === "today" ? { users: todayUsers.size, plays: todayPlays } : { users: weekUsers.size, plays: weekPlays },
         byType,
         trend,
+        trendGranularity,
         users: userList,
         usersTotal: users.size,
         appointments,
         definitions: {
           user: "One visitor: a card visit (per-tab session) with at least one genuine play or data-point answer; merged into the lead once they answer.",
-          today: "From the viewer's local midnight.",
-          week: "The last 7 local calendar days, including today.",
+          today: "Today = from the viewer's local midnight to now.",
+          week: "7 Days = the last 7 local calendar days including today (from local midnight six days ago to now).",
           plays: "Genuine user-initiated plays only — never prefetch, warm-up or page load.",
         },
       },

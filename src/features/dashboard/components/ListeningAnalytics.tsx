@@ -49,13 +49,16 @@ interface UserRow {
 }
 export interface ListenAnalytics {
   range: Range;
-  windows: { todayStart: string; weekStart: string };
+  windows: { todayStart: string; weekStart: string; rangeStart: string };
   listenStatus: "ok" | "not_applied" | "unavailable";
   leadStatus: "ok" | "unavailable";
   telemetryEnabled: boolean;
   totals: { todayUsers: number; weekUsers: number; todayPlays: number; weekPlays: number };
+  /** The selected range's own figures (unique users de-duplicated across the whole range). */
+  rangeTotals: { users: number; plays: number };
   byType: Plays;
   trend: Array<{ day: string; plays: number }>;
+  trendGranularity: "day" | "hour";
   users: UserRow[];
   usersTotal: number;
   appointments: { bookedWeek: number; bookedTotal: number; requestedTotal: number };
@@ -80,11 +83,15 @@ function localMidnightIso(): string {
   return d.toISOString();
 }
 
-/** "Mon 7 Sep" for a bucket's start instant (the viewer's local midnight),
- * formatted in the viewer's own zone; falls back to the raw value. */
-function dayLabel(day: string): string {
-  const d = new Date(day);
-  return Number.isNaN(d.getTime()) ? day : d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
+/** "Mon 7 Sep" for a daily bucket's start instant (the viewer's local
+ * midnight), or "11:00" for an hourly bucket — formatted in the viewer's own
+ * zone; falls back to the raw value. */
+function bucketLabel(start: string, granularity: "day" | "hour"): string {
+  const d = new Date(start);
+  if (Number.isNaN(d.getTime())) return start;
+  return granularity === "hour"
+    ? d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })
+    : d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
 }
 
 function Tile({ label, value, testId, hint }: { label: string; value: number | string; testId?: string; hint?: string }) {
@@ -121,6 +128,7 @@ export function ListeningAnalytics({ variant = "summary" }: { variant?: "summary
   const num = (n: number) => (listenOk ? n : "—");
   const clipBars = data ? CLIPS.map((c) => ({ label: c.label, value: data.byType[c.key] })) : [];
   const rangeLabel = range === "today" ? "today" : "last 7 days";
+  const rangeHint = range === "today" ? "from your local midnight to now" : "7 local calendar days incl. today";
   const statusText =
     status === "loading" ? "Loading…" : status === "refreshing" ? "Refreshing…" : status === "stale" ? "Showing earlier data" : status === "error" ? "Could not refresh" : lastUpdatedAt ? `Updated ${new Date(lastUpdatedAt).toLocaleTimeString()}` : "";
 
@@ -183,12 +191,21 @@ export function ListeningAnalytics({ variant = "summary" }: { variant?: "summary
             </p>
           )}
 
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            <Tile label="Unique listeners today" value={num(data.totals.todayUsers)} testId="listen-today-users" hint="from your local midnight" />
-            <Tile label="Unique listeners, 7 days" value={num(data.totals.weekUsers)} testId="listen-week-users" hint="last 7 local days" />
-            <Tile label="Plays today" value={num(data.totals.todayPlays)} testId="listen-today-plays" />
-            <Tile label="Plays, 7 days" value={num(data.totals.weekPlays)} testId="listen-week-plays" />
-          </div>
+          {full ? (
+            // The page's KPIs follow the selected range; the "today vs 7 days"
+            // comparison below keeps both windows visible at once.
+            <div className="grid grid-cols-2 gap-3">
+              <Tile label={`Unique listeners, ${rangeLabel}`} value={num(data.rangeTotals.users)} testId="listen-range-users" hint={rangeHint} />
+              <Tile label={`Plays, ${rangeLabel}`} value={num(data.rangeTotals.plays)} testId="listen-range-plays" hint={rangeHint} />
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              <Tile label="Unique listeners today" value={num(data.totals.todayUsers)} testId="listen-today-users" hint="from your local midnight" />
+              <Tile label="Unique listeners, 7 days" value={num(data.totals.weekUsers)} testId="listen-week-users" hint="7 local calendar days incl. today" />
+              <Tile label="Plays today" value={num(data.totals.todayPlays)} testId="listen-today-plays" />
+              <Tile label="Plays, 7 days" value={num(data.totals.weekPlays)} testId="listen-week-plays" />
+            </div>
+          )}
 
           <div className={full ? "grid grid-cols-1 lg:grid-cols-2 gap-4" : "space-y-1.5"}>
             <div className="space-y-1.5">
@@ -217,10 +234,15 @@ export function ListeningAnalytics({ variant = "summary" }: { variant?: "summary
                     <p className="text-xs text-slate-500">Not available.</p>
                   )}
                 </div>
-                <div className="space-y-1.5">
-                  <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">Plays per day, last 7 local days</p>
+                <div className="space-y-1.5" data-testid="trend-section">
+                  <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">
+                    {data.trendGranularity === "hour" ? "Plays per hour, today" : "Plays per day, last 7 local days"}
+                  </p>
                   {listenOk ? (
-                    <ComparisonBars data={data.trend.map((t) => ({ label: dayLabel(t.day), value: t.plays }))} emptyMessage="No plays in the last 7 days." />
+                    <ComparisonBars
+                      data={data.trend.map((t) => ({ label: bucketLabel(t.day, data.trendGranularity), value: t.plays }))}
+                      emptyMessage={data.trendGranularity === "hour" ? "No plays yet today." : "No plays in the last 7 days."}
+                    />
                   ) : (
                     <p className="text-xs text-slate-500">Not available.</p>
                   )}

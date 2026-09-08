@@ -279,3 +279,79 @@ describe("authorization scope comes from the session, never from a parameter", (
     expect((await GET(req())).status).toBe(500); // handleApiError mock; the real handler maps to 401/403
   });
 });
+
+describe("range contract — Today | 7 Days (viewer's local calendar days)", () => {
+  const HOUR = 3600_000;
+  const m = () => localMidnight().getTime();
+
+  it("Today = local midnight → now: hourly trend buckets up to the current hour, KPIs for today only", async () => {
+    const now = Date.now();
+    const currentHour = Math.floor((now - m()) / HOUR);
+    listenResult = {
+      data: [
+        { event_type: "intro_play", session_id: "s1", lead_id: null, created_at: new Date(m() + 5 * 60_000).toISOString() }, // 00:05 local
+        { event_type: "usp_play", session_id: "s2", lead_id: null, created_at: new Date(now - 60_000).toISOString() }, // a minute ago
+        { event_type: "usp_play", session_id: "s3", lead_id: null, created_at: new Date(m() - 60_000).toISOString() }, // yesterday 23:59 local — not today
+      ],
+      error: null,
+    };
+    const d = await body(qs("&range=today"));
+    expect(d.range).toBe("today");
+    expect(d.windows.rangeStart).toBe(new Date(m()).toISOString());
+    expect(d.trendGranularity).toBe("hour");
+    expect(d.trend).toHaveLength(currentHour + 1);
+    expect(d.trend[0]).toEqual({ day: new Date(m()).toISOString(), plays: 1 });
+    expect(d.trend[currentHour].plays).toBe(1);
+    expect(d.rangeTotals).toEqual({ users: 2, plays: 2 });
+    expect(d.users.map((u: { key: string }) => u.key).sort()).toEqual(["visitor:s1", "visitor:s2"]);
+  });
+
+  it("7 Days = local midnight six days ago → now: seven daily buckets (zero days kept), today last", async () => {
+    listenResult = {
+      data: [
+        { event_type: "intro_play", session_id: "a", lead_id: null, created_at: new Date(m() - 6 * DAY + 60_000).toISOString() }, // 00:01 six days ago — first bucket
+        { event_type: "intro_play", session_id: "b", lead_id: null, created_at: new Date(m() - 6 * DAY - 60_000).toISOString() }, // 23:59 seven days ago — outside
+        { event_type: "usp_play", session_id: "c", lead_id: null, created_at: new Date(m() + 60_000).toISOString() }, // today
+      ],
+      error: null,
+    };
+    const d = await body(qs("&range=7d"));
+    expect(d.windows.rangeStart).toBe(new Date(m() - 6 * DAY).toISOString());
+    expect(d.trendGranularity).toBe("day");
+    expect(d.trend.map((t: { plays: number }) => t.plays)).toEqual([1, 0, 0, 0, 0, 0, 1]);
+    expect(d.trend[0].day).toBe(new Date(m() - 6 * DAY).toISOString());
+    expect(d.trend[6].day).toBe(new Date(m()).toISOString());
+    expect(d.rangeTotals).toEqual({ users: 2, plays: 2 });
+  });
+
+  it("7-day unique users are de-duplicated across the whole range — the same user on three days counts once; per-user totals sum across the days", async () => {
+    const rows = [0, 2, 5].map((daysAgo) => ({ event_type: "elevator_play", session_id: "same-user", lead_id: null, created_at: new Date(m() - daysAgo * DAY + 3600_000).toISOString() }));
+    rows.push({ event_type: "intro_play", session_id: "other", lead_id: null, created_at: new Date(m() - 4 * DAY + 3600_000).toISOString() });
+    listenResult = { data: rows, error: null };
+    const d = await body(qs("&range=7d"));
+    expect(d.rangeTotals).toEqual({ users: 2, plays: 4 }); // NOT 3 + 1 daily uniques
+    expect(d.totals.weekUsers).toBe(2);
+    expect(d.totals.todayUsers).toBe(1);
+    const same = d.users.find((u: { key: string }) => u.key === "visitor:same-user");
+    expect(same.plays).toMatchObject({ elevator: 3, total: 3 });
+    // Today: the same user counts once, with only today's play.
+    const t = await body(qs("&range=today"));
+    expect(t.rangeTotals).toEqual({ users: 1, plays: 1 });
+    expect(t.users.find((u: { key: string }) => u.key === "visitor:same-user").plays.total).toBe(1);
+  });
+
+  it("a lead's data points stay attributed by range: listed for 7 Days, absent for Today when its answers are older than today", async () => {
+    const threeDaysAgo = new Date(m() - 3 * DAY + 3600_000).toISOString();
+    leadsResult = { data: [{ id: "lead-old", name: "Old", email: "old@example.com", qualification_notes: [dp(1, "YES", threeDaysAgo), dp(2, "NO", threeDaysAgo)].join("\n"), created_at: threeDaysAgo }], error: null };
+    const week = await body(qs("&range=7d"));
+    expect(week.users.find((u: { key: string }) => u.key === "lead:lead-old")).toMatchObject({ answered: 2, dataPoints: ["YES", "NO", null, null, null, null] });
+    const today = await body(qs("&range=today"));
+    expect(today.users.find((u: { key: string }) => u.key === "lead:lead-old")).toBeUndefined();
+  });
+
+  it("a missing range means 7 Days; a far-future todayStart is rejected", async () => {
+    const d = await body(qs());
+    expect(d.range).toBe("7d");
+    expect((await GET(req(`?todayStart=${encodeURIComponent(new Date(Date.now() + 3 * DAY).toISOString())}`))).status).toBe(400);
+  });
+});
