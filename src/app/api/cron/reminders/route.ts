@@ -7,6 +7,18 @@ import { isPlaceholderCredential } from "@/shared/lib/security";
 import { SupabaseCRMRepository } from "@/core/infrastructure/database/supabase/SupabaseCRMRepository";
 import { SupabaseKnowledgeRepository } from "@/core/infrastructure/database/supabase/SupabaseKnowledgeRepository";
 import { acquireClaim, releaseClaim } from "@/core/infrastructure/concurrency/ProcessingLock";
+import {
+  MAX_UNUSED_REMINDER_ATTEMPTS,
+  UNUSED_CONTACT_AFTER_MS,
+  UNUSED_CONTACT_UNTIL_MS,
+  UNUSED_ELIGIBLE_STATUSES,
+  UNUSED_LEAD_FAILED_MARKER,
+  UNUSED_LEAD_MARKER,
+  selectUnusedContacts,
+  type TimelineEntry,
+  type UnusedCandidate,
+  type UnusedExclusion,
+} from "@/core/application/services/UnusedContactReminder";
 
 export const dynamic = "force-dynamic";
 
@@ -19,15 +31,20 @@ const knowledgeRepo = new SupabaseKnowledgeRepository();
  * timeline already persists per-lead events durably, and this cannot
  * violate any existing DB constraint on the type column. */
 const REMINDER_MARKER = "whatsapp_reminder_24h";
-/** Idempotency marker for the DISTINCT 2-day unused-lead reminder (req 15) —
- * separate from the appointment reminder above, on the same timeline. */
-const UNUSED_LEAD_MARKER = "lead_unused_reminder_2d";
-/** Timeline activity types that prove the contact WAS used — a call, an email
- * exchange, an appointment. Such a lead is engaged, not "unused". */
-const USED_ACTIVITY_TYPES = new Set(["CALL", "EMAIL", "APPOINTMENT"]);
+/** The sweep reads at most this many candidates per daily run — a bounded,
+ * index-backed range scan, never a table walk. */
+const UNUSED_SWEEP_LIMIT = 50;
 
 type ChannelResult = "sent" | "failed" | "skipped";
 type UnusedLeadChannels = { leadWhatsapp: ChannelResult; leadEmail: ChannelResult; ownerWhatsapp: ChannelResult; ownerEmail: ChannelResult };
+interface OwnerRow {
+  id: string;
+  company_id: string;
+  name: string | null;
+  phone: string | null;
+  email: string | null;
+  deleted_at: string | null;
+}
 
 /** Escapes the four characters that would let a stored name or address break
  * out of the reminder's HTML. */
@@ -39,26 +56,32 @@ const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&l
  *
  * 1. The ~24-hour appointment follow-up (WhatsApp): appointments CREATED
  *    24-48h ago whose lead has a phone number.
- * 2. The 2-day UNUSED-CONTACT reminder (req 15): a lead whose contact details
- *    were captured but who never used them — still NEW/QUALIFIED, no
- *    appointment, no call/email/appointment on the timeline — 48h-120h after
- *    capture. The lead gets a gentle re-engagement nudge and the owner a
- *    follow-up prompt, over every configured channel that has an address
- *    (WhatsApp by phone, email by address). Channels are independent and
- *    failure-isolated; the lead is marked once when at least one channel
- *    delivered, and a lead with no channel delivered stays unmarked and is
- *    retried next run while inside the window.
+ * 2. The 2-day UNUSED-CONTACT reminder (Item 15): a lead whose contact
+ *    details were captured but who never used them — still NEW/QUALIFIED,
+ *    not deleted, no appointment, no call/email/appointment on the timeline —
+ *    from exactly 48h after capture until it ages out at 120h. The lead gets
+ *    a gentle re-engagement nudge and the owner a follow-up prompt, over
+ *    every configured channel that has an address (WhatsApp by phone, email
+ *    by address). Eligibility is decided by selectUnusedContacts (pure,
+ *    tested at the boundary); the query only pre-filters with the same rule.
  *
- * - Idempotent: a lead is reminded at most once per sweep, enforced by the
- *   timeline marker + an atomic claim (two overlapping cron deliveries cannot
- *   both send).
+ * - Idempotent: a lead is reminded at most once, enforced by the timeline
+ *   marker + an atomic claim (two overlapping cron deliveries cannot both
+ *   send). Channels are independent and failure-isolated; the lead is marked
+ *   once when at least one channel delivered (channel results recorded), and
+ *   when none did a FAILED marker makes the attempt observable, the claim is
+ *   released and the next daily run retries — at most a few attempts inside
+ *   the window.
+ * - Bounded: one leads query, then ONE query each for appointments, timeline
+ *   activities and owners — never a query per lead.
  * - Inert without credentials: no configured provider means a pure no-op that
  *   writes no markers and claims no deliveries.
  * - Never user-facing: runs only from cron, so nothing here can block or
  *   slow a visitor request.
  *
  * Auth: Vercel Cron sends `Authorization: Bearer ${CRON_SECRET}` when the
- * env var exists. Fails closed if the secret is unset.
+ * env var exists. Fails closed if the secret is unset. No request parameter
+ * influences anything.
  */
 export async function GET(req: NextRequest) {
   const secret = process.env.CRON_SECRET;
@@ -169,60 +192,78 @@ export async function GET(req: NextRequest) {
   }
 
   // ============================================================
-  // Second sweep: contacts captured but UNUSED for ~2 days (req 15)
+  // Second sweep: contacts captured but UNUSED for ~2 days (Item 15)
   // ============================================================
-  // "Unused" is the authoritative existing state, not an invented field: the
-  // lead is still NEW or QUALIFIED (never CONTACTED / BOOKED / DISQUALIFIED),
-  // has no appointment in any status (a cancelled booking still means the
-  // contact was used), and has no call / email / appointment on its timeline.
-  // Bounded to a 48h-120h window so a stale lead is reminded once, then ages
-  // out.
-  const leadWindowStart = new Date(now - 120 * 3600_000).toISOString();
-  const leadWindowEnd = new Date(now - 48 * 3600_000).toISOString();
-  const { data: unusedLeads, error: leadErr } = await supabaseAdmin
+  // The query pre-filters with the same rule the pure selector applies
+  // (statuses, not deleted, 48h–120h old); the selector is authoritative.
+  const leadWindowStart = new Date(now - UNUSED_CONTACT_UNTIL_MS).toISOString();
+  const leadWindowEnd = new Date(now - UNUSED_CONTACT_AFTER_MS).toISOString();
+  const { data: candidateRows, error: leadErr } = await supabaseAdmin
     .from("leads")
-    .select("id, company_id, employee_id, name, email, phone, status, created_at")
-    .in("status", ["NEW", "QUALIFIED"])
+    .select("id, company_id, employee_id, name, email, phone, status, created_at, deleted_at")
+    .in("status", [...UNUSED_ELIGIBLE_STATUSES])
+    .is("deleted_at", null)
     .gte("created_at", leadWindowStart)
     .lte("created_at", leadWindowEnd)
-    .limit(50);
-  if (leadErr) Logger.warn("Unused-lead reminder: lead query failed", { error: leadErr.message });
+    .order("created_at", { ascending: false })
+    .limit(UNUSED_SWEEP_LIMIT);
+  if (leadErr) Logger.warn("Unused-contact reminder: lead query failed", { error: leadErr.message });
 
-  const candidateLeads = unusedLeads ?? [];
-  // A lead that actually has an appointment is NOT "unused" — exclude it.
-  const bookedLeadIds = new Set<string>();
-  if (candidateLeads.length > 0) {
-    const { data: apptRows } = await supabaseAdmin
-      .from("appointments")
-      .select("lead_id")
-      .in(
-        "lead_id",
-        candidateLeads.map((l) => l.id)
-      );
-    for (const a of apptRows ?? []) if (a.lead_id) bookedLeadIds.add(a.lead_id as string);
+  const candidates = (candidateRows ?? []) as UnusedCandidate[];
+  const candidateIds = candidates.map((l) => l.id);
+  const leadIdsWithAppointments = new Set<string>();
+  const activitiesByLead = new Map<string, TimelineEntry[]>();
+  const owners = new Map<string, OwnerRow>();
+  if (candidates.length > 0) {
+    // ONE query each — never per lead.
+    const [apptRes, actRes, ownerRes] = await Promise.all([
+      supabaseAdmin.from("appointments").select("lead_id").in("lead_id", candidateIds),
+      supabaseAdmin.from("lead_activities").select("lead_id, type, content").in("lead_id", candidateIds),
+      supabaseAdmin
+        .from("employees")
+        .select("id, company_id, name, phone, email, deleted_at")
+        .in("id", [...new Set(candidates.map((l) => l.employee_id))]),
+    ]);
+    for (const a of (apptRes.data ?? []) as Array<{ lead_id: string | null }>) if (a.lead_id) leadIdsWithAppointments.add(a.lead_id);
+    for (const a of (actRes.data ?? []) as Array<{ lead_id: string; type: string; content: string | null }>) {
+      const list = activitiesByLead.get(a.lead_id) ?? [];
+      list.push({ type: a.type, content: a.content });
+      activitiesByLead.set(a.lead_id, list);
+    }
+    for (const o of (ownerRes.data ?? []) as OwnerRow[]) owners.set(o.id, o);
+    if (actRes.error) Logger.warn("Unused-contact reminder: activity query failed", { error: actRes.error.message });
+    if (ownerRes.error) Logger.warn("Unused-contact reminder: owner query failed", { error: ownerRes.error.message });
   }
 
+  const { eligible, excluded } = selectUnusedContacts({ now, leads: candidates, leadIdsWithAppointments, activitiesByLead });
+  const excludedCounts: Partial<Record<UnusedExclusion, number>> = {};
+  for (const e of excluded) excludedCounts[e.reason] = (excludedCounts[e.reason] ?? 0) + 1;
+
   const appUrl = (process.env.NEXT_PUBLIC_APP_URL || "").replace(/\/+$/, "");
-  const counters = { processed: candidateLeads.length, sent: 0, skippedNoChannel: 0, skippedUsed: 0, alreadyReminded: 0, failed: 0 };
-  for (const lead of candidateLeads) {
-    if (bookedLeadIds.has(lead.id)) {
-      counters.skippedUsed++;
-      continue; // engaged, not unused
-    }
+  const counters = {
+    processed: candidates.length,
+    eligible: eligible.length,
+    sent: 0,
+    failed: 0,
+    skippedNoChannel: 0,
+    skippedUsed: (excludedCounts.has_appointment ?? 0) + (excludedCounts.used ?? 0),
+    alreadyReminded: excludedCounts.already_reminded ?? 0,
+    excluded: excludedCounts,
+  };
+
+  for (const lead of eligible) {
     try {
-      const [employee, timeline] = await Promise.all([knowledgeRepo.getEmployeeById(lead.employee_id), crmRepo.getActivityTimeline(lead.id)]);
-      if (timeline.some((a) => USED_ACTIVITY_TYPES.has(a.type))) {
-        counters.skippedUsed++;
-        continue;
-      }
-      if (timeline.some((a) => a.content === UNUSED_LEAD_MARKER)) {
-        counters.alreadyReminded++;
-        continue;
-      }
+      const owner = owners.get(lead.employee_id);
+      // Tenant guard: the owner notified is always the lead's OWN employee,
+      // and never one from another company or a deleted employee — even if a
+      // row were ever mis-linked.
+      const ownerOk = owner && owner.company_id === lead.company_id && !owner.deleted_at;
+      if (owner && !ownerOk) Logger.warn("Unused-contact reminder: owner not in the lead's company — owner channels skipped", { leadId: lead.id });
+
       const leadPhone = whatsappOk && lead.phone ? String(lead.phone) : null;
       const leadEmail = email && lead.email ? String(lead.email) : null;
-      const ownerPhone = whatsappOk && employee?.phone ? String(employee.phone) : null;
-      const ownerEmail = email && employee?.email ? String(employee.email) : null;
+      const ownerPhone = whatsappOk && ownerOk && owner.phone ? String(owner.phone) : null;
+      const ownerEmail = email && ownerOk && owner.email ? String(owner.email) : null;
       if (!leadPhone && !leadEmail && !ownerPhone && !ownerEmail) {
         counters.skippedNoChannel++;
         continue;
@@ -234,7 +275,7 @@ export async function GET(req: NextRequest) {
       }
 
       const leadName = lead.name ?? "there";
-      const ownerName = employee?.name ?? "our team";
+      const ownerName = (ownerOk && owner.name) || "our team";
       const cardUrl = appUrl ? `${appUrl}/${lead.company_id}/${lead.employee_id}` : "";
       const leadText = `Hi ${leadName} — a quick follow-up from ${ownerName}. You saved our contact a couple of days ago; whenever you're ready, reply here or pick a time that suits you${cardUrl ? `: ${cardUrl}` : "."}`;
       const ownerText = `Follow-up reminder: the lead ${lead.name ?? "you captured"} (${lead.email ?? "no email"}, ${lead.phone ?? "no phone"}) was captured about 2 days ago and hasn't been contacted or booked yet. A quick WhatsApp/email — or sending them your calendar — could re-engage them.`;
@@ -245,10 +286,10 @@ export async function GET(req: NextRequest) {
           channels[key] = (await run()) ? "sent" : "failed";
         } catch (err) {
           channels[key] = "failed";
-          Logger.warn("Unused-lead reminder: channel failed", { leadId: lead.id, channel: key, error: err instanceof Error ? err.message : String(err) });
+          Logger.warn("Unused-contact reminder: channel failed", { leadId: lead.id, channel: key, error: err instanceof Error ? err.message : String(err) });
         }
       };
-      if (leadPhone) await attempt("leadWhatsapp", async () => (await whatsapp.send(leadPhone, leadText)).sent);
+      if (leadPhone) await attempt("leadWhatsapp", async () => (await whatsapp.send(leadPhone, leadText)).sent === true);
       if (leadEmail && email) {
         await attempt(
           "leadEmail",
@@ -260,10 +301,10 @@ export async function GET(req: NextRequest) {
                 html: `<p>Hi ${esc(leadName)},</p><p>A quick follow-up from ${esc(ownerName)} — you saved our contact a couple of days ago. Whenever you're ready, just reply to this email${cardUrl ? ` or pick a time that suits you: <a href="${esc(cardUrl)}">${esc(cardUrl)}</a>` : ""}.</p>`,
                 idempotencyKey: `lead-unused-2d:${lead.id}:lead`,
               })
-            ).success
+            ).success === true
         );
       }
-      if (ownerPhone) await attempt("ownerWhatsapp", async () => (await whatsapp.send(ownerPhone, ownerText)).sent);
+      if (ownerPhone) await attempt("ownerWhatsapp", async () => (await whatsapp.send(ownerPhone, ownerText)).sent === true);
       if (ownerEmail && email) {
         await attempt(
           "ownerEmail",
@@ -275,20 +316,31 @@ export async function GET(req: NextRequest) {
                 html: `<p>${esc(ownerText)}</p>`,
                 idempotencyKey: `lead-unused-2d:${lead.id}:owner`,
               })
-            ).success
+            ).success === true
         );
       }
 
+      const priorFailures = (activitiesByLead.get(lead.id) ?? []).filter((a) => a.content === UNUSED_LEAD_FAILED_MARKER).length;
       if (!Object.values(channels).includes("sent")) {
-        // Nothing delivered: retryable next run while still in the window.
+        // Nothing delivered: make the attempt observable on the timeline, then
+        // release the claim so the next daily run retries (capped by
+        // MAX_UNUSED_REMINDER_ATTEMPTS through the selector).
+        await crmRepo
+          .addActivity(lead.id, lead.company_id, "NOTE", UNUSED_LEAD_FAILED_MARKER, undefined, {
+            kind: "unused_lead_2d",
+            attempt: priorFailures + 1,
+            maxAttempts: MAX_UNUSED_REMINDER_ATTEMPTS,
+            channels,
+          })
+          .catch((err: unknown) => Logger.warn("Unused-contact reminder: failed-marker write failed", { leadId: lead.id, error: err instanceof Error ? err.message : String(err) }));
         await releaseClaim(claim).catch(() => {});
         counters.failed++;
         continue;
       }
-      await crmRepo.addActivity(lead.id, lead.company_id, "NOTE", UNUSED_LEAD_MARKER, undefined, { kind: "unused_lead_2d", channels });
+      await crmRepo.addActivity(lead.id, lead.company_id, "NOTE", UNUSED_LEAD_MARKER, undefined, { kind: "unused_lead_2d", attempt: priorFailures + 1, channels });
       counters.sent++;
     } catch (err) {
-      Logger.warn("Unused-lead reminder: lead skipped on error", {
+      Logger.warn("Unused-contact reminder: lead skipped on error", {
         leadId: lead.id,
         error: err instanceof Error ? err.message : String(err),
       });

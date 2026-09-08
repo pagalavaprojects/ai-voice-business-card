@@ -38,12 +38,20 @@ jest.mock("@/core/infrastructure/database/supabase/SupabaseKnowledgeRepository",
 const appointmentRows: Array<Record<string, unknown>> = [];
 const leadRows: Array<Record<string, unknown>> = [];
 const leadApptRows: Array<Record<string, unknown>> = [];
+// Batched lookups of the unused-contact sweep (one query per table, never
+// one per lead): timeline activities and owner employees.
+const activityRows: Array<Record<string, unknown>> = [];
+const employeeRows: Array<Record<string, unknown>> = [];
+/** Every from(table) call, so tests can prove the sweep issues ONE query per
+ * table regardless of the number of candidates. */
+const tableCalls: string[] = [];
 jest.mock("@/shared/lib/supabase", () => ({
   supabaseAdmin: {
     from: (table: string) => {
+      tableCalls.push(table);
       const state = { gte: false };
       const b: Record<string, unknown> = {};
-      for (const m of ["select", "eq", "lte", "order", "limit"]) b[m] = () => b;
+      for (const m of ["select", "eq", "lte", "order", "limit", "is"]) b[m] = () => b;
       b.gte = () => {
         state.gte = true;
         return b;
@@ -51,7 +59,8 @@ jest.mock("@/shared/lib/supabase", () => ({
       b.in = () => b;
       // Thenable: resolves to the dataset for this query shape.
       (b as { then: (r: (v: unknown) => void) => void }).then = (resolve) => {
-        const data = table === "leads" ? leadRows : state.gte ? appointmentRows : leadApptRows;
+        const data =
+          table === "leads" ? leadRows : table === "lead_activities" ? activityRows : table === "employees" ? employeeRows : state.gte ? appointmentRows : leadApptRows;
         resolve({ data, error: null });
       };
       return b;
@@ -201,7 +210,8 @@ describe("reminder cron", () => {
   });
 });
 
-describe("2-day unused-lead reminder (req 15) — distinct sweep, same engine", () => {
+describe("2-day unused-contact reminder (Item 15) — distinct sweep, same engine", () => {
+  const H = 3600_000;
   const LEAD = {
     id: "lead-u1",
     company_id: "c1",
@@ -210,193 +220,338 @@ describe("2-day unused-lead reminder (req 15) — distinct sweep, same engine", 
     email: "priya@example.com",
     phone: "+91 98888 12345",
     status: "NEW",
-    created_at: "2026-09-04T10:00:00Z",
+    created_at: new Date(Date.now() - 60 * H).toISOString(),
+    deleted_at: null,
   };
+  const OWNER = { id: "e1", company_id: "c1", name: "Srinivasan", phone: "+91 90000 00000", email: null, deleted_at: null };
+  const run = () => GET(request("Bearer test-secret")).then((r) => r.json());
+  const marker = (content: string) => ({ lead_id: "lead-u1", type: "NOTE", content });
 
   beforeEach(() => {
     jest.clearAllMocks();
     appointmentRows.length = 0;
     leadRows.length = 0;
     leadApptRows.length = 0;
+    activityRows.length = 0;
+    employeeRows.length = 0;
+    tableCalls.length = 0;
     reminderClaims.clear();
     process.env.CRON_SECRET = "test-secret";
+    delete process.env.RESEND_API_KEY;
     isConfigured.mockReturnValue(true);
     send.mockResolvedValue({ sent: true });
-    getEmployeeById.mockResolvedValue({ id: "e1", name: "Srinivasan", phone: "+91 90000 00000" });
-    getActivityTimeline.mockResolvedValue([]);
     addActivity.mockResolvedValue({});
-    delete process.env.RESEND_API_KEY;
     sendEmail.mockResolvedValue({ id: "em_1", success: true });
+    employeeRows.push({ ...OWNER });
   });
 
-  it("nudges the LEAD and prompts the OWNER (WhatsApp) about a NEW lead unused ~2 days (no appointment) and writes the distinct marker once", async () => {
-    leadRows.push({ ...LEAD });
+  describe("eligibility through the real entry point", () => {
+    it("nudges the LEAD and prompts the OWNER (WhatsApp) for a NEW lead unused ~2.5 days, writing the marker once with channel results", async () => {
+      leadRows.push({ ...LEAD });
+      const json = await run();
+      expect(json.unusedLeads).toMatchObject({ processed: 1, eligible: 1, sent: 1, failed: 0 });
+      expect(send).toHaveBeenCalledTimes(2);
+      const to = send.mock.calls.map((c) => c[0]);
+      expect(to).toContain("+91 98888 12345");
+      expect(to).toContain("+91 90000 00000");
+      expect(send.mock.calls.find((c) => c[0] === "+91 90000 00000")![1]).toContain("Priya");
+      expect(send.mock.calls.find((c) => c[0] === "+91 98888 12345")![1]).toContain("Srinivasan");
+      expect(sendEmail).not.toHaveBeenCalled();
+      expect(addActivity).toHaveBeenCalledTimes(1);
+      expect(addActivity).toHaveBeenCalledWith(
+        "lead-u1",
+        "c1",
+        "NOTE",
+        "lead_unused_reminder_2d",
+        undefined,
+        expect.objectContaining({ kind: "unused_lead_2d", attempt: 1, channels: { leadWhatsapp: "sent", ownerWhatsapp: "sent", leadEmail: "skipped", ownerEmail: "skipped" } })
+      );
+    });
 
-    const json = await (await GET(request("Bearer test-secret"))).json();
+    it("is not eligible before 48h even if the query returned the row (the selector is authoritative)", async () => {
+      leadRows.push({ ...LEAD, created_at: new Date(Date.now() - 47 * H).toISOString() });
+      const json = await run();
+      expect(json.unusedLeads).toMatchObject({ processed: 1, eligible: 0, sent: 0, excluded: { too_recent: 1 } });
+      expect(send).not.toHaveBeenCalled();
+      expect(acquireClaim).not.toHaveBeenCalled();
+    });
 
-    expect(json.unusedLeads.sent).toBe(1);
-    // One lead-facing nudge + one owner follow-up prompt; email skipped (unconfigured).
-    expect(send).toHaveBeenCalledTimes(2);
-    const to = send.mock.calls.map((c) => c[0]);
-    expect(to).toContain("+91 98888 12345");
-    expect(to).toContain("+91 90000 00000");
-    expect(send.mock.calls.find((c) => c[0] === "+91 90000 00000")![1]).toContain("Priya");
-    expect(send.mock.calls.find((c) => c[0] === "+91 98888 12345")![1]).toContain("Srinivasan");
-    expect(sendEmail).not.toHaveBeenCalled();
-    expect(addActivity).toHaveBeenCalledTimes(1);
-    expect(addActivity).toHaveBeenCalledWith(
-      "lead-u1",
-      "c1",
-      "NOTE",
-      "lead_unused_reminder_2d",
-      undefined,
-      expect.objectContaining({ kind: "unused_lead_2d", channels: { leadWhatsapp: "sent", ownerWhatsapp: "sent", leadEmail: "skipped", ownerEmail: "skipped" } })
-    );
+    it("excludes a deleted lead, a lead with an appointment, and a lead whose contact was used (CALL)", async () => {
+      leadRows.push({ ...LEAD, id: "lead-del", deleted_at: new Date().toISOString() });
+      leadRows.push({ ...LEAD, id: "lead-appt", email: "a@example.com", phone: "+91 90000 11111" });
+      leadRows.push({ ...LEAD, id: "lead-used", email: "u@example.com", phone: "+91 90000 22222" });
+      leadApptRows.push({ lead_id: "lead-appt" });
+      activityRows.push({ lead_id: "lead-used", type: "CALL", content: "Called the lead back" });
+      const json = await run();
+      expect(json.unusedLeads).toMatchObject({ processed: 3, eligible: 0, sent: 0, skippedUsed: 2, excluded: { deleted: 1, has_appointment: 1, used: 1 } });
+      expect(send).not.toHaveBeenCalled();
+      expect(addActivity).not.toHaveBeenCalled();
+    });
+
+    it("never reminds the same lead twice — the success marker short-circuits before any claim", async () => {
+      leadRows.push({ ...LEAD });
+      activityRows.push(marker("lead_unused_reminder_2d"));
+      const json = await run();
+      expect(json.unusedLeads).toMatchObject({ alreadyReminded: 1, sent: 0 });
+      expect(send).not.toHaveBeenCalled();
+      expect(acquireClaim).not.toHaveBeenCalled();
+    });
+
+    it("reminds a person captured twice through the newest record only", async () => {
+      leadRows.push({ ...LEAD, id: "lead-new", created_at: new Date(Date.now() - 55 * H).toISOString() });
+      leadRows.push({ ...LEAD, id: "lead-old", created_at: new Date(Date.now() - 100 * H).toISOString() });
+      const json = await run();
+      expect(json.unusedLeads).toMatchObject({ processed: 2, eligible: 1, sent: 1, excluded: { duplicate_contact: 1 } });
+      expect(addActivity).toHaveBeenCalledWith("lead-new", "c1", "NOTE", "lead_unused_reminder_2d", undefined, expect.anything());
+    });
+
+    it("issues ONE query per table for any number of candidates (no N+1)", async () => {
+      for (let i = 0; i < 12; i++) leadRows.push({ ...LEAD, id: `lead-${i}`, email: `p${i}@example.com`, phone: `+91 90000 000${String(i).padStart(2, "0")}` });
+      await run();
+      expect(tableCalls.filter((t) => t === "leads")).toHaveLength(1);
+      expect(tableCalls.filter((t) => t === "lead_activities")).toHaveLength(1);
+      expect(tableCalls.filter((t) => t === "employees")).toHaveLength(1);
+      // appointments: the 24h sweep's own query + ONE lookup for the sweep
+      expect(tableCalls.filter((t) => t === "appointments")).toHaveLength(2);
+      expect(getEmployeeById).not.toHaveBeenCalled();
+      expect(getActivityTimeline).not.toHaveBeenCalled();
+    });
   });
 
-  it("does NOT remind a lead that already has an appointment — it isn't unused", async () => {
-    leadRows.push({ ...LEAD });
-    leadApptRows.push({ lead_id: "lead-u1" });
+  describe("channels", () => {
+    it("still nudges the lead when the owner has no phone — channels are independent", async () => {
+      employeeRows.length = 0;
+      employeeRows.push({ ...OWNER, phone: null });
+      leadRows.push({ ...LEAD });
+      const json = await run();
+      expect(json.unusedLeads.sent).toBe(1);
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(send.mock.calls[0][0]).toBe("+91 98888 12345");
+    });
 
-    const json = await (await GET(request("Bearer test-secret"))).json();
+    it("skips (no claim, no marker) when there is no reachable channel for the lead or the owner", async () => {
+      employeeRows.length = 0;
+      employeeRows.push({ ...OWNER, phone: null, email: null });
+      leadRows.push({ ...LEAD, phone: null, email: null });
+      const json = await run();
+      expect(json.unusedLeads.skippedNoChannel).toBe(1);
+      expect(send).not.toHaveBeenCalled();
+      expect(acquireClaim).not.toHaveBeenCalled();
+      expect(addActivity).not.toHaveBeenCalled();
+    });
 
-    expect(json.unusedLeads.sent).toBe(0);
-    expect(send).not.toHaveBeenCalled();
-    expect(addActivity).not.toHaveBeenCalled();
+    it("email path: with Resend configured and WhatsApp unconfigured, lead + owner are emailed (idempotency-keyed), nothing is WhatsApp'd", async () => {
+      isConfigured.mockReturnValue(false);
+      process.env.RESEND_API_KEY = "re_Live0123456789abcdef";
+      employeeRows.length = 0;
+      employeeRows.push({ ...OWNER, email: "srini@example.com" });
+      leadRows.push({ ...LEAD });
+      const json = await run();
+      expect(json.skipped).toBe("whatsapp_unconfigured"); // the appointment sweep needs WhatsApp
+      expect(json.unusedLeads.sent).toBe(1);
+      expect(send).not.toHaveBeenCalled();
+      expect(sendEmail).toHaveBeenCalledTimes(2);
+      const emails = sendEmail.mock.calls.map((c) => c[0] as { to: string; html: string; idempotencyKey?: string });
+      expect(emails.map((e) => e.to).sort()).toEqual(["priya@example.com", "srini@example.com"]);
+      for (const e of emails) expect(e.idempotencyKey).toMatch(/^lead-unused-2d:lead-u1:(lead|owner)$/);
+      expect(emails.find((e) => e.to === "priya@example.com")!.html).toContain("Srinivasan");
+      expect(addActivity).toHaveBeenCalledWith(
+        "lead-u1",
+        "c1",
+        "NOTE",
+        "lead_unused_reminder_2d",
+        undefined,
+        expect.objectContaining({ channels: { leadEmail: "sent", ownerEmail: "sent", leadWhatsapp: "skipped", ownerWhatsapp: "skipped" } })
+      );
+    });
+
+    it("both channels configured: all four sends happen and the marker records each", async () => {
+      process.env.RESEND_API_KEY = "re_Live0123456789abcdef";
+      employeeRows.length = 0;
+      employeeRows.push({ ...OWNER, email: "srini@example.com" });
+      leadRows.push({ ...LEAD });
+      const json = await run();
+      expect(json.unusedLeads.sent).toBe(1);
+      expect(send).toHaveBeenCalledTimes(2);
+      expect(sendEmail).toHaveBeenCalledTimes(2);
+      expect(addActivity).toHaveBeenCalledWith(
+        "lead-u1",
+        "c1",
+        "NOTE",
+        "lead_unused_reminder_2d",
+        undefined,
+        expect.objectContaining({ channels: { leadWhatsapp: "sent", leadEmail: "sent", ownerWhatsapp: "sent", ownerEmail: "sent" } })
+      );
+    });
+
+    it.each([
+      ["email provider throws (5xx)", () => sendEmail.mockRejectedValue(new Error("ResendEmailAdapter failed: 500 boom"))],
+      ["email provider times out", () => sendEmail.mockRejectedValue(Object.assign(new Error("aborted"), { name: "AbortError" }))],
+      ["email provider returns a malformed response", () => sendEmail.mockResolvedValue(undefined)],
+      ["email provider reports success:false", () => sendEmail.mockResolvedValue({ id: "", success: false })],
+    ])("a failing email channel (%s) is isolated: WhatsApp still delivers and the marker records the failure", async (_label, arrange) => {
+      process.env.RESEND_API_KEY = "re_Live0123456789abcdef";
+      arrange();
+      leadRows.push({ ...LEAD });
+      const json = await run();
+      expect(json.unusedLeads.sent).toBe(1);
+      expect(send).toHaveBeenCalledTimes(2);
+      expect(addActivity).toHaveBeenCalledWith(
+        "lead-u1",
+        "c1",
+        "NOTE",
+        "lead_unused_reminder_2d",
+        undefined,
+        expect.objectContaining({ channels: expect.objectContaining({ leadEmail: "failed", leadWhatsapp: "sent", ownerWhatsapp: "sent" }) })
+      );
+    });
+
+    it.each([
+      ["http_401 (non-retryable auth)", { sent: false, reason: "http_401" }],
+      ["http_500 (retryable)", { sent: false, reason: "http_500" }],
+      ["timeout", { sent: false, reason: "timeout" }],
+      ["network_error", { sent: false, reason: "network_error" }],
+      ["malformed result", {}],
+    ])("a failing WhatsApp channel (%s) with Resend configured: the emails still deliver and the marker records the failure", async (_label, result) => {
+      process.env.RESEND_API_KEY = "re_Live0123456789abcdef";
+      send.mockResolvedValue(result);
+      employeeRows.length = 0;
+      employeeRows.push({ ...OWNER, email: "srini@example.com" });
+      leadRows.push({ ...LEAD });
+      const json = await run();
+      expect(json.unusedLeads.sent).toBe(1);
+      expect(sendEmail).toHaveBeenCalledTimes(2);
+      expect(addActivity).toHaveBeenCalledWith(
+        "lead-u1",
+        "c1",
+        "NOTE",
+        "lead_unused_reminder_2d",
+        undefined,
+        expect.objectContaining({ channels: { leadWhatsapp: "failed", ownerWhatsapp: "failed", leadEmail: "sent", ownerEmail: "sent" } })
+      );
+    });
   });
 
-  it("never reminds the same unused lead twice — the distinct marker short-circuits", async () => {
-    leadRows.push({ ...LEAD });
-    getActivityTimeline.mockResolvedValue([{ content: "lead_unused_reminder_2d" }]);
+  describe("failure, retry and recovery", () => {
+    it("when every channel fails: writes an observable FAILED marker (attempt 1), releases the claim, counts the failure, no success marker", async () => {
+      send.mockResolvedValue({ sent: false, reason: "http_401" });
+      leadRows.push({ ...LEAD });
+      const json = await run();
+      expect(json.unusedLeads).toMatchObject({ sent: 0, failed: 1 });
+      expect(releaseClaim).toHaveBeenCalledWith("lead-unused-reminder:lead-u1");
+      expect(addActivity).toHaveBeenCalledTimes(1);
+      expect(addActivity).toHaveBeenCalledWith(
+        "lead-u1",
+        "c1",
+        "NOTE",
+        "lead_unused_reminder_2d_failed",
+        undefined,
+        expect.objectContaining({ kind: "unused_lead_2d", attempt: 1, maxAttempts: 3, channels: expect.objectContaining({ leadWhatsapp: "failed", ownerWhatsapp: "failed" }) })
+      );
+    });
 
-    const json = await (await GET(request("Bearer test-secret"))).json();
+    it("retries on the next run after a failure and marks success as attempt 2", async () => {
+      send.mockResolvedValueOnce({ sent: false, reason: "http_500" }).mockResolvedValueOnce({ sent: false, reason: "http_500" });
+      leadRows.push({ ...LEAD });
+      await run(); // both sends fail -> failed marker, claim released
+      activityRows.push(marker("lead_unused_reminder_2d_failed"));
+      send.mockResolvedValue({ sent: true });
+      const json = await run();
+      expect(json.unusedLeads.sent).toBe(1);
+      expect(addActivity).toHaveBeenLastCalledWith("lead-u1", "c1", "NOTE", "lead_unused_reminder_2d", undefined, expect.objectContaining({ attempt: 2 }));
+      expect(reminderClaims.has("lead-unused-reminder:lead-u1")).toBe(true); // the claim persists on success
+    });
 
-    expect(json.unusedLeads.alreadyReminded).toBe(1);
-    expect(send).not.toHaveBeenCalled();
+    it("stops after the maximum number of failed attempts (no endless retries)", async () => {
+      leadRows.push({ ...LEAD });
+      for (let i = 0; i < 3; i++) activityRows.push(marker("lead_unused_reminder_2d_failed"));
+      const json = await run();
+      expect(json.unusedLeads).toMatchObject({ eligible: 0, excluded: { attempts_exhausted: 1 } });
+      expect(send).not.toHaveBeenCalled();
+    });
+
+    it("a stale claim (crash after send, before the marker) never causes a second send: the claim is lost, the lead is counted as already reminded", async () => {
+      reminderClaims.add("lead-unused-reminder:lead-u1");
+      leadRows.push({ ...LEAD });
+      const json = await run();
+      expect(json.unusedLeads).toMatchObject({ eligible: 1, sent: 0, alreadyReminded: 1 });
+      expect(send).not.toHaveBeenCalled();
+    });
+
+    it("a failed-marker write failure does not break the run", async () => {
+      send.mockResolvedValue({ sent: false, reason: "http_500" });
+      addActivity.mockRejectedValue(new Error("db down"));
+      leadRows.push({ ...LEAD });
+      const res = await GET(request("Bearer test-secret"));
+      expect(res.status).toBe(200);
+      expect(releaseClaim).toHaveBeenCalledWith("lead-unused-reminder:lead-u1");
+    });
   });
 
-  it("still nudges the lead when the owner has no phone — channels are independent", async () => {
-    leadRows.push({ ...LEAD });
-    getEmployeeById.mockResolvedValue({ id: "e1", name: "Srinivasan", phone: null });
+  describe("concurrency", () => {
+    it.each([2, 4])("with %i concurrent cron workers, an unused lead is reminded exactly ONCE", async (N) => {
+      leadRows.push({ ...LEAD });
+      const results = await Promise.all(Array.from({ length: N }, () => GET(request("Bearer test-secret"))));
+      expect(send.mock.calls.filter((c) => c[0] === "+91 90000 00000")).toHaveLength(1);
+      expect(send.mock.calls.filter((c) => c[0] === "+91 98888 12345")).toHaveLength(1);
+      expect(addActivity).toHaveBeenCalledTimes(1);
+      for (const r of results) expect(r.status).toBe(200);
+    });
 
-    const json = await (await GET(request("Bearer test-secret"))).json();
-
-    expect(json.unusedLeads.sent).toBe(1);
-    expect(send).toHaveBeenCalledTimes(1);
-    expect(send.mock.calls[0][0]).toBe("+91 98888 12345");
+    it("two leads becoming eligible in the same run are each reminded once", async () => {
+      leadRows.push({ ...LEAD, id: "lead-a", email: "a@example.com", phone: "+91 90000 11111" });
+      leadRows.push({ ...LEAD, id: "lead-b", email: "b@example.com", phone: "+91 90000 22222" });
+      const json = await run();
+      expect(json.unusedLeads.sent).toBe(2);
+      expect(addActivity).toHaveBeenCalledTimes(2);
+    });
   });
 
-  it("skips (no claim, no marker) when there is no reachable channel for the lead or the owner", async () => {
-    leadRows.push({ ...LEAD, phone: null, email: null });
-    getEmployeeById.mockResolvedValue({ id: "e1", name: "Srinivasan", phone: null, email: null });
+  describe("tenant safety", () => {
+    it("never notifies an owner from another company or a deleted owner — the lead is still nudged", async () => {
+      employeeRows.length = 0;
+      employeeRows.push({ ...OWNER, company_id: "OTHER" });
+      leadRows.push({ ...LEAD });
+      let json = await run();
+      expect(json.unusedLeads.sent).toBe(1);
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(send.mock.calls[0][0]).toBe("+91 98888 12345");
+      expect(addActivity).toHaveBeenCalledWith("lead-u1", "c1", "NOTE", "lead_unused_reminder_2d", undefined, expect.objectContaining({ channels: expect.objectContaining({ ownerWhatsapp: "skipped" }) }));
 
-    const json = await (await GET(request("Bearer test-secret"))).json();
+      jest.clearAllMocks();
+      reminderClaims.clear();
+      send.mockResolvedValue({ sent: true });
+      addActivity.mockResolvedValue({});
+      employeeRows.length = 0;
+      employeeRows.push({ ...OWNER, deleted_at: new Date().toISOString() });
+      json = await run();
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(send.mock.calls[0][0]).toBe("+91 98888 12345");
+    });
 
-    expect(json.unusedLeads.skippedNoChannel).toBe(1);
-    expect(send).not.toHaveBeenCalled();
-    expect(acquireClaim).not.toHaveBeenCalled();
-    expect(addActivity).not.toHaveBeenCalled();
-  });
+    it("the marker is written against the lead's OWN company", async () => {
+      leadRows.push({ ...LEAD, company_id: "c-lead" });
+      employeeRows.length = 0;
+      employeeRows.push({ ...OWNER, company_id: "c-lead" });
+      await run();
+      expect(addActivity).toHaveBeenCalledWith("lead-u1", "c-lead", "NOTE", "lead_unused_reminder_2d", undefined, expect.anything());
+    });
 
-  it("releases the claim on a failed send and writes no marker (retry-on-failure preserved)", async () => {
-    leadRows.push({ ...LEAD });
-    send.mockResolvedValue({ sent: false, reason: "http_401" });
+    it("ignores every request parameter — the sweep is identical with crafted companyId/employeeId/leadId", async () => {
+      leadRows.push({ ...LEAD });
+      const res = await GET(new NextRequest("http://localhost/api/cron/reminders?companyId=evil&employeeId=evil&leadId=evil&limit=1000", { headers: { authorization: "Bearer test-secret" } }));
+      const json = await res.json();
+      expect(res.status).toBe(200);
+      expect(json.unusedLeads.sent).toBe(1);
+      expect(addActivity).toHaveBeenCalledWith("lead-u1", "c1", "NOTE", "lead_unused_reminder_2d", undefined, expect.anything());
+    });
 
-    const json = await (await GET(request("Bearer test-secret"))).json();
-
-    expect(json.unusedLeads.sent).toBe(0);
-    expect(releaseClaim).toHaveBeenCalledWith("lead-unused-reminder:lead-u1");
-    expect(addActivity).not.toHaveBeenCalled();
-  });
-
-  it.each([2, 4])("with %i concurrent cron workers, an unused lead is reminded exactly ONCE", async (N) => {
-    leadRows.push({ ...LEAD });
-    const results = await Promise.all(Array.from({ length: N }, () => GET(request("Bearer test-secret"))));
-    const ownerSends = send.mock.calls.filter((c) => c[0] === "+91 90000 00000");
-    expect(ownerSends).toHaveLength(1);
-    const leadSends = send.mock.calls.filter((c) => c[0] === "+91 98888 12345");
-    expect(leadSends).toHaveLength(1);
-    for (const r of results) expect(r.status).toBe(200);
-  });
-
-  it("stays a no-op without WhatsApp credentials (delivery externally gated)", async () => {
-    isConfigured.mockReturnValue(false);
-    leadRows.push({ ...LEAD });
-
-    const json = await (await GET(request("Bearer test-secret"))).json();
-
-    expect(json).toEqual({ processed: 0, skipped: "notifications_unconfigured" });
-    expect(send).not.toHaveBeenCalled();
-  });
-
-  it("email path: with Resend configured and WhatsApp unconfigured, the lead and the owner are emailed (idempotency-keyed) and nothing is WhatsApp'd", async () => {
-    isConfigured.mockReturnValue(false);
-    process.env.RESEND_API_KEY = "re_Live0123456789abcdef";
-    getEmployeeById.mockResolvedValue({ id: "e1", name: "Srinivasan", phone: "+91 90000 00000", email: "srini@example.com" });
-    leadRows.push({ ...LEAD });
-
-    const json = await (await GET(request("Bearer test-secret"))).json();
-
-    expect(json.skipped).toBe("whatsapp_unconfigured"); // the appointment sweep needs WhatsApp
-    expect(json.unusedLeads.sent).toBe(1);
-    expect(send).not.toHaveBeenCalled();
-    expect(sendEmail).toHaveBeenCalledTimes(2);
-    const emails = sendEmail.mock.calls.map((c) => c[0] as { to: string; subject: string; html: string; idempotencyKey?: string });
-    expect(emails.map((e) => e.to).sort()).toEqual(["priya@example.com", "srini@example.com"]);
-    for (const e of emails) expect(e.idempotencyKey).toMatch(/^lead-unused-2d:lead-u1:(lead|owner)$/);
-    expect(emails.find((e) => e.to === "priya@example.com")!.html).toContain("Srinivasan");
-    expect(addActivity).toHaveBeenCalledWith(
-      "lead-u1",
-      "c1",
-      "NOTE",
-      "lead_unused_reminder_2d",
-      undefined,
-      expect.objectContaining({ channels: { leadEmail: "sent", ownerEmail: "sent", leadWhatsapp: "skipped", ownerWhatsapp: "skipped" } })
-    );
-  });
-
-  it("a failing email channel is isolated: WhatsApp still delivers and the marker records the failure", async () => {
-    process.env.RESEND_API_KEY = "re_Live0123456789abcdef";
-    sendEmail.mockRejectedValue(new Error("ResendEmailAdapter failed: 403"));
-    leadRows.push({ ...LEAD });
-
-    const json = await (await GET(request("Bearer test-secret"))).json();
-
-    expect(json.unusedLeads.sent).toBe(1);
-    expect(send).toHaveBeenCalledTimes(2);
-    expect(addActivity).toHaveBeenCalledWith(
-      "lead-u1",
-      "c1",
-      "NOTE",
-      "lead_unused_reminder_2d",
-      undefined,
-      expect.objectContaining({ channels: expect.objectContaining({ leadEmail: "failed", leadWhatsapp: "sent", ownerWhatsapp: "sent" }) })
-    );
-  });
-
-  it("does NOT nudge a lead whose contact was already used — a CALL / EMAIL / APPOINTMENT on its timeline", async () => {
-    leadRows.push({ ...LEAD });
-    getActivityTimeline.mockResolvedValue([{ type: "CALL", content: "Called the lead back" }]);
-
-    const json = await (await GET(request("Bearer test-secret"))).json();
-
-    expect(json.unusedLeads.skippedUsed).toBe(1);
-    expect(send).not.toHaveBeenCalled();
-    expect(acquireClaim).not.toHaveBeenCalled();
-    expect(addActivity).not.toHaveBeenCalled();
-  });
-
-  it("when every channel fails, releases the claim, writes no marker and counts the failure (retried next run)", async () => {
-    process.env.RESEND_API_KEY = "re_Live0123456789abcdef";
-    send.mockResolvedValue({ sent: false, reason: "http_401" });
-    sendEmail.mockResolvedValue({ id: "", success: false });
-    leadRows.push({ ...LEAD });
-
-    const json = await (await GET(request("Bearer test-secret"))).json();
-
-    expect(json.unusedLeads.sent).toBe(0);
-    expect(json.unusedLeads.failed).toBe(1);
-    expect(releaseClaim).toHaveBeenCalledWith("lead-unused-reminder:lead-u1");
-    expect(addActivity).not.toHaveBeenCalled();
+    it("stays a no-op without any configured provider (delivery externally gated)", async () => {
+      isConfigured.mockReturnValue(false);
+      leadRows.push({ ...LEAD });
+      const json = await run();
+      expect(json).toEqual({ processed: 0, skipped: "notifications_unconfigured" });
+      expect(send).not.toHaveBeenCalled();
+    });
   });
 });
