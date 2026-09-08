@@ -4,9 +4,14 @@
  * The recorded-introduction state machine (2026-08-19 spec), pinned
  * end-to-end at the component level:
  *
- *   INTRO_IDLE (Play) → INTRO_PLAYING ("Playing Introduction", Pause only)
- *   ⇄ INTRO_PAUSED (Resume) → INTRO_COMPLETE ("Tap to Speak")
- *   → [explicit tap] → Vapi call (the ONLY way one starts from the card).
+ *   INTRO_IDLE (Play) → INTRO_PLAYING ("Playing Introduction"; the single
+ *   Introduction control pauses) ⇄ INTRO_PAUSED (Resume) →
+ *   INTRO_COMPLETE ("Tap to Speak"; the Introduction control replays).
+ *
+ * Since 2026-09-08 the Introduction section also carries an always-visible
+ * [AI Conversation] action beside [Introduction]; the live Vapi call starts
+ * on an explicit tap of it or of "Tap to Speak" — never on load — through
+ * the ONE shared startAiConversation path.
  *
  * The non-negotiables each test guards: nothing plays on load (no autoplay,
  * no Vapi, no mic); the introduction is a plain audio asset, never an AI
@@ -57,7 +62,10 @@ class FakeAudio {
     this.src = src;
     FakeAudio.instances.push(this);
   }
+  playCalls = 0;
   play() {
+    this.paused = false;
+    this.playCalls++;
     return Promise.resolve();
   }
   pause() {
@@ -129,7 +137,7 @@ describe("no autoplay of any kind", () => {
 });
 
 describe("English introduction flow", () => {
-  it("Play → 'Playing Introduction' with Pause as the ONLY control, no AI statuses, no End Call, no Vapi", async () => {
+  it("Play → 'Playing Introduction' (the Introduction control pauses), no AI statuses, no End Call, no Vapi", async () => {
     const mic = await mountCard("en");
     await screen.findByText("Play Introduction");
 
@@ -166,6 +174,8 @@ describe("English introduction flow", () => {
     fireEvent.click(screen.getByTestId("intro-action"));
     expect(screen.getByTestId("intro-action")).toHaveAttribute("data-state", "playing");
     expect(FakeAudio.instances).toHaveLength(1); // resumed, never re-created
+    expect(FakeAudio.instances[0].paused).toBe(false); // the element itself resumed
+    expect(FakeAudio.instances[0].playCalls).toBeGreaterThanOrEqual(2);
   });
 
   it("completion → 'Tap to Speak'; Vapi starts ONLY on the explicit tap, with the short post-intro opening", async () => {

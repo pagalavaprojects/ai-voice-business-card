@@ -45,6 +45,7 @@ class FakeAudio {
   static instances: FakeAudio[] = [];
   src: string;
   paused = false;
+  playCalls = 0;
   onplaying: (() => void) | null = null;
   onended: (() => void) | null = null;
   onerror: (() => void) | null = null;
@@ -52,7 +53,12 @@ class FakeAudio {
     this.src = src;
     FakeAudio.instances.push(this);
   }
+  // Mirror HTMLMediaElement: play() clears paused and is counted, so a
+  // "resume" is provable to have actually re-started the element (not just
+  // flipped a React flag), and pause() sets it — exactly like the real one.
   play() {
+    this.paused = false;
+    this.playCalls++;
     return Promise.resolve();
   }
   pause() {
@@ -175,7 +181,11 @@ describe("Introduction — the existing playback path: play → pause ⇄ resume
     expect(FakeAudio.instances[0].paused).toBe(true);
     fireEvent.click(intro());
     expect(intro()).toHaveAttribute("data-state", "playing");
+    // The SAME element actually resumed: no new element, and play() ran a
+    // second time and cleared paused (not merely a React state flip).
     expect(FakeAudio.instances).toHaveLength(1);
+    expect(FakeAudio.instances[0].paused).toBe(false);
+    expect(FakeAudio.instances[0].playCalls).toBeGreaterThanOrEqual(2);
     await settle();
     expect(eventTypes()).toEqual(["intro_play"]);
   });
@@ -278,7 +288,16 @@ jest.mock("@/features/voice/lib/pitchFallback", () => ({
 }));
 
 describe("a live call fully stops the introduction — no second audio pipeline can outlive it", () => {
-  it("AI Conversation while the introduction is still LOADING: the stream deadline / fallback is discarded and browser TTS never speaks over the call", async () => {
+  beforeEach(() => {
+    // These accumulate across the whole file (the module-level mock is never
+    // auto-cleared, and the unmount cleanup in every prior test calls
+    // stopBrowserTts). Reset so each assertion below counts only the calls
+    // this test provokes.
+    speakPitchWithBrowserTts.mockClear();
+    stopBrowserTts.mockClear();
+  });
+
+  it("AI Conversation while the introduction is still LOADING: the call-start effect silences browser TTS, keeps the end-call control usable, and the stream deadline is discarded", async () => {
     jest.useFakeTimers();
     try {
       window.localStorage.clear();
@@ -291,6 +310,13 @@ describe("a live call fully stops the introduction — no second audio pipeline 
       expect(FakeAudio.instances).toHaveLength(1);
       expect(screen.getByTestId("intro-action")).toHaveAttribute("data-state", "loading");
 
+      // Clear NOW: the intro tap already ran stopPitch() → stopBrowserTts()
+      // once. Anything counted after this point is provoked solely by the
+      // call starting — so the assertion below is not satisfied by that
+      // earlier call (the bug this guards was a call-start effect that
+      // paused the element but never silenced browser TTS).
+      stopBrowserTts.mockClear();
+
       // The visitor chooses AI Conversation before the introduction even
       // started streaming; the session goes live.
       fireEvent.click(screen.getByTestId("ai-conversation"));
@@ -298,14 +324,20 @@ describe("a live call fully stops the introduction — no second audio pipeline 
       mockVoice.voiceState = "connecting";
       rerender(<PublicBusinessCard companyId="comp-1" employeeId="emp-1" />);
 
+      // The call-start effect — and only it — silenced browser TTS.
+      expect(stopBrowserTts).toHaveBeenCalledTimes(1);
       expect(FakeAudio.instances[0].paused).toBe(true);
-      expect(stopBrowserTts).toHaveBeenCalled();
       expect(screen.queryByTestId("intro-actions")).toBeNull(); // the call's own controls take over
+      // The mic button IS the end-call control during a call; the pre-fix
+      // bug left it disabled (the fallback's onStart re-set pitchPlaying).
+      expect(screen.getByTestId("voice-mic-button")).not.toBeDisabled();
 
       // The stream deadline that would have kicked in the browser-voice
-      // fallback fires — but the pitch session was invalidated by the call.
+      // fallback fires — but the pitch session was invalidated by the call,
+      // so the fallback's fetch→speak chain bails at its session guard.
       await act(async () => {
         jest.advanceTimersByTime(2500);
+        await Promise.resolve();
         await Promise.resolve();
       });
       // A late "playing" from the abandoned element is ignored too.
@@ -316,6 +348,42 @@ describe("a live call fully stops the introduction — no second audio pipeline 
       expect(screen.queryByText("Playing Introduction")).toBeNull();
     } finally {
       jest.useRealTimers();
+    }
+  });
+});
+
+describe("warm-up prefetch is exercised on mount, but is never a recorded play (genuine plays only)", () => {
+  it("fires the range-prefetch (positive control) yet records no listen event, starts no call, and creates no audio element", async () => {
+    const w = window as unknown as { requestIdleCallback?: (cb: () => void) => number };
+    const realRIC = w.requestIdleCallback;
+    // Run the idle warm-up synchronously so it is actually exercised HERE,
+    // where the negatives are asserted. The other "on load" tests use real
+    // timers + a single-microtask settle(), so the default setTimeout(warm,
+    // 2500) never fires and their prefetch negatives pass without the
+    // prefetch ever running — this test closes that gap.
+    w.requestIdleCallback = (cb: () => void) => {
+      cb();
+      return 0;
+    };
+    try {
+      window.localStorage.clear();
+      window.localStorage.setItem("pagalava.language", "en");
+      const fetchMock = jest.fn(() => Promise.resolve(cardResponse("en")));
+      global.fetch = fetchMock as unknown as typeof fetch;
+      render(<PublicBusinessCard companyId="comp-1" employeeId="emp-1" />);
+      await screen.findByTestId("voice-mic-button");
+      await settle();
+      // Positive control: the warm-up genuinely ran its range prefetch(es).
+      const prefetch = (global.fetch as jest.Mock).mock.calls.filter((c) => /\/pitch\?type=/.test(String(c[0])));
+      expect(prefetch.length).toBeGreaterThan(0);
+      // ...yet not one prefetch — nor anything else on load — recorded a
+      // listen event, started a call, or created an audio element.
+      expect(listenPosts()).toHaveLength(0);
+      expect(startCall).not.toHaveBeenCalled();
+      expect(FakeAudio.instances).toHaveLength(0);
+    } finally {
+      if (realRIC) w.requestIdleCallback = realRIC;
+      else delete w.requestIdleCallback;
     }
   });
 });
